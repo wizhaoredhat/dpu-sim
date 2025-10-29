@@ -1,0 +1,48 @@
+networks:
+  - name: "primary-k8s-network"
+    bridge_name: "virbr-k8s"
+    gateway: "192.168.100.1"
+    subnet_mask: "255.255.255.0"
+    dhcp_start: "192.168.100.10"
+    dhcp_end: "192.168.100.100"
+    mode: "nat"
+    nic_model: "virtio"  # virtio for management network
+    attach_to: "any"  # Attach to all VMs: "dpu", "host", or "any"
+
+  - name: "data-l2-network"
+    bridge_name: "ovs-data"
+    mode: "l2-bridge"
+    nic_model: "igb"  # Intel 82576 emulated NIC
+    use_ovs: true
+    attach_to: "dpu"
+
+vms:
+  - name: "host-1"
+    type: "host"
+    memory: 2048  # MB
+    vcpus: 2
+    disk_size: 20  # GB
+    ip: "192.168.100.12"
+
+  - name: "dpu-1"
+    type: "dpu"
+    host: "host-1"
+    memory: 2048  # MB
+    vcpus: 2
+    disk_size: 20  # GB
+    ip: "192.168.100.13"
+
+operating_system:
+  # Download from https://download.fedoraproject.org/pub/fedora/linux/releases/
+  image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
+  image_name: "Fedora-x86_64.qcow2"
+  cloud_init_iso_name: "Fedora-x86_64-cloud-init.iso"
+
+ssh:
+  user: "root"
+  key_path: "~/.ssh/id_rsa"
+  password: "redhat"  # Default password for console/SSH access
+
+kubernetes:
+  version: "1.33"  # Kubernetes version to install
+
