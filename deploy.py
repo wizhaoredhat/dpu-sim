@@ -243,9 +243,16 @@ ssh_pwauth: True
 package_update: true
 package_upgrade: false
 
+write_files:
+  - path: /etc/systemd/zram-generator.conf
+    content: ""
+    permissions: "0644"
+
 runcmd:
   - systemctl enable sshd
   - systemctl start sshd
+  - systemctl daemon-reload
+  - systemctl restart zram-generator.service
 """
 
         # Write files

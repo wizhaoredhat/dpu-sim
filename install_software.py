@@ -19,6 +19,7 @@ class SoftwareInstaller:
         self.config = load_config(config_path)
         self.conn = None
         self.results = {}
+        self.cluster_setup_results = {}  # Track cluster setup status
         # Default to Kubernetes version 1.33
         self.k8s_version = self.config.get('kubernetes', {}).get('version', '1.33')
 
@@ -30,7 +31,7 @@ class SoftwareInstaller:
             return True
         return False
 
-    def get_vm_ip_with_retry(self, vm_name, max_attempts=30):
+    def get_vm_ip_with_retry(self, vm_name: str, max_attempts: int = 30) -> str | None:
         """Get IP address of a VM with retry logic"""
         for attempt in range(max_attempts):
             ip = get_vm_ip(self.conn, vm_name)
@@ -42,7 +43,7 @@ class SoftwareInstaller:
 
         return None
 
-    def wait_for_ssh(self, ip, timeout=60):
+    def wait_for_ssh(self, ip: str, timeout: int = 60) -> bool:
         """Wait for SSH to become available"""
         print(f"  Waiting for SSH on {ip}...", end='', flush=True)
 
@@ -65,9 +66,15 @@ class SoftwareInstaller:
             True if swap is disabled, False otherwise
         """
         print(f"\n--- Disabling swap ---")
+        disable_swap_cmd = """
+# Disable all active swap
+sudo swapoff -a
+
+# Comment out swap entries in fstab
+sudo sed -i '/ swap / s/^/#/' /etc/fstab
+"""
         success, stdout, stderr = ssh_command(
-            self.config, ip,
-            "sudo swapoff -a && sudo sed -i '/ swap / s/^/#/' /etc/fstab",
+            self.config, ip, disable_swap_cmd,
             capture_output=True, timeout=300
         )
 
@@ -271,7 +278,7 @@ fi
             print(f"✗ Failed to configure firewall: {stderr}")
         return success
 
-    def _verify_installation(self, ip):
+    def _verify_installation(self, ip: str) -> bool:
         """Verify all installed components"""
         print(f"\n--- Verifying installation ---")
 
@@ -312,7 +319,158 @@ fi
 
         return all_verified
 
-    def install_on_vm(self, vm_name):
+    def _initialize_k8s_master(self, ip: str, vm_name: str, pod_cidr: str) -> tuple[bool, str | None]:
+        """Initialize Kubernetes master node
+        Args:
+            ip: IP address of the master node
+            vm_name: Name of the VM
+            pod_cidr: Pod network CIDR for the cluster
+        Returns:
+            Tuple of (success, join_command) where join_command is the command workers need to join
+        """
+        print(f"\n--- Initializing Kubernetes Master on {vm_name} ---")
+        print(f"  Pod Network CIDR: {pod_cidr}")
+
+        # Initialize cluster with kubeadm
+        init_cmd = f"""
+sudo kubeadm init --pod-network-cidr={pod_cidr} --apiserver-advertise-address={ip} 2>&1 | tee /tmp/kubeadm-init.log
+"""
+        print("  Initializing cluster...")
+        success, stdout, stderr = ssh_command(
+            self.config, ip, init_cmd,
+            capture_output=True, timeout=600
+        )
+
+        if not success:
+            print(f"✗ Failed to initialize cluster: {stderr}")
+            return False, None
+
+        if stdout:
+            print(f"{stdout}")
+
+        print(f"✓ Cluster initialized successfully")
+
+        # Setup kubectl for root user
+        setup_kubectl = """
+mkdir -p /root/.kube
+sudo cp /etc/kubernetes/admin.conf /root/.kube/config
+sudo chown root:root /root/.kube/config
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, ip, setup_kubectl,
+            capture_output=True, timeout=300
+        )
+
+        if not success:
+            print(f"✗ Failed to setup kubectl: {stderr}")
+            return False, None
+
+        print("✓ kubectl configured")
+
+        # Extract join command
+        get_join_cmd = "sudo kubeadm token create --print-join-command 2>/dev/null"
+        success, join_command, stderr = ssh_command(
+            self.config, ip, get_join_cmd,
+            capture_output=True, timeout=300
+        )
+
+        if not success or not join_command:
+            print(f"✗ Failed to get join command: {stderr}")
+            return False, None
+
+        join_command = join_command.strip()
+        print(f"✓ Join command generated")
+
+        return True, join_command
+
+    def _install_flannel(self, ip: str, vm_name: str, pod_cidr: str) -> bool:
+        """Install Flannel CNI on the master node
+        Args:
+            ip: IP address of the master node
+            vm_name: Name of the VM
+            pod_cidr: Pod network CIDR for the cluster
+        Returns:
+            True if Flannel is installed, False otherwise
+        """
+        print(f"\n--- Installing Flannel CNI on {vm_name} ---")
+
+        # If pod_cidr is not the default Flannel CIDR, we need to patch it
+        if pod_cidr != "10.244.0.0/16":
+            print(f"  Using custom pod CIDR: {pod_cidr}")
+            flannel_install = f"""
+kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+kubectl patch configmap kube-flannel-cfg -n kube-flannel --type merge -p '{{"data":{{"net-conf.json":"{{\\\"Network\\\": \\\"{pod_cidr}\\\", \\\"Backend\\\": {{\\\"Type\\\": \\\"vxlan\\\"}}}}"}}}}' || true
+kubectl rollout restart daemonset kube-flannel-ds -n kube-flannel || true
+"""
+        else:
+            flannel_install = """
+kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, ip, flannel_install,
+            capture_output=True, timeout=300
+        )
+
+        if success:
+            print("✓ Flannel CNI installed")
+            if stdout:
+                print(stdout)
+        else:
+            print(f"✗ Failed to install Flannel: {stderr}")
+            return False
+
+        # Wait for Flannel pods to be ready
+        print("  Waiting for Flannel pods to be ready...")
+        wait_cmd = """
+for i in {1..30}; do
+    if kubectl get pods -n kube-flannel -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null | grep -q true; then
+        echo "ready"
+        exit 0
+    fi
+    sleep 2
+done
+echo "timeout"
+exit 1
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, ip, wait_cmd,
+            capture_output=True, timeout=90
+        )
+
+        if success and "ready" in stdout:
+            print("✓ Flannel pods are ready")
+            return True
+        else:
+            print("✗ Flannel pods may still be initializing (this is normal)")
+            return True  # Don't fail the installation
+
+    def _join_k8s_worker(self, ip: str, vm_name: str, join_command: str) -> bool:
+        """Join a worker node to the Kubernetes cluster
+        Args:
+            ip: IP address of the worker node
+            vm_name: Name of the VM
+            join_command: The kubeadm join command from the master
+        Returns:
+            True if worker joined successfully, False otherwise
+        """
+        print(f"\n--- Joining {vm_name} to Kubernetes cluster ---")
+
+        # Execute join command
+        success, stdout, stderr = ssh_command(
+            self.config, ip, f"sudo {join_command}",
+            capture_output=True, timeout=300
+        )
+
+        if success:
+            print(f"✓ {vm_name} joined the cluster")
+            if stdout:
+                print(stdout)
+            return True
+        else:
+            print(f"✗ Failed to join {vm_name} to cluster: {stderr}")
+            return False
+
+    def install_on_vm(self, vm_name: str) -> bool:
         """Install Kubernetes and OVS on a VM"""
 
         print("=== VM Software Installation Starting ===\n")
@@ -361,7 +519,145 @@ fi
 
         return True
 
-    def install_all_vms(self, parallel=False):
+    def get_cluster_config(self, cluster_name: str) -> dict | None:
+        """Get cluster configuration by name
+        Args:
+            cluster_name: Name of the cluster
+        Returns:
+            Cluster configuration dict or None if not found
+        """
+        clusters = self.config.get('kubernetes', {}).get('clusters', [])
+        for cluster in clusters:
+            if cluster['name'] == cluster_name:
+                return cluster
+        return None
+
+    def setup_k8s_cluster(self) -> bool:
+        """Setup Kubernetes clusters - initialize masters and join workers"""
+        print("\n=== Setting up Kubernetes Clusters ===\n")
+
+        # Group VMs by cluster
+        clusters_vms = {}  # cluster_name -> {'masters': [], 'workers': []}
+
+        for vm in self.config['vms']:
+            k8s_role = vm.get('k8s_role')
+            k8s_cluster = vm.get('k8s_cluster')
+
+            if not k8s_role or not k8s_cluster:
+                continue
+
+            if k8s_cluster not in clusters_vms:
+                clusters_vms[k8s_cluster] = {'masters': [], 'workers': []}
+
+            if k8s_role == 'master':
+                clusters_vms[k8s_cluster]['masters'].append(vm)
+            elif k8s_role == 'worker':
+                clusters_vms[k8s_cluster]['workers'].append(vm)
+
+        if not clusters_vms:
+            print("✗ No clusters found, skipping cluster setup")
+            return True
+
+        # Setup each cluster
+        all_success = True
+        for cluster_name, vms in clusters_vms.items():
+            print(f"Setting up cluster: {cluster_name}")
+            cluster_success = True
+
+            cluster_config = self.get_cluster_config(cluster_name)
+            if not cluster_config:
+                print(f"✗ Cluster configuration not found for '{cluster_name}'")
+                self.cluster_setup_results[cluster_name] = False
+                all_success = False
+                cluster_success = False
+                continue
+
+            pod_cidr = cluster_config.get('pod_cidr', '10.244.0.0/16')
+            print(f"  Pod Network CIDR: {pod_cidr}")
+
+            master_vms = vms['masters']
+            worker_vms = vms['workers']
+
+            if not master_vms:
+                print(f"✗ No master nodes found for cluster '{cluster_name}'")
+                self.cluster_setup_results[cluster_name] = False
+                all_success = False
+                cluster_success = False
+                continue
+
+            # Initialize the first master node
+            master_vm = master_vms[0]
+            master_name = master_vm['name']
+            print(f"\nInitializing Kubernetes cluster on master: {master_name}")
+
+            master_ip = self.get_vm_ip_with_retry(master_name)
+            if not master_ip:
+                print(f"✗ Failed: Could not get IP address for master {master_name}")
+                self.cluster_setup_results[cluster_name] = False
+                all_success = False
+                cluster_success = False
+                continue
+
+            success, join_command = self._initialize_k8s_master(master_ip, master_name, pod_cidr)
+            if not success:
+                print(f"✗ Failed to initialize master node {master_name}")
+                self.cluster_setup_results[cluster_name] = False
+                all_success = False
+                cluster_success = False
+                continue
+
+            if not self._install_flannel(master_ip, master_name, pod_cidr):
+                print(f"✗ Failed to install Flannel CNI on {master_name}")
+                self.cluster_setup_results[cluster_name] = False
+                all_success = False
+                cluster_success = False
+                continue
+
+            # Join worker nodes
+            if worker_vms and join_command:
+                print(f"\nJoining {len(worker_vms)} worker node(s) to cluster '{cluster_name}'...")
+
+                for worker_vm in worker_vms:
+                    worker_name = worker_vm['name']
+                    worker_ip = self.get_vm_ip_with_retry(worker_name)
+
+                    if not worker_ip:
+                        print(f"✗ Failed: Could not get IP address for worker {worker_name}")
+                        continue
+
+                    if not self._join_k8s_worker(worker_ip, worker_name, join_command):
+                        print(f"✗ Failed to join worker {worker_name}")
+                        continue
+
+            # Wait a bit for nodes to register
+            print("\n  Waiting for nodes to register...")
+            time.sleep(10)
+
+            # Display cluster status
+            print(f"\n--- Cluster '{cluster_name}' Status ---")
+            success, stdout, stderr = ssh_command(
+                self.config, master_ip, "kubectl get nodes",
+                capture_output=True, timeout=30
+            )
+            if success and stdout:
+                print(stdout)
+            else:
+                print(f"✗ Could not get cluster status: {stderr}")
+
+            # Track cluster setup result
+            self.cluster_setup_results[cluster_name] = cluster_success
+
+            if cluster_success:
+                print(f"\n✓ Cluster '{cluster_name}' setup complete!")
+            else:
+                print(f"\n✗ Cluster '{cluster_name}' setup failed!")
+
+        if all_success:
+            print("✓ All Kubernetes clusters setup complete!")
+
+        return all_success
+
+    def install_all_vms(self, parallel: bool = False) -> None:
         """Install software on all VMs"""
 
         vm_names = [vm['name'] for vm in self.config['vms']]
@@ -393,35 +689,76 @@ fi
                     print(f"✗ Error installing on {vm_name}: {e}")
                     self.results[vm_name] = False
 
+        # Setup Kubernetes cluster after all VMs are installed
+        if all(self.results.values()):
+            print("\n✓ All VMs installed successfully!")
+            if not self.setup_k8s_cluster():
+                print("✗ Kubernetes cluster setup failed")
+                # Don't mark as complete failure since installations succeeded
+        else:
+            print("\n✗ Some VMs failed installation, skipping cluster setup")
+            clusters = self.config.get('kubernetes', {}).get('clusters', [])
+            for cluster in clusters:
+                self.cluster_setup_results[cluster['name']] = False
+
         self.print_summary()
 
-    def print_summary(self):
+    def print_summary(self) -> None:
         """Print installation summary"""
-        print("=== VM Software Installation Summary ===")
+        print("\n=== VM Software Installation Summary ===")
 
         all_success = True
         for vm_name in sorted(self.results.keys()):
             success = self.results[vm_name]
             status = "✓ Success" if success else "✗ Failed"
-            print(f"  {vm_name:<20} {status}")
+
+            # Get k8s role and cluster if available
+            vm_config = next((vm for vm in self.config['vms'] if vm['name'] == vm_name), None)
+            k8s_role = vm_config.get('k8s_role', 'N/A') if vm_config else 'N/A'
+            k8s_cluster = vm_config.get('k8s_cluster', 'N/A') if vm_config else 'N/A'
+
+            print(f"  {vm_name:<20} {status:<15} (cluster: {k8s_cluster}, role: {k8s_role})")
             if not success:
                 all_success = False
 
+        # Print cluster setup status if any clusters were configured
+        if self.cluster_setup_results:
+            print("\n=== Kubernetes Cluster Setup Summary ===")
+            for cluster_name in sorted(self.cluster_setup_results.keys()):
+                success = self.cluster_setup_results[cluster_name]
+                status = "✓ Success" if success else "✗ Failed"
+                print(f"  {cluster_name:<20} {status}")
+                if not success:
+                    all_success = False
+
         if all_success:
-            print("✓ All VMs have been configured successfully!")
-            print("\nNext steps:")
-            print("  1. Verify: python3 verify_setup.py")
-            print("  2. SSH into VM: python3 vmctl.py ssh <vm-name>")
+            print("\n✓ All VMs have been configured successfully!")
+
+            if self.cluster_setup_results:
+                print("✓ All Kubernetes clusters have been set up successfully!")
+
+            # Find master nodes for next steps instructions
+            master_nodes = [vm['name'] for vm in self.config['vms'] if vm.get('k8s_role') == 'master']
+
+            print("\nHints:")
+            if master_nodes:
+                print(f"  1. Check cluster status: python3 vmctl.py exec {master_nodes[0]} 'kubectl get nodes'")
+                print(f"  2. Check pods: python3 vmctl.py exec {master_nodes[0]} 'kubectl get pods -A'")
+            print("  3. SSH into VM: python3 vmctl.py ssh <vm-name>")
         else:
-            print("✗ Some VMs failed to install properly")
+            print("\n✗ Some VMs or clusters failed")
             print("\nTroubleshooting:")
             print("  - Check VM is running: python3 vmctl.py list")
             print("  - Check SSH access: python3 vmctl.py ssh <vm-name>")
             print("  - Retry installation: python3 install_software.py")
 
-        return all_success
+            if self.cluster_setup_results:
+                # Show which clusters failed
+                failed_clusters = [name for name, success in self.cluster_setup_results.items() if not success]
+                if failed_clusters:
+                    print(f"  - Failed cluster(s): {', '.join(failed_clusters)}")
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Cleanup resources"""
         if self.conn:
             self.conn.close()

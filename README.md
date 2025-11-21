@@ -111,20 +111,50 @@ networks:
     attach_to: "dpu"  # Attach to all VMs: "dpu", "host", or "any"
 
 vms:
+  - name: "master-1"
+    type: "host"
+    k8s_cluster: "cluster-1" # Cluster assignment
+    k8s_role: "master"       # Control plane node
+    memory: 2048
+    vcpus: 2
+    disk_size: 20
+    ip: "192.168.100.12"
+
   - name: "host-1"
     type: "host"
-    memory: 2048  # MB
+    k8s_cluster: "cluster-1"
+    k8s_role: "worker"       # Worker node
+    memory: 2048
     vcpus: 2
-    disk_size: 20  # GB
-    ip: "192.168.100.12"
+    disk_size: 20
+    ip: "192.168.100.13"
 
   - name: "dpu-1"
     type: "dpu"
+    k8s_cluster: "cluster-1"
+    k8s_role: "worker"
     host: "host-1"
-    memory: 2048  # MB
+    memory: 2048
     vcpus: 2
-    disk_size: 20  # GB
-    ip: "192.168.100.13"
+    disk_size: 20
+    ip: "192.168.100.14"
+
+operating_system:
+  # Download from https://download.fedoraproject.org/pub/fedora/linux/releases/
+  image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
+  image_name: "Fedora-x86_64.qcow2"
+  cloud_init_iso_name: "Fedora-x86_64-cloud-init.iso"
+
+ssh:
+  user: "root"
+  key_path: "~/.ssh/id_rsa"
+  password: "redhat"  # Default password for console/SSH access
+
+kubernetes:
+  version: "1.33"
+  clusters:
+    - name: "cluster-1"
+      pod_cidr: "10.244.0.0/16"
 ```
 
 ### Network Modes
@@ -164,11 +194,76 @@ This makes the VMs suitable for:
 - DPU emulation by interconnecting VMs with networks (OvS or Linux Bridge)
 - Testing Kubernetes features with emulating hardware
 
+### Kubernetes
+
+Kubernetes is the choice for orchestrating DPU deployment. Hence kubernetes installation and usage is assumed. Although you might choose to simulate DPUs without Kubernetes, which currently means to run the `deploy.py` script only.
+
+If Kubernetes is needed then the `install_software.py` script would need to be run or `dpu-sim.py` which calls both `deploy.py` and `install_software.py`.
+
+Each VM must specify which cluster it belongs to using the `k8s_cluster` field, which references a cluster name defined in the `kubernetes.clusters` section.
+
+Each VM in `config.yaml` must have a `k8s_role` field with two supported values:
+- **master**: Kubernetes control plane node
+- **worker**: Kubernetes worker node
+
+Everything Kubernetes related is in the `kubernetes` section. By default version 1.33 Kubernetes version is used however this can be overwritten in the `kubernetes.version` field. Each cluster definition includes:
+- **name**: Unique identifier for the cluster
+- **pod_cidr**: Custom pod network CIDR
+
+Multiple cluster configuration example:
+```yaml
+kubernetes:
+  version: "1.33"
+  clusters:
+    - name: "cluster-1"
+      pod_cidr: "10.244.0.0/16"  # First cluster pod network
+    - name: "cluster-2"
+      pod_cidr: "10.245.0.0/16"  # Second cluster pod network
+
+vms:
+  - name: "master-1"
+    k8s_cluster: "cluster-1"
+    k8s_role: "master"
+    ...
+
+  - name: "master-2"
+    k8s_cluster: "cluster-2"
+    k8s_role: "master"
+    ...
+
+  - name: "host-1"
+    k8s_cluster: "cluster-1"
+    k8s_role: "worker"
+    ...
+
+  - name: "dpu-1"
+    k8s_cluster: "cluster-2"
+    k8s_role: "worker"
+    ...
+```
+
+### Using Different Cloud Image Versions
+
+Update the `operating_system.image_url` in `config.yaml` to point to a different Cloud image:
+
+For Fedora visit the downloads website https://download.fedoraproject.org/pub/fedora/linux/releases/ and pick the version that is required.
+
+```yaml
+operating_system:
+  image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
+  image_name: "Fedora-x86_64.qcow2"
+  cloud_init_iso_name: "Fedora-x86_64-cloud-init.iso"
+```
+
 ## Usage
 
-### Deploy VMs
+### Step 0: Choosing the right script
 
-**Step 1:** Deploy all Host and DPU VMs and the network:
+You can choose to deploy just the VMs with `deploy.py` or deploy the software installation with `install_software.py`. The `dpu-sim.py` script will run both for your convenience.
+
+### Step 1: Deploy VMs
+
+Deploy all Host and DPU VMs and the network:
 
 ```bash
 python3 deploy.py
@@ -183,42 +278,134 @@ This will:
 
 **Note:** The deploy script is idempotent by default - it automatically cleans up existing resources before deploying. You can run it multiple times safely. If you want to skip cleanup for some reason, use `python3 deploy.py --no-cleanup`
 
-**Step 2:** Install Kubernetes and OVS on all VMs:
+### Step 2: Install Software
+
+The project supports **fully automated Kubernetes cluster setup** with support for **multiple independent clusters**, each with custom pod network CIDRs. The `install_software.py` script handles all aspects of software installation, cluster initialization, CNI installation, and node joining automatically.
 
 ```bash
-# Install sequentially (recommended for first time)
+python3 install_software.py
+```
+
+#### Key Features
+
+- **Automatic Cluster Initialization**: No manual `kubeadm` commands needed
+- **Multiple Cluster Support**: Deploy multiple independent K8s clusters in one configuration
+- **Custom Pod Network CIDRs**: Each cluster can have its own pod network CIDR(default: `10.244.0.0/16`)
+- **Automatic CNI Installation**: Flannel is automatically installed and configured
+- **Role-Based Assignment**: VMs are assigned as `master` or `worker` nodes
+- **Network Isolation**: Different clusters use different overlay networks
+
+#### Automated Setup
+
+The `install_software.py` script automatically SSH into each VM to install components:
+
+For Software Installation on all VMs
+1. Disable swap (required for Kubernetes)
+2. Configure kernel modules (overlay, br_netfilter)
+3. Install and configure CRI-O
+4. Install Open vSwitch
+5. Add the upstream Kubernetes repo
+6. Installs Kubernetes components (kubeadm, kubelet, kubectl)
+7. Configure the firewall rules
+```
+- TCP 6443: Kubernetes API server
+- TCP 2379-2380: etcd server client API
+- TCP 10250: Kubelet API
+- TCP 10251: kube-scheduler
+- TCP 10252: kube-controller-manager
+- TCP 10255: Read-only Kubelet API
+- TCP 30000-32767: NodePort Services
+```
+For Kubernetes Install on selected or all VMs
+1. First the script groups VMs by cluster assignment
+3. Initializes each cluster on its master node with the custom (or default) pod CIDR
+4. Installs and configures a Flannel CNI deployment for each cluster
+5. Joins all worker nodes to their respective clusters
+
+Simply run:
+
+```bash
+# Sequential installation (recommended for debugging)
 python3 install_software.py
 
-# Or install in parallel (faster but output is harder to read)
+# Parallel installation (faster)
 python3 install_software.py --parallel
-
-# Or install on a specific VM only
-python3 install_software.py --vm host-1
 ```
 
-This will SSH into each VM and:
-- Disable swap (required for Kubernetes)
-- Configure kernel modules (overlay, br_netfilter)
-- Install and configure containerd
-- Install Open vSwitch
-- Install Kubernetes components (kubeadm, kubelet, kubectl)
-- Configure firewall rules
+After Installation finished, you should expect these software packages to be running:
+- CRI-O container runtime
+- kubelet (Kubernetes node agent)
+- Flannel and other containers are running for example:
+```bash
+[root@master-1 ~]# kubectl get pods -A -o wide
+NAMESPACE      NAME                               READY   STATUS    RESTARTS   AGE   IP               NODE       NOMINATED NODE   READINESS GATES
+default        nginx-pod                          1/1     Running   0          6s    10.244.1.2       host-1     <none>           <none>
+kube-flannel   kube-flannel-ds-2vjg6              1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
+kube-flannel   kube-flannel-ds-7pn7z              1/1     Running   0          37m   192.168.100.41   dpu-1      <none>           <none>
+kube-flannel   kube-flannel-ds-k262k              1/1     Running   0          37m   192.168.100.69   host-1     <none>           <none>
+kube-system    coredns-674b8bbfcf-27jkx           1/1     Running   0          37m   10.85.0.2        master-1   <none>           <none>
+kube-system    coredns-674b8bbfcf-t5cfw           1/1     Running   0          37m   10.85.0.3        master-1   <none>           <none>
+kube-system    etcd-master-1                      1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
+kube-system    kube-apiserver-master-1            1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
+kube-system    kube-controller-manager-master-1   1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
+kube-system    kube-proxy-4jksn                   1/1     Running   0          37m   192.168.100.41   dpu-1      <none>           <none>
+kube-system    kube-proxy-vbbgk                   1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
+kube-system    kube-proxy-xzzpc                   1/1     Running   0          37m   192.168.100.69   host-1     <none>           <none>
+kube-system    kube-scheduler-master-1            1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
+```
 
-**Note:** Installation takes 3-5 minutes per VM (faster in parallel mode).
+#### Kuberenetes Use Cases with DPU Simulation
 
-**Step 3:** Verify Installation
+With cluster support, you can:
 
-After installation, verify that Kubernetes and OVS are properly installed:
+1. **DPU workloads**: Deploy workloads to test DPU offloading
+2. **Open vSwitch**: Configure OVS bridges for data plane traffic
+3. **Testing**: Test the deployment of DPU-accelerated services
+
+With the multi-cluster support, you can:
+
+1. **Multi-Tenancy Scenarios**: Simulate multiple independent Kubernetes environments
+2. **DPU Testing**: Test DPU nodes in either single or dual cluster deployments
+3. **Cross-Cluster Communication**: Experiment with DPU Operator orchestration like https://github.com/openshift/dpu-operator which uses OPI APIs
+
+#### Verify Cluster Setup
+
+After installation completes, verify your cluster(s):
+
+#### Single Cluster
 
 ```bash
-python3 verify_setup.py
+# Check node status
+python3 vmctl.py exec master-1 'kubectl get nodes'
+
+# Expected output:
+# NAME       STATUS   ROLES           AGE   VERSION
+# dpu-1      Ready    <none>          11s   v1.33.6
+# host-1     Ready    <none>          13s   v1.33.6
+# master-1   Ready    control-plane   32s   v1.33.6
+
+
+# Check all pods
+python3 vmctl.py exec master-1 'kubectl get pods -A'
+
+# Check Flannel CNI
+python3 vmctl.py exec master-1 'kubectl get pods -n kube-flannel'
 ```
 
-This will check all VMs and report the status of:
-- Kubernetes components (kubeadm, kubelet, kubectl, containerd)
-- Open vSwitch installation and service status
-- Network connectivity
-- Required kernel modules
+#### Multiple Clusters
+
+```bash
+# Check cluster-1
+python3 vmctl.py exec master-1 'kubectl get nodes'
+
+# Check cluster-2
+python3 vmctl.py exec master-2 'kubectl get nodes'
+
+# Verify different pod CIDRs
+python3 vmctl.py exec master-1 'kubectl get nodes -o jsonpath="{.items[0].spec.podCIDR}"'
+
+python3 vmctl.py exec master-2 'kubectl get nodes -o jsonpath="{.items[0].spec.podCIDR}"'
+```
 
 ### Manage VMs
 
@@ -275,22 +462,21 @@ python3 cleanup.py
 - **Password:** Specified in the config file (default: "redhat")
 - Use console access if SSH is not working
 
-## File Structure
+## Project File Structure
 
 ```
-.
-
 ├── bridge_utils.py       # For Bridge and networking naming utilities.
 ├── cfg_utils.py          # For Configuration utilities
 ├── cleanup.py            # For removing VMs, network, and associated resources
+├── config-2-cluster.yaml # Configuration file for 2 cluster deployment
 ├── config.yaml           # Configuration file
 ├── deploy.py             # VM (Host and DPU) and VM Networking deployment script
+├── dpu-sim.py            # Calls all components (deploy and install software)
 ├── install_software.py   # For K8s and OVS installation script
 ├── quickstart.sh         # For quick setup of dependencies
 ├── README.md             # This file
 ├── requirements.txt      # For Python dependencies
 ├── ssh_utils.py          # For accessing VMs with SSH utilies
-├── verify_setup.py       # For verification of installed components
 ├── vm_utils.py           # For VM (libvirt) utilities
 └── vmctl.py              # VM management utility
 ```
@@ -330,60 +516,40 @@ The download may take time depending on your connection. If it fails:
 2. Verify the image URL in `config.yaml` is correct
 3. Manually download to `/var/lib/libvirt/images/`
 
-## Kubernetes Cluster Setup
-
-After the VMs are deployed and verified, you can set up a Kubernetes cluster:
-
-### Initialize Kubernetes Master (on vm1)
+### Check Cluster Status
 
 ```bash
-# SSH into the first VM
-python3 vmctl.py ssh host-1
+# View detailed node information
+python3 vmctl.py exec master-1 'kubectl get nodes -o wide'
 
-# Initialize the cluster
-sudo kubeadm init --pod-network-cidr=10.244.0.0/16
-
-# Set up kubectl for regular user
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
-
-# Save the join command that is displayed
+# Check system pod status
+python3 vmctl.py exec master-1 'kubectl get pods -A'
 ```
 
-### Join Worker Nodes (on vm2, vm3, vm4)
+### View Cluster Logs
 
 ```bash
-# SSH into each worker VM
-python3 vmctl.py ssh host-2
+# Check kubelet logs on any node
+python3 vmctl.py exec <vm-name> 'sudo journalctl -u kubelet -n 50'
 
-# Run the kubeadm join command from the master
-sudo kubeadm join <master-ip>:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
+# Check kubeadm init logs on master
+python3 vmctl.py exec master-1 'cat /tmp/kubeadm-init.log'
 ```
 
-### Install CNI Plugin (on master)
+### Reset and Reinitialize the Cluster
 
-For OVN-Kubernetes (OVS-based networking):
-```bash
-# On the master node (vm1)
-kubectl apply -f https://raw.githubusercontent.com/ovn-org/ovn-kubernetes/master/dist/images/ovnkube-db.yaml
-kubectl apply -f https://raw.githubusercontent.com/ovn-org/ovn-kubernetes/master/dist/images/ovnkube-master.yaml
-kubectl apply -f https://raw.githubusercontent.com/ovn-org/ovn-kubernetes/master/dist/images/ovnkube-node.yaml
-```
-
-Or use Flannel (simpler):
-```bash
-kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
-```
-
-### Verify Cluster
+If you need to reset a cluster:
 
 ```bash
-# Check nodes
-kubectl get nodes
+# On master node
+python3 vmctl.py exec master-1 'sudo kubeadm reset -f'
 
-# Check pods
-kubectl get pods -A
+# On worker nodes
+python3 vmctl.py exec host-1 'sudo kubeadm reset -f'
+python3 vmctl.py exec dpu-1 'sudo kubeadm reset -f'
+
+# Re-run installation
+python3 install_software.py
 ```
 
 ## Open vSwitch Usage
@@ -439,58 +605,6 @@ sudo ovs-vsctl list-br
 sudo ovs-vsctl add-port br0 eth1
 ```
 
-## Advanced Usage
-
-### Using Different Cloud Image Versions
-
-Update the `operating_system.image_url` in `config.yaml` to point to a different Cloud image:
-
-For Fedora visit the downloads website https://download.fedoraproject.org/pub/fedora/linux/releases/ and pick the version that is required.
-
-```yaml
-operating_system:
-  image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
-  image_name: "Fedora-x86_64.qcow2"
-  cloud_init_iso_name: "Fedora-x86_64-cloud-init.iso"
-```
-
-### Adding More VMs
-
-Add more VM entries to `config.yaml`:
-
-```yaml
-vms:
-  - name: "host-1"
-    type: "host"
-    memory: 2048  # MB
-    vcpus: 2
-    disk_size: 20  # GB
-    ip: "192.168.100.12"
-
-  - name: "dpu-1"
-    type: "dpu"
-    host: "host-1"
-    memory: 2048  # MB
-    vcpus: 2
-    disk_size: 20  # GB
-    ip: "192.168.100.13"
-
-  - name: "host-2"
-    type: "host"
-    memory: 2048  # MB
-    vcpus: 2
-    disk_size: 20  # GB
-    ip: "192.168.100.14"
-
-  - name: "dpu-2"
-    type: "dpu"
-    host: "host-1"
-    memory: 2048  # MB
-    vcpus: 2
-    disk_size: 20  # GB
-    ip: "192.168.100.15"
-```
-
 ## License
 
 This project is provided as-is for educational and development purposes.
@@ -498,4 +612,3 @@ This project is provided as-is for educational and development purposes.
 ## Contributing
 
 Feel free to submit issues and enhancement requests!
-
