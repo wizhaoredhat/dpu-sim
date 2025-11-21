@@ -26,24 +26,52 @@ vms:
     disk_size: 20  # GB
     ip: "192.168.100.12"
 
-  - name: "host-1"
+  - name: "master-2"
+    type: "host"
+    k8s_cluster: "cluster-2"
+    k8s_role: "master"
+    memory: 2048  # MB
+    vcpus: 2
+    disk_size: 20  # GB
+    ip: "192.168.100.20"
+
+  - name: "host-1-1"
     type: "host"
     k8s_cluster: "cluster-1"
     k8s_role: "worker"
     memory: 2048  # MB
     vcpus: 2
     disk_size: 20  # GB
-    ip: "192.168.100.12"
+    ip: "192.168.100.13"
 
-  - name: "dpu-1"
+  - name: "dpu-1-1"
     type: "dpu"
-    k8s_cluster: "cluster-1"
+    k8s_cluster: "cluster-2"
     k8s_role: "worker"
-    host: "host-1"
+    host: "worker-1-1"
     memory: 2048  # MB
     vcpus: 2
     disk_size: 20  # GB
-    ip: "192.168.100.13"
+    ip: "192.168.100.14"
+
+  - name: "host-2-1"
+    type: "host"
+    k8s_cluster: "cluster-1"
+    k8s_role: "worker"
+    memory: 2048  # MB
+    vcpus: 2
+    disk_size: 20  # GB
+    ip: "192.168.100.21"
+
+  - name: "dpu-2-1"
+    type: "dpu"
+    k8s_cluster: "cluster-2"
+    k8s_role: "worker"
+    host: "worker-2-1"
+    memory: 2048  # MB
+    vcpus: 2
+    disk_size: 20  # GB
+    ip: "192.168.100.22"
 
 operating_system:
   # Download from https://download.fedoraproject.org/pub/fedora/linux/releases/
@@ -54,11 +82,13 @@ operating_system:
 ssh:
   user: "root"
   key_path: "~/.ssh/id_rsa"
-  password: "redhat"  # Default password for console/SSH access
+  password: "redhat"
 
 kubernetes:
   version: "1.33"
   clusters:
     - name: "cluster-1"
       pod_cidr: "10.244.0.0/16"
+    - name: "cluster-2"
+      pod_cidr: "10.245.0.0/16"
 
