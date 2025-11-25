@@ -444,6 +444,89 @@ exit 1
             print("✗ Flannel pods may still be initializing (this is normal)")
             return True  # Don't fail the installation
 
+    def _install_multus(self, ip: str, vm_name: str) -> bool:
+        """Install Multus CNI on the master node
+        Multus is a meta-plugin that enables attaching multiple network interfaces to pods.
+        It wraps an existing CNI plugin (like Flannel) as the default network and allows
+        additional networks to be attached via NetworkAttachmentDefinitions.
+
+        Args:
+            ip: IP address of the master node
+            vm_name: Name of the VM
+        Returns:
+            True if Multus is installed, False otherwise
+        """
+        print(f"\n--- Installing Multus CNI on {vm_name} ---")
+
+        # Install Multus thick plugin (recommended for most deployments)
+        # The thick plugin runs as a daemon and provides better stability
+        multus_install = """
+kubectl apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset-thick.yml
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, ip, multus_install,
+            capture_output=True, timeout=300
+        )
+
+        if success:
+            print("✓ Multus CNI installed")
+            if stdout:
+                print(stdout)
+        else:
+            print(f"✗ Failed to install Multus: {stderr}")
+            return False
+
+        # Wait for Multus pods to be ready
+        print("  Waiting for Multus pods to be ready...")
+        wait_cmd = """
+for i in {1..30}; do
+    if kubectl get pods -n kube-system -l app=multus -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null | grep -q true; then
+        echo "ready"
+        exit 0
+    fi
+    sleep 2
+done
+echo "timeout"
+exit 1
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, ip, wait_cmd,
+            capture_output=True, timeout=90
+        )
+
+        if success and "ready" in stdout:
+            print("✓ Multus pods are ready")
+        else:
+            print("✗ Multus pods may still be initializing (this is normal)")
+
+        # Verify Multus installation by checking the CNI config
+        print("  Verifying Multus CNI configuration...")
+        verify_cmd = """
+# Check if Multus has created its CNI config
+if ls /etc/cni/net.d/*multus* 2>/dev/null; then
+    echo "Multus CNI config found"
+else
+    echo "Waiting for Multus to create CNI config..."
+    sleep 5
+fi
+
+# List CNI configs to show Multus is wrapping Flannel
+echo "CNI configurations:"
+ls -la /etc/cni/net.d/ 2>/dev/null || echo "CNI directory not accessible"
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, ip, verify_cmd,
+            capture_output=True, timeout=30
+        )
+
+        if success and stdout:
+            print(stdout)
+
+        print("✓ Multus CNI setup complete - Flannel is now the default network")
+        print("  Additional networks can be added via NetworkAttachmentDefinitions")
+
+        return True
+
     def _join_k8s_worker(self, ip: str, vm_name: str, join_command: str) -> bool:
         """Join a worker node to the Kubernetes cluster
         Args:
@@ -608,6 +691,15 @@ exit 1
 
             if not self._install_flannel(master_ip, master_name, pod_cidr):
                 print(f"✗ Failed to install Flannel CNI on {master_name}")
+                self.cluster_setup_results[cluster_name] = False
+                all_success = False
+                cluster_success = False
+                continue
+
+            # Install Multus CNI on top of Flannel
+            # Multus wraps Flannel as the default network and enables multiple network interfaces
+            if not self._install_multus(master_ip, master_name):
+                print(f"✗ Failed to install Multus CNI on {master_name}")
                 self.cluster_setup_results[cluster_name] = False
                 all_success = False
                 cluster_success = False

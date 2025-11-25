@@ -339,19 +339,22 @@ After Installation finished, you should expect these software packages to be run
 ```bash
 [root@master-1 ~]# kubectl get pods -A -o wide
 NAMESPACE      NAME                               READY   STATUS    RESTARTS   AGE   IP               NODE       NOMINATED NODE   READINESS GATES
-default        nginx-pod                          1/1     Running   0          6s    10.244.1.2       host-1     <none>           <none>
-kube-flannel   kube-flannel-ds-2vjg6              1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
-kube-flannel   kube-flannel-ds-7pn7z              1/1     Running   0          37m   192.168.100.41   dpu-1      <none>           <none>
-kube-flannel   kube-flannel-ds-k262k              1/1     Running   0          37m   192.168.100.69   host-1     <none>           <none>
-kube-system    coredns-674b8bbfcf-27jkx           1/1     Running   0          37m   10.85.0.2        master-1   <none>           <none>
-kube-system    coredns-674b8bbfcf-t5cfw           1/1     Running   0          37m   10.85.0.3        master-1   <none>           <none>
-kube-system    etcd-master-1                      1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
-kube-system    kube-apiserver-master-1            1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
-kube-system    kube-controller-manager-master-1   1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
-kube-system    kube-proxy-4jksn                   1/1     Running   0          37m   192.168.100.41   dpu-1      <none>           <none>
-kube-system    kube-proxy-vbbgk                   1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
-kube-system    kube-proxy-xzzpc                   1/1     Running   0          37m   192.168.100.69   host-1     <none>           <none>
-kube-system    kube-scheduler-master-1            1/1     Running   0          37m   192.168.100.14   master-1   <none>           <none>
+kube-flannel   kube-flannel-ds-btnhv              1/1     Running   0          11m   192.168.100.86   dpu-1      <none>           <none>
+kube-flannel   kube-flannel-ds-t7d44              1/1     Running   0          11m   192.168.100.14   master-1   <none>           <none>
+kube-flannel   kube-flannel-ds-vdhjz              1/1     Running   0          11m   192.168.100.23   host-1     <none>           <none>
+kube-system    coredns-674b8bbfcf-2g6tz           1/1     Running   0          11m   10.85.0.3        master-1   <none>           <none>
+kube-system    coredns-674b8bbfcf-qhsw7           1/1     Running   0          11m   10.85.0.2        master-1   <none>           <none>
+kube-system    etcd-master-1                      1/1     Running   0          11m   192.168.100.14   master-1   <none>           <none>
+kube-system    kube-apiserver-master-1            1/1     Running   0          11m   192.168.100.14   master-1   <none>           <none>
+kube-system    kube-controller-manager-master-1   1/1     Running   0          11m   192.168.100.14   master-1   <none>           <none>
+kube-system    kube-multus-ds-jh2l5               1/1     Running   0          11m   192.168.100.86   dpu-1      <none>           <none>
+kube-system    kube-multus-ds-rzqj2               1/1     Running   0          11m   192.168.100.23   host-1     <none>           <none>
+kube-system    kube-multus-ds-vn4bv               1/1     Running   0          11m   192.168.100.14   master-1   <none>           <none>
+kube-system    kube-proxy-69q6s                   1/1     Running   0          11m   192.168.100.23   host-1     <none>           <none>
+kube-system    kube-proxy-9fq5x                   1/1     Running   0          11m   192.168.100.86   dpu-1      <none>           <none>
+kube-system    kube-proxy-kc9fd                   1/1     Running   0          11m   192.168.100.14   master-1   <none>           <none>
+kube-system    kube-scheduler-master-1            1/1     Running   0          11m   192.168.100.14   master-1   <none>           <none>
+
 ```
 
 #### Kuberenetes Use Cases with DPU Simulation
@@ -377,19 +380,18 @@ After installation completes, verify your cluster(s):
 ```bash
 # Check node status
 python3 vmctl.py exec master-1 'kubectl get nodes'
-
-# Expected output:
-# NAME       STATUS   ROLES           AGE   VERSION
-# dpu-1      Ready    <none>          11s   v1.33.6
-# host-1     Ready    <none>          13s   v1.33.6
-# master-1   Ready    control-plane   32s   v1.33.6
-
+NAME       STATUS   ROLES           AGE   VERSION
+dpu-1      Ready    <none>          13m   v1.33.6
+host-1     Ready    <none>          13m   v1.33.6
+master-1   Ready    control-plane   13m   v1.33.6
 
 # Check all pods
 python3 vmctl.py exec master-1 'kubectl get pods -A'
+...
 
 # Check Flannel CNI
 python3 vmctl.py exec master-1 'kubectl get pods -n kube-flannel'
+...
 ```
 
 #### Multiple Clusters
