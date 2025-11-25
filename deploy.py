@@ -69,6 +69,20 @@ class VMDeployer:
             return False
 
 
+    def _build_dhcp_reservations(self, net_config: Dict[str, Any]) -> str:
+        """Build DHCP host reservation entries for k8s networks"""
+        if net_config.get('type') != 'k8s':
+            return ""
+
+        reservations = ""
+        for vm_config in self.config.get('vms', []):
+            mac = vm_config.get('k8s_node_mac')
+            ip = vm_config.get('k8s_node_ip')
+            name = vm_config.get('name')
+            if mac and ip:
+                reservations += f"      <host mac='{mac}' name='{name}' ip='{ip}'/>\n"
+        return reservations
+
     def create_network(self, net_config: Dict[str, Any]) -> bool:
         """Create a custom libvirt network"""
         net_name = net_config['name']
@@ -101,6 +115,8 @@ class VMDeployer:
 """
         elif net_mode == 'nat':
             # NAT mode - VMs can access internet
+            # Build DHCP reservations for k8s networks
+            dhcp_reservations = self._build_dhcp_reservations(net_config)
             network_xml = f"""
 <network>
   <name>{net_name}</name>
@@ -109,7 +125,7 @@ class VMDeployer:
   <ip address='{net_config['gateway']}' netmask='{net_config['subnet_mask']}'>
     <dhcp>
       <range start='{net_config['dhcp_start']}' end='{net_config['dhcp_end']}'/>
-    </dhcp>
+{dhcp_reservations}    </dhcp>
   </ip>
 </network>
 """
@@ -345,7 +361,12 @@ runcmd:
                 if use_ovs:
                     virtualport = "\n      <virtualport type='openvswitch'/>"
 
-                network_interfaces += f"""    <interface type='network'>
+                # Add fixed MAC address for k8s networks
+                mac_element = ""
+                if net_config.get('type') == 'k8s' and vm_config.get('k8s_node_mac'):
+                    mac_element = f"\n      <mac address='{vm_config['k8s_node_mac']}'/>"
+
+                network_interfaces += f"""    <interface type='network'>{mac_element}
       <source network='{net_config['name']}'/>{virtualport}
       <model type='{nic_model}'/>
     </interface>

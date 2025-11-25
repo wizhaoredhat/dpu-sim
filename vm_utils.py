@@ -4,11 +4,13 @@ Shared utilities for VM deployment and cleanup
 """
 
 import libvirt
+import subprocess
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 from bridge_utils import generate_bridge_name, cleanup_ovs_bridge, get_host_to_dpu_network_name
 from cfg_utils import get_host_dpu_pairs
+from ssh_utils import ssh_command
 
 
 def connect_libvirt() -> Optional[libvirt.virConnect]:
@@ -26,6 +28,100 @@ def connect_libvirt() -> Optional[libvirt.virConnect]:
     except libvirt.libvirtError as e:
         print(f"✗ Failed to connect to libvirt: {e}")
         return None
+
+
+def get_vm_interface_info_by_type(
+    config: Dict[str, Any],
+    vm_ip: str,
+    network_type: str
+) -> Optional[Tuple[str, str]]:
+    """Get the interface name and IP address inside a VM for a network of a given type
+
+    This function finds the network with the specified type (e.g., 'k8s' or 'mgmt')
+    in the config, then retrieves the corresponding interface info from inside the VM.
+
+    Args:
+        config: Configuration dictionary containing network and SSH settings
+        vm_ip: IP address of the VM (management IP to SSH into)
+        network_type: Type of network to find (e.g., 'k8s', 'mgmt')
+
+    Returns:
+        Tuple of (interface_name, ip_address) or None if not found
+    """
+    # Find the network with the specified type
+    network = None
+    for net in config.get('networks', []):
+        if net.get('type') == network_type:
+            network = net
+            break
+
+    if not network:
+        print(f"✗ No network with type='{network_type}' found in config")
+        return None
+
+    network_name = network['name']
+    return get_vm_network_interface_info(config, vm_ip, network_name)
+
+
+def get_vm_network_interface_info(
+    config: Dict[str, Any],
+    vm_ip: str,
+    network_name: str
+) -> Optional[Tuple[str, str]]:
+    """Get the interface name and IP address inside a VM for a given network
+
+    Args:
+        config: Configuration dictionary containing network and SSH settings
+        vm_ip: IP address of the VM (management IP to SSH into)
+        network_name: Name of the libvirt network (e.g., "ovn-network")
+
+    Returns:
+        Tuple of (interface_name, ip_address) or None if not found
+    """
+    # Find the network config to get the subnet info
+    network_config = None
+    for net in config.get('networks', []):
+        if net['name'] == network_name:
+            network_config = net
+            break
+
+    if not network_config:
+        print(f"✗ Network {network_name} not found in config")
+        return None
+
+    # Get the gateway IP and determine the subnet prefix
+    gateway = network_config.get('gateway', '')
+    if not gateway:
+        print(f"✗ No gateway defined for network {network_name}")
+        return None
+
+    # Extract subnet prefix from gateway (e.g., "192.168.123" from "192.168.123.1")
+    subnet_prefix = '.'.join(gateway.split('.')[:-1])
+
+    # SSH into the VM and get interface info
+    # Using 'ip -4 addr show' to list all interfaces with IPv4 addresses
+    success, stdout, stderr = ssh_command(config, vm_ip, "ip -4 -o addr show")
+
+    if not success:
+        print(f"✗ Failed to get interface info from VM: {stderr}")
+        return None
+
+    # Parse output to find the interface matching the network's subnet
+    # Format: "2: eth0    inet 192.168.123.11/24 brd 192.168.123.255 scope global ..."
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 4:
+            # parts[1] is interface name (with colon), parts[3] is IP/CIDR
+            iface_name = parts[1].rstrip(':')
+            ip_with_cidr = parts[3]
+            ip_address = ip_with_cidr.split('/')[0]
+
+            # Check if this IP is in the target network's subnet
+            if ip_address.startswith(subnet_prefix + '.'):
+                return (iface_name, ip_address)
+
+    print(f"✗ No interface found in VM matching network {network_name} (subnet {subnet_prefix}.*)")
+    return None
 
 
 def get_vm_ip(conn: libvirt.virConnect, vm_name: str) -> Optional[str]:

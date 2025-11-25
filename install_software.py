@@ -9,7 +9,7 @@ import time
 import traceback
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from vm_utils import connect_libvirt, get_vm_ip
+from vm_utils import connect_libvirt, get_vm_ip, get_vm_interface_info_by_type
 from cfg_utils import load_config
 from ssh_utils import ssh_command
 
@@ -84,6 +84,30 @@ sudo sed -i '/ swap / s/^/#/' /etc/fstab
                 print(stdout)
         else:
             print(f"✗ Failed to disable swap: {stderr}")
+        return success
+
+    def _set_hostname(self, ip: str, vm_name: str) -> bool:
+        """Set the hostname on the VM to match the VM name from config
+
+        Args:
+            ip: IP address of the VM
+            vm_name: Name of the VM from the YAML config
+        Returns:
+            True if hostname is set, False otherwise
+        """
+        print(f"\n--- Setting hostname to '{vm_name}' ---")
+        set_hostname_cmd = f"sudo hostnamectl set-hostname {vm_name}"
+        success, stdout, stderr = ssh_command(
+            self.config, ip, set_hostname_cmd,
+            capture_output=True, timeout=60
+        )
+
+        if success:
+            print(f"✓ Hostname set to '{vm_name}'")
+            if stdout:
+                print(stdout)
+        else:
+            print(f"✗ Failed to set hostname: {stderr}")
         return success
 
     def _configure_kernel_modules(self, ip: str) -> bool:
@@ -177,8 +201,10 @@ sudo systemctl start crio
         """
         print(f"\n--- Installing Open vSwitch ---")
         ovs_install = """
+sudo dnf install -y NetworkManager-ovs > /dev/null 2>&1 && \
 sudo dnf install -y openvswitch > /dev/null 2>&1 && \
 sudo systemctl enable openvswitch > /dev/null 2>&1 && \
+sudo systemctl restart NetworkManager > /dev/null 2>&1 && \
 sudo systemctl start openvswitch
 """
         success, stdout, stderr = ssh_command(
@@ -253,29 +279,20 @@ sudo systemctl enable kubelet > /dev/null 2>&1
             True if firewall is configured, False otherwise
         """
         print(f"\n--- Configuring firewall ---")
-        firewall_config = """
-if sudo systemctl is-active firewalld > /dev/null 2>&1; then
-    sudo firewall-cmd --permanent --add-port=6443/tcp > /dev/null 2>&1
-    sudo firewall-cmd --permanent --add-port=2379-2380/tcp > /dev/null 2>&1
-    sudo firewall-cmd --permanent --add-port=10250/tcp > /dev/null 2>&1
-    sudo firewall-cmd --permanent --add-port=10251/tcp > /dev/null 2>&1
-    sudo firewall-cmd --permanent --add-port=10252/tcp > /dev/null 2>&1
-    sudo firewall-cmd --permanent --add-port=10255/tcp > /dev/null 2>&1
-    sudo firewall-cmd --permanent --add-port=30000-32767/tcp > /dev/null 2>&1
-    sudo firewall-cmd --reload > /dev/null 2>&1
-    echo "configured"
-fi
+        disable_firewall = """
+sudo systemctl disable --now firewalld
+sudo dnf remove -y firewalld
 """
         success, stdout, stderr = ssh_command(
-            self.config, ip, firewall_config,
+            self.config, ip, disable_firewall,
             capture_output=True, timeout=300
         )
         if success:
-            print("✓ Firewall configured")
+            print("✓ Firewalld disabled and removed")
             if stdout:
                 print(stdout)
         else:
-            print(f"✗ Failed to configure firewall: {stderr}")
+            print(f"✗ Failed to disable/remove firewalld: {stderr}")
         return success
 
     def _verify_installation(self, ip: str) -> bool:
@@ -319,25 +336,30 @@ fi
 
         return all_verified
 
-    def _initialize_k8s_master(self, ip: str, vm_name: str, pod_cidr: str) -> tuple[bool, str | None]:
+    def _initialize_k8s_master(self, mgmt_ip: str, k8s_node_ip: str, vm_name: str, pod_cidr: str, service_cidr: str) -> tuple[bool, str | None]:
         """Initialize Kubernetes master node
         Args:
-            ip: IP address of the master node
+            mgmt_ip: Management IP address of the master node (for SSH)
+            k8s_node_ip: Kubernetes node IP address (for apiserver)
             vm_name: Name of the VM
             pod_cidr: Pod network CIDR for the cluster
+            service_cidr: Service network CIDR for the cluster
         Returns:
             Tuple of (success, join_command) where join_command is the command workers need to join
         """
         print(f"\n--- Initializing Kubernetes Master on {vm_name} ---")
+        print(f"  Management IP: {mgmt_ip}")
+        print(f"  Kubernetes Node IP: {k8s_node_ip}")
         print(f"  Pod Network CIDR: {pod_cidr}")
+        print(f"  Service CIDR: {service_cidr}")
 
         # Initialize cluster with kubeadm
         init_cmd = f"""
-sudo kubeadm init --pod-network-cidr={pod_cidr} --apiserver-advertise-address={ip} 2>&1 | tee /tmp/kubeadm-init.log
+sudo kubeadm init --pod-network-cidr={pod_cidr} --service-cidr={service_cidr} --apiserver-advertise-address={k8s_node_ip} 2>&1 | tee /tmp/kubeadm-init.log
 """
         print("  Initializing cluster...")
         success, stdout, stderr = ssh_command(
-            self.config, ip, init_cmd,
+            self.config, mgmt_ip, init_cmd,
             capture_output=True, timeout=600
         )
 
@@ -357,7 +379,7 @@ sudo cp /etc/kubernetes/admin.conf /root/.kube/config
 sudo chown root:root /root/.kube/config
 """
         success, stdout, stderr = ssh_command(
-            self.config, ip, setup_kubectl,
+            self.config, mgmt_ip, setup_kubectl,
             capture_output=True, timeout=300
         )
 
@@ -370,7 +392,7 @@ sudo chown root:root /root/.kube/config
         # Extract join command
         get_join_cmd = "sudo kubeadm token create --print-join-command 2>/dev/null"
         success, join_command, stderr = ssh_command(
-            self.config, ip, get_join_cmd,
+            self.config, mgmt_ip, get_join_cmd,
             capture_output=True, timeout=300
         )
 
@@ -443,6 +465,277 @@ exit 1
         else:
             print("✗ Flannel pods may still be initializing (this is normal)")
             return True  # Don't fail the installation
+
+    def _install_ovn_kubernetes(self, mgmt_ip: str, k8s_node_ip: str, vm_name: str, pod_cidr: str, service_cidr: str) -> bool:
+        """Install OVN-Kubernetes CNI on the master node
+        OVN-Kubernetes provides advanced networking features including:
+        - Network policies
+        - Egress IPs
+        - Hardware offload support for SmartNICs/DPUs
+
+        Args:
+            mgmt_ip: Management IP address of the master node (for SSH)
+            k8s_node_ip: Kubernetes node IP address (for apiserver)
+            vm_name: Name of the VM
+            pod_cidr: Pod network CIDR for the cluster
+            service_cidr: Service network CIDR for the cluster
+        Returns:
+            True if OVN-Kubernetes is installed, False otherwise
+        """
+        print(f"\n--- Installing OVN-Kubernetes CNI on {vm_name} ---")
+        print(f"  Pod CIDR: {pod_cidr}")
+        print(f"  Service CIDR: {service_cidr}")
+        print(f"  K8s API Server: https://{k8s_node_ip}:6443")
+
+        # Clone OVN-Kubernetes repo and apply manifests
+        # OVN-Kubernetes requires downloading the repo and running the installation script
+        # All documented here: https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/installation/INSTALL.KUBEADM.md
+        ovn_image = "ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master"
+        ovnk_install = f"""
+sudo dnf install -y git python3 pip3 > /dev/null 2>&1
+
+# Clone OVN-Kubernetes repository
+cd /tmp
+rm -rf ovn-kubernetes
+git clone https://github.com/ovn-org/ovn-kubernetes.git --depth 1
+
+cd ovn-kubernetes/dist/images
+
+# Set the OVN-Kubernetes image
+# From: https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/developer-guide/image-build.md
+
+# Generate the OVN-Kubernetes manifests (uses python3 and pip3 to generate the yaml files below)
+./daemonset.sh --image={ovn_image} \
+    --net-cidr={pod_cidr} \
+    --svc-cidr={service_cidr} \
+    --gateway-mode="shared" \
+    --k8s-apiserver=https://{k8s_node_ip}:6443
+
+# Apply the manifests
+# ovn-setup.yaml creates the ovn-kubernetes namespace and RBAC resources (no pods are created)
+kubectl create -f ../yaml/ovn-setup.yaml
+# Create all RBAC resources and service accounts
+kubectl create -f ../yaml/rbac-ovnkube-master.yaml
+kubectl create -f ../yaml/rbac-ovnkube-db.yaml
+kubectl create -f ../yaml/rbac-ovnkube-node.yaml
+kubectl create -f ../yaml/rbac-ovnkube-identity.yaml
+
+# ovnkube-identity.yaml creates the ovnkube-identity deployment which approves pending CSRs
+kubectl create -f ../yaml/ovnkube-identity.yaml
+
+# ovnkube-db.yaml creates the ovnkube-db deployment
+kubectl create -f ../yaml/ovnkube-db.yaml
+
+# Wait for ovnkube-db deployment to be ready
+kubectl rollout status deployment/ovnkube-db -n ovn-kubernetes --timeout=300s
+
+# ovnkube-master.yaml creates the ovnkube-master deployment
+kubectl create -f ../yaml/ovnkube-master.yaml
+
+# Wait for ovnkube-master deployment to be ready
+kubectl rollout status deployment/ovnkube-master -n ovn-kubernetes --timeout=300s
+
+# Wait for ovnkube-master pod to be fully ready (all containers running)
+echo "Waiting for ovnkube-master pod to be fully ready..."
+kubectl wait --for=condition=Ready pod -l name=ovnkube-master -n ovn-kubernetes --timeout=300s
+
+# ovnkube-node.yaml creates the ovnkube-node daemonset
+kubectl create -f ../yaml/ovnkube-node.yaml
+
+# Auto-approve any pending CSRs for ovnkube-node
+sleep 5
+for csr in $(kubectl get csr -o name 2>/dev/null); do
+    kubectl certificate approve $csr 2>/dev/null || true
+done
+
+# Wait for ovnkube-node daemonset to be ready
+kubectl rollout status daemonset/ovnkube-node -n ovn-kubernetes --timeout=300s
+
+# Delete kube-proxy DaemonSet
+kubectl delete ds -n kube-system kube-proxy
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, mgmt_ip, ovnk_install,
+            capture_output=True, timeout=600
+        )
+
+        if success:
+            print("✓ OVN-Kubernetes CNI installed")
+            if stdout:
+                print(stdout)
+        else:
+            print(f"✗ Failed to install OVN-Kubernetes: {stderr}")
+            return False
+
+        # Wait for OVN-Kubernetes pods to be ready
+        print("  Waiting for OVN-Kubernetes pods to be ready...")
+        wait_cmd = """
+for i in {1..60}; do
+    # Check if ovnkube-master and ovnkube-node pods are running
+    master_ready=$(kubectl get pods -n ovn-kubernetes -l name=ovnkube-master -o jsonpath='{.items[*].status.phase}' 2>/dev/null | grep -c Running || echo 0)
+    node_ready=$(kubectl get pods -n ovn-kubernetes -l name=ovnkube-node -o jsonpath='{.items[*].status.phase}' 2>/dev/null | grep -c Running || echo 0)
+
+    if [ "$master_ready" -ge 1 ] && [ "$node_ready" -ge 1 ]; then
+        echo "ready"
+        exit 0
+    fi
+    sleep 5
+done
+echo "timeout"
+exit 1
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, mgmt_ip, wait_cmd,
+            capture_output=True, timeout=320
+        )
+
+        if success and "ready" in stdout:
+            print("✓ OVN-Kubernetes pods are ready")
+        else:
+            print("✗ OVN-Kubernetes pods may still be initializing (this is normal)")
+
+        # Display OVN-Kubernetes status
+        print("  Checking OVN-Kubernetes status...")
+        status_cmd = """
+echo "OVN-Kubernetes Pods:"
+kubectl get pods -n ovn-kubernetes 2>/dev/null || echo "Namespace not found yet"
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, mgmt_ip, status_cmd,
+            capture_output=True, timeout=30
+        )
+
+        if success and stdout:
+            print(stdout)
+
+        print("✓ OVN-Kubernetes CNI setup complete")
+        return True
+
+    def _setup_ovn_brex(self, ip: str, vm_name: str) -> bool:
+        """Setup br-ex (external bridge) for OVN-Kubernetes
+        The br-ex bridge is the external gateway bridge that handles traffic
+        between the cluster and external networks. This is required for
+        OVN-Kubernetes gateway functionality.
+
+        This function finds the network with type="k8s" in the config, gets the
+        corresponding interface inside the VM, creates br-ex, adds that interface
+        to the bridge, and moves the IP address to br-ex.
+
+        Args:
+            ip: IP address of the node (management IP to SSH into)
+            vm_name: Name of the VM
+        Returns:
+            True if br-ex is setup successfully, False otherwise
+        """
+        print(f"\n--- Setting up br-ex bridge on {vm_name} ---")
+
+        # Get the interface name and IP address for the MGMT network
+        result = get_vm_interface_info_by_type(self.config, ip, 'mgmt')
+        if not result:
+            print("✗ Could not find interface for MGMT network in VM")
+            return False
+
+        mgmt_iface_name, mgmt_iface_ip = result
+        print(f"  MGMT Interface: {mgmt_iface_name}, IP: {mgmt_iface_ip}")
+
+        # Get the interface name and IP address for the K8s network
+        result = get_vm_interface_info_by_type(self.config, ip, 'k8s')
+        if not result:
+            print("✗ Could not find interface for K8s network in VM")
+            return False
+
+        iface_name, iface_ip = result
+        print(f"  K8s Interface: {iface_name}, IP: {iface_ip}")
+
+        # Setup br-ex OVS bridge for OVN-Kubernetes
+        # This creates the external bridge, adds the interface, and moves the IP
+        brex_setup = f"""
+BRIDGE_NAME=br-ex
+IF1={mgmt_iface_name}
+IF1_CONN=$(nmcli -g GENERAL.CONNECTION device show $IF1)
+IF2={iface_name}
+IF2_MAC=$(cat /sys/class/net/$IF2/address)
+
+nmcli c add type ovs-bridge conn.interface $BRIDGE_NAME con-name $BRIDGE_NAME
+nmcli c add type ovs-port conn.interface $BRIDGE_NAME master $BRIDGE_NAME con-name ovs-port-$BRIDGE_NAME
+nmcli c add type ovs-interface slave-type ovs-port conn.interface $BRIDGE_NAME master ovs-port-$BRIDGE_NAME con-name ovs-if-$BRIDGE_NAME
+nmcli c add type ovs-port conn.interface $IF2 master $BRIDGE_NAME con-name ovs-port-$IF2
+nmcli c add type ethernet conn.interface $IF2 master ovs-port-$IF2 con-name ovs-if-$IF2
+nmcli conn delete $IF2
+sudo ip addr flush dev $IF2
+nmcli conn mod $BRIDGE_NAME connection.autoconnect yes
+nmcli conn mod ovs-if-$IF2 connection.autoconnect yes
+nmcli conn mod ovs-port-$IF2 connection.autoconnect yes
+nmcli conn mod ovs-if-$BRIDGE_NAME connection.autoconnect yes
+nmcli conn mod ovs-port-$BRIDGE_NAME connection.autoconnect yes
+# Set the br-ex interface to use DHCP
+nmcli conn mod ovs-if-$BRIDGE_NAME ipv4.method auto
+nmcli conn mod ovs-if-$BRIDGE_NAME ipv4.route-metric 50
+# Set the br-ex interface to be the default route
+nmcli conn mod ovs-if-$BRIDGE_NAME ipv4.never-default no
+# Set the MAC address of the br-ex interface to the MAC address of the IF2 interface
+# to get the same DHCP lease on the br-ex interface as the IF2 interface
+nmcli conn mod ovs-if-$BRIDGE_NAME 802-3-ethernet.cloned-mac-address $IF2_MAC
+
+# Make sure the MGMT interface is not the default route
+nmcli conn mod "$IF1_CONN" ipv4.never-default yes
+nmcli conn mod "$IF1_CONN" ipv4.ignore-auto-dns yes
+nmcli conn up "$IF1_CONN"
+
+# Activate the OVS connections immediately (order matters: bridge first, then ports)
+nmcli conn up $BRIDGE_NAME
+nmcli conn up ovs-if-$IF2
+nmcli conn up ovs-port-$IF2
+nmcli conn up ovs-if-$BRIDGE_NAME
+nmcli conn up ovs-port-$BRIDGE_NAME
+
+# Known issue for br-int bridge (not properly created by OVN)
+ovs-vsctl add-br br-int
+
+# Set br-ex as the external bridge for OVN
+#sudo ovs-vsctl set open_vswitch . external-ids:ovn-bridge-mappings="physnet1:br-ex"
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, ip, brex_setup,
+            capture_output=True, timeout=120
+        )
+
+        if success:
+            print("✓ br-ex bridge created and configured")
+            if stdout:
+                print(stdout)
+        else:
+            print(f"✗ Failed to setup br-ex bridge: {stderr}")
+            return False
+
+        # Verify the bridge is properly configured
+        verify_cmd = """
+echo "OVS bridges:"
+sudo ovs-vsctl list-br
+sudo ovs-vsctl show
+
+echo "Routes:"
+ip r
+
+echo "Bridge br-ex interface status:"
+ip addr ls dev br-ex
+
+echo "NMCLI connections:"
+nmcli conn
+
+echo "OVN external-ids:"
+sudo ovs-vsctl get open_vswitch . external-ids
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, ip, verify_cmd,
+            capture_output=True, timeout=30
+        )
+
+        if success and stdout:
+            print(stdout)
+
+        print("✓ br-ex bridge setup complete")
+        return True
 
     def _install_multus(self, ip: str, vm_name: str) -> bool:
         """Install Multus CNI on the master node
@@ -553,6 +846,149 @@ ls -la /etc/cni/net.d/ 2>/dev/null || echo "CNI directory not accessible"
             print(f"✗ Failed to join {vm_name} to cluster: {stderr}")
             return False
 
+    def _approve_pending_csrs(self, master_ip: str) -> bool:
+        """Approve all pending Certificate Signing Requests (CSRs)
+
+        This is needed after worker nodes join the cluster, as kubelet generates
+        CSRs that need to be approved for the node to be fully functional.
+
+        Args:
+            master_ip: IP address of the master node (to run kubectl commands)
+        Returns:
+            True if CSRs were approved successfully, False otherwise
+        """
+        print("  Approving pending CSRs...")
+
+        # Get list of pending CSRs and approve them
+        approve_cmd = """
+for csr in $(kubectl get csr -o jsonpath='{.items[?(@.status.conditions==null)].metadata.name}' 2>/dev/null); do
+    if [ -n "$csr" ]; then
+        echo "Approving CSR: $csr"
+        kubectl certificate approve "$csr" 2>/dev/null || true
+    fi
+done
+
+# Also approve any CSRs that are explicitly in Pending state
+for csr in $(kubectl get csr 2>/dev/null | grep Pending | awk '{print $1}'); do
+    if [ -n "$csr" ]; then
+        echo "Approving CSR: $csr"
+        kubectl certificate approve "$csr" 2>/dev/null || true
+    fi
+done
+echo "CSR approval complete"
+"""
+        success, stdout, stderr = ssh_command(
+            self.config, master_ip, approve_cmd,
+            capture_output=True, timeout=60
+        )
+
+        if success:
+            if stdout and "Approving CSR:" in stdout:
+                print(f"✓ CSRs approved")
+                print(stdout)
+            else:
+                print("  No pending CSRs to approve")
+            return True
+        else:
+            print(f"  Warning: CSR approval check failed: {stderr}")
+            # Don't fail the whole process for CSR issues
+            return True
+
+    def _wait_for_ovnkube_node_and_approve_csrs(self, master_ip: str, worker_node_name: str, max_retries: int = 3) -> bool:
+        """Wait for ovnkube-node pod to be scheduled on a worker, then approve CSRs
+
+        When a worker joins an OVN-Kubernetes cluster, the ovnkube-node daemonset
+        schedules a pod on that worker. The pod generates CSRs that need to be approved
+        before the pod can become fully ready.
+
+        Args:
+            master_ip: IP address of the master node (to run kubectl commands)
+            worker_node_name: Name of the worker node to wait for
+            max_retries: Maximum number of retry attempts
+        Returns:
+            True if successful, False otherwise
+        """
+        for attempt in range(1, max_retries + 1):
+            print(f"  Waiting for ovnkube-node pod on {worker_node_name} (attempt {attempt}/{max_retries})...")
+
+            # Wait for ovnkube-node pod to be scheduled on this worker
+            wait_cmd = f"""
+for i in $(seq 1 24); do
+    # Check if ovnkube-node pod exists on this node
+    pod=$(kubectl get pods -n ovn-kubernetes -l name=ovnkube-node \
+        --field-selector spec.nodeName={worker_node_name} \
+        -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null)
+    if [ -n "$pod" ]; then
+        echo "pod_found:$pod"
+        exit 0
+    fi
+    sleep 5
+done
+echo "timeout"
+exit 1
+"""
+            success, stdout, stderr = ssh_command(
+                self.config, master_ip, wait_cmd,
+                capture_output=True, timeout=150
+            )
+
+            if not success or "timeout" in stdout:
+                print(f"  Warning: ovnkube-node pod not found on {worker_node_name}")
+                continue
+
+            pod_name = stdout.strip().split("pod_found:")[-1].strip()
+            print(f"  Found ovnkube-node pod: {pod_name}")
+
+            self._approve_pending_csrs(master_ip)
+
+            # Wait for all containers in the ovnkube-node pod to become ready
+            print(f"  Waiting for all ovnkube-node containers to be ready on {worker_node_name}...")
+            ready_cmd = f"""
+POD=$(kubectl get pods -n ovn-kubernetes -l name=ovnkube-node \
+    --field-selector spec.nodeName={worker_node_name} \
+    -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null)
+
+if [ -z "$POD" ]; then
+    echo "no_pod"
+    exit 1
+fi
+
+# Wait up to 60 seconds for all containers to be ready
+for i in $(seq 1 12); do
+    TOTAL=$(kubectl get pod "$POD" -n ovn-kubernetes -o jsonpath='{{.spec.containers[*].name}}' 2>/dev/null | wc -w)
+    READY=$(kubectl get pod "$POD" -n ovn-kubernetes -o jsonpath='{{.status.containerStatuses[?(@.ready==true)].name}}' 2>/dev/null | wc -w)
+
+    if [ "$TOTAL" -gt 0 ] && [ "$TOTAL" -eq "$READY" ]; then
+        echo "all_ready:$READY/$TOTAL"
+        exit 0
+    fi
+    echo "waiting:$READY/$TOTAL"
+    sleep 5
+done
+echo "timeout:$READY/$TOTAL"
+exit 1
+"""
+            success, stdout, stderr = ssh_command(
+                self.config, master_ip, ready_cmd,
+                capture_output=True, timeout=90
+            )
+
+            if success and "all_ready:" in stdout:
+                container_status = stdout.strip().split("all_ready:")[-1].strip()
+                print(f"  ✓ All ovnkube-node containers are ready on {worker_node_name} ({container_status})")
+                return True
+            else:
+                # Extract last status for logging
+                if "timeout:" in stdout or "waiting:" in stdout:
+                    status_line = [l for l in stdout.strip().split('\n') if ':' in l][-1] if stdout else "unknown"
+                    print(f"  ovnkube-node containers not ready yet on {worker_node_name} ({status_line}), retrying...")
+                else:
+                    print(f"  ovnkube-node not ready yet on {worker_node_name}, retrying...")
+                self._approve_pending_csrs(master_ip)
+
+        print(f"  ✗ Failed: ovnkube-node did not become ready on {worker_node_name} after {max_retries} attempts")
+        return False
+
     def install_on_vm(self, vm_name: str) -> bool:
         """Install Kubernetes and OVS on a VM"""
 
@@ -575,6 +1011,9 @@ ls -la /etc/cni/net.d/ 2>/dev/null || echo "CNI directory not accessible"
             return False
 
         if not self._disable_swap(ip):
+            return False
+
+        if not self._set_hostname(ip, vm_name):
             return False
 
         if not self._configure_kernel_modules(ip):
@@ -642,21 +1081,19 @@ ls -la /etc/cni/net.d/ 2>/dev/null || echo "CNI directory not accessible"
             return True
 
         # Setup each cluster
-        all_success = True
         for cluster_name, vms in clusters_vms.items():
             print(f"Setting up cluster: {cluster_name}")
-            cluster_success = True
 
             cluster_config = self.get_cluster_config(cluster_name)
             if not cluster_config:
                 print(f"✗ Cluster configuration not found for '{cluster_name}'")
                 self.cluster_setup_results[cluster_name] = False
-                all_success = False
-                cluster_success = False
-                continue
+                return False
 
             pod_cidr = cluster_config.get('pod_cidr', '10.244.0.0/16')
+            service_cidr = cluster_config.get('service_cidr', '10.245.0.0/16')
             print(f"  Pod Network CIDR: {pod_cidr}")
+            print(f"  Service CIDR: {service_cidr}")
 
             master_vms = vms['masters']
             worker_vms = vms['workers']
@@ -664,46 +1101,86 @@ ls -la /etc/cni/net.d/ 2>/dev/null || echo "CNI directory not accessible"
             if not master_vms:
                 print(f"✗ No master nodes found for cluster '{cluster_name}'")
                 self.cluster_setup_results[cluster_name] = False
-                all_success = False
-                cluster_success = False
-                continue
+                return False
 
             # Initialize the first master node
             master_vm = master_vms[0]
             master_name = master_vm['name']
             print(f"\nInitializing Kubernetes cluster on master: {master_name}")
 
-            master_ip = self.get_vm_ip_with_retry(master_name)
-            if not master_ip:
-                print(f"✗ Failed: Could not get IP address for master {master_name}")
+            # Get management IP (for SSH) and k8s node IP (for apiserver) separately
+            master_mgmt_ip = self.get_vm_ip_with_retry(master_name)
+            if not master_mgmt_ip:
+                print(f"✗ Failed: Could not get management IP address for master {master_name}")
                 self.cluster_setup_results[cluster_name] = False
-                all_success = False
-                cluster_success = False
-                continue
+                return False
 
-            success, join_command = self._initialize_k8s_master(master_ip, master_name, pod_cidr)
+            master_k8s_ip = master_vm.get('k8s_node_ip')
+            if not master_k8s_ip:
+                print(f"✗ Failed: No k8s_node_ip configured for master {master_name}")
+                self.cluster_setup_results[cluster_name] = False
+                return False
+
+            print(f"  Master Management IP: {master_mgmt_ip}")
+            print(f"  Master K8s Node IP: {master_k8s_ip}")
+
+            # Get CNI type from config
+            cni_type = cluster_config.get('cni', 'flannel').lower()
+            print(f"  CNI Plugin: {cni_type}")
+
+            # Setup br-ex bridge on all VMs first before K8s initialization (for OVN-Kubernetes)
+            if cni_type == 'ovn-kubernetes':
+                # Setup br-ex on master first
+                if not self._setup_ovn_brex(master_mgmt_ip, master_name):
+                    print(f"✗ Failed to setup br-ex bridge on master {master_name}")
+                    self.cluster_setup_results[cluster_name] = False
+                    return False
+
+                # Setup br-ex on all worker nodes before K8s initialization
+                for worker_vm in worker_vms:
+                    worker_name = worker_vm['name']
+                    worker_ip = self.get_vm_ip_with_retry(worker_name)
+
+                    if not worker_ip:
+                        print(f"✗ Failed: Could not get IP address for worker {worker_name}")
+                        self.cluster_setup_results[cluster_name] = False
+                        return False
+
+                    if not self._setup_ovn_brex(worker_ip, worker_name):
+                        print(f"✗ Failed to setup br-ex bridge on worker {worker_name}")
+                        self.cluster_setup_results[cluster_name] = False
+                        return False
+
+            success, join_command = self._initialize_k8s_master(master_mgmt_ip, master_k8s_ip, master_name, pod_cidr, service_cidr)
             if not success:
                 print(f"✗ Failed to initialize master node {master_name}")
                 self.cluster_setup_results[cluster_name] = False
-                all_success = False
-                cluster_success = False
-                continue
+                return False
 
-            if not self._install_flannel(master_ip, master_name, pod_cidr):
-                print(f"✗ Failed to install Flannel CNI on {master_name}")
-                self.cluster_setup_results[cluster_name] = False
-                all_success = False
-                cluster_success = False
-                continue
+            # Install the selected CNI plugin
+            if cni_type == 'ovn-kubernetes':
+                if not self._install_ovn_kubernetes(master_mgmt_ip, master_k8s_ip, master_name, pod_cidr, service_cidr):
+                    print(f"✗ Failed to install OVN-Kubernetes CNI on {master_name}")
+                    self.cluster_setup_results[cluster_name] = False
+                    return False
 
-            # Install Multus CNI on top of Flannel
-            # Multus wraps Flannel as the default network and enables multiple network interfaces
-            if not self._install_multus(master_ip, master_name):
-                print(f"✗ Failed to install Multus CNI on {master_name}")
+            elif cni_type == 'flannel':
+                if not self._install_flannel(master_mgmt_ip, master_name, pod_cidr):
+                    print(f"✗ Failed to install Flannel CNI on {master_name}")
+                    self.cluster_setup_results[cluster_name] = False
+                    return False
+
+                # Install Multus CNI on top of Flannel
+                # Multus wraps Flannel as the default network and enables multiple network interfaces
+                if not self._install_multus(master_mgmt_ip, master_name):
+                    print(f"✗ Failed to install Multus CNI on {master_name}")
+                    self.cluster_setup_results[cluster_name] = False
+                    return False
+            else:
+                print(f"✗ Unknown CNI type '{cni_type}' for cluster '{cluster_name}'")
+                print(f"  Supported CNI types: 'flannel', 'ovn-kubernetes'")
                 self.cluster_setup_results[cluster_name] = False
-                all_success = False
-                cluster_success = False
-                continue
+                return False
 
             # Join worker nodes
             if worker_vms and join_command:
@@ -715,20 +1192,28 @@ ls -la /etc/cni/net.d/ 2>/dev/null || echo "CNI directory not accessible"
 
                     if not worker_ip:
                         print(f"✗ Failed: Could not get IP address for worker {worker_name}")
-                        continue
+                        return False
 
                     if not self._join_k8s_worker(worker_ip, worker_name, join_command):
                         print(f"✗ Failed to join worker {worker_name}")
-                        continue
+                        return False
+
+                    # For OVN-Kubernetes: wait for ovnkube-node pod and approve CSRs
+                    if cni_type == 'ovn-kubernetes':
+                        self._wait_for_ovnkube_node_and_approve_csrs(master_mgmt_ip, worker_name)
+                    else:
+                        # For other CNIs, just approve any pending CSRs
+                        time.sleep(5)
+                        self._approve_pending_csrs(master_mgmt_ip)
 
             # Wait a bit for nodes to register
             print("\n  Waiting for nodes to register...")
-            time.sleep(10)
+            time.sleep(5)
 
             # Display cluster status
             print(f"\n--- Cluster '{cluster_name}' Status ---")
             success, stdout, stderr = ssh_command(
-                self.config, master_ip, "kubectl get nodes",
+                self.config, master_mgmt_ip, "kubectl get nodes",
                 capture_output=True, timeout=30
             )
             if success and stdout:
@@ -737,17 +1222,10 @@ ls -la /etc/cni/net.d/ 2>/dev/null || echo "CNI directory not accessible"
                 print(f"✗ Could not get cluster status: {stderr}")
 
             # Track cluster setup result
-            self.cluster_setup_results[cluster_name] = cluster_success
+            self.cluster_setup_results[cluster_name] = True
+            print(f"\n✓ Cluster '{cluster_name}' setup complete!")
 
-            if cluster_success:
-                print(f"\n✓ Cluster '{cluster_name}' setup complete!")
-            else:
-                print(f"\n✗ Cluster '{cluster_name}' setup failed!")
-
-        if all_success:
-            print("✓ All Kubernetes clusters setup complete!")
-
-        return all_success
+        return True
 
     def install_all_vms(self, parallel: bool = False) -> None:
         """Install software on all VMs"""

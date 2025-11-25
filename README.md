@@ -92,8 +92,9 @@ Edit `config.yaml` to customize your deployment:
 ```yaml
 networks:
   # Management network with internet access
-  - name: "primary-k8s-network"
-    bridge_name: "virbr-k8s"
+  - name: "mgmt-network"
+    type: "mgmt"
+    bridge_name: "virbr-mgmt"
     gateway: "192.168.100.1"
     subnet_mask: "255.255.255.0"
     dhcp_start: "192.168.100.10"
@@ -104,6 +105,7 @@ networks:
 
   # Pure Layer 2 data network with OVS (no IP/DHCP)
   - name: "data-l2-network"
+    type: "layer2"
     bridge_name: "ovs-data"
     mode: "l2-bridge"
     nic_model: "igb"  # Intel 82576 emulated NIC
@@ -291,7 +293,7 @@ python3 install_software.py
 - **Automatic Cluster Initialization**: No manual `kubeadm` commands needed
 - **Multiple Cluster Support**: Deploy multiple independent K8s clusters in one configuration
 - **Custom Pod Network CIDRs**: Each cluster can have its own pod network CIDR(default: `10.244.0.0/16`)
-- **Automatic CNI Installation**: Flannel is automatically installed and configured
+- **Automatic CNI Installation**: Flannel or OVN-Kubernetes is automatically installed and configured
 - **Role-Based Assignment**: VMs are assigned as `master` or `worker` nodes
 - **Network Isolation**: Different clusters use different overlay networks
 
@@ -306,20 +308,11 @@ For Software Installation on all VMs
 4. Install Open vSwitch
 5. Add the upstream Kubernetes repo
 6. Installs Kubernetes components (kubeadm, kubelet, kubectl)
-7. Configure the firewall rules
-```
-- TCP 6443: Kubernetes API server
-- TCP 2379-2380: etcd server client API
-- TCP 10250: Kubelet API
-- TCP 10251: kube-scheduler
-- TCP 10252: kube-controller-manager
-- TCP 10255: Read-only Kubelet API
-- TCP 30000-32767: NodePort Services
-```
+7. Disable the firewall
 For Kubernetes Install on selected or all VMs
 1. First the script groups VMs by cluster assignment
 3. Initializes each cluster on its master node with the custom (or default) pod CIDR
-4. Installs and configures a Flannel CNI deployment for each cluster
+4. Installs and configures a Flannel or OVN-Kubernetes CNI deployment for each cluster
 5. Joins all worker nodes to their respective clusters
 
 Simply run:
@@ -335,7 +328,7 @@ python3 install_software.py --parallel
 After Installation finished, you should expect these software packages to be running:
 - CRI-O container runtime
 - kubelet (Kubernetes node agent)
-- Flannel and other containers are running for example:
+- Flannel and other containers are running, for example:
 ```bash
 [root@master-1 ~]# kubectl get pods -A -o wide
 NAMESPACE      NAME                               READY   STATUS    RESTARTS   AGE   IP               NODE       NOMINATED NODE   READINESS GATES
@@ -354,7 +347,24 @@ kube-system    kube-proxy-69q6s                   1/1     Running   0          1
 kube-system    kube-proxy-9fq5x                   1/1     Running   0          11m   192.168.100.86   dpu-1      <none>           <none>
 kube-system    kube-proxy-kc9fd                   1/1     Running   0          11m   192.168.100.14   master-1   <none>           <none>
 kube-system    kube-scheduler-master-1            1/1     Running   0          11m   192.168.100.14   master-1   <none>           <none>
+```
 
+- OVN-Kubernetes and other containers are running, for example:
+```bash
+[root@master-1 ~]# kubectl get pods -A
+NAMESPACE        NAME                               READY   STATUS    RESTARTS   AGE   IP               NODE       NOMINATED NODE   READINESS GATES
+kube-system      coredns-674b8bbfcf-lsfbl           1/1     Running   0          26m   10.85.0.3        master-1   <none>           <none>
+kube-system      coredns-674b8bbfcf-xzstj           1/1     Running   0          26m   10.85.0.2        master-1   <none>           <none>
+kube-system      etcd-master-1                      1/1     Running   0          26m   192.168.120.72   master-1   <none>           <none>
+kube-system      kube-apiserver-master-1            1/1     Running   0          26m   192.168.120.72   master-1   <none>           <none>
+kube-system      kube-controller-manager-master-1   1/1     Running   0          26m   192.168.120.72   master-1   <none>           <none>
+kube-system      kube-scheduler-master-1            1/1     Running   0          26m   192.168.120.72   master-1   <none>           <none>
+ovn-kubernetes   ovnkube-db-68b8c896c6-dbtfm        2/2     Running   0          26m   192.168.120.72   master-1   <none>           <none>
+ovn-kubernetes   ovnkube-identity-6pcqr             1/1     Running   0          26m   192.168.120.72   master-1   <none>           <none>
+ovn-kubernetes   ovnkube-master-77c5fd869f-2pzqw    2/2     Running   0          25m   192.168.120.72   master-1   <none>           <none>
+ovn-kubernetes   ovnkube-node-6xk2k                 3/3     Running   0          23m   192.168.120.90   host-1     <none>           <none>
+ovn-kubernetes   ovnkube-node-dtclz                 3/3     Running   0          22m   192.168.120.65   dpu-1      <none>           <none>
+ovn-kubernetes   ovnkube-node-gfjfm                 3/3     Running   0          24m   192.168.120.72   master-1   <none>           <none>
 ```
 
 #### Kuberenetes Use Cases with DPU Simulation
@@ -391,6 +401,10 @@ python3 vmctl.py exec master-1 'kubectl get pods -A'
 
 # Check Flannel CNI
 python3 vmctl.py exec master-1 'kubectl get pods -n kube-flannel'
+
+# Or check OVN-Kubernetes CNI
+python3 vmctl.py exec master-1 'kubectl get pods -n ovn-kubernetes'
+
 ...
 ```
 
