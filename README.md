@@ -1,28 +1,87 @@
-# VM Deployment with Libvirt + Kubernetes + OVN for emulating DPUs
+# DPU Simulator - VM and Container-based Kubernetes + OVN Environment
 
-This project automates the deployment of multiple VMs with a custom libvirt network, pre-configured with Kubernetes and Open vSwitch for container networking experiments.
+This project automates the deployment of DPU simulation environments using either **VMs (libvirt)** or **containers (Kind)**, pre-configured with Kubernetes and OVN-Kubernetes (or other CNIs) for container networking experiments/development/CI/CD.
 
 ## Features
 
-- 🚀 Automated deployment of multiple VMs
-- ☸️ Kubernetes (kubeadm, kubelet, kubectl) pre-installed on all VMs
-- 🔀 Open vSwitch (OVS) used for networking between hosts and DPUs
+### Core Features
+- 🚀 **Two deployment modes**: VMs (libvirt) or Containers (Kind)
+- ☸️ Kubernetes (kubeadm, kubelet, kubectl) pre-installed
+- 🔀 OVN-Kubernetes or Flannel CNI support
 - 🌐 Multiple network support (NAT, Layer 2 Bridge)
+- ✅ Automatic cluster setup and CNI installation
+- 🧹 Cleanup scripts for both modes
+
+### VM Mode Features
 - 🔌 Configurable NIC models (virtio, igb)
-- 🖥️ Q35 machine type VM with PCIe and IOMMU support (SR-IOV ready)
+- 🖥️ Q35 machine type with PCIe and IOMMU support (SR-IOV ready)
 - 🔑 SSH key-based authentication
 - 💻 Easy VM access via SSH and console
 - 🎛️ Full VM lifecycle management (start, stop, reboot)
-- ✅ Verification script to check installations
-- 🧹 Cleanup script
+- 🔀 Open vSwitch (OVS) for host-to-DPU networking
+
+### Kind Mode Features
+- ⚡ **Fast iteration** - clusters deploy in seconds
+- 🐳 Uses Docker containers instead of VMs
+- 💾 Lower resource usage than VMs
+- 🔄 Easy cluster recreation for testing
+
+## Quick Start
+
+### Python Dependencies
+
+```bash
+dnf -y install python3 python3-devel
+
+python3 -m venv dpu-sim-venv
+
+source dpu-sim-venv/bin/activate
+
+pip3 install -r requirements.txt
+```
+
+### Kind Mode
+
+```bash
+# Enable k8s repo
+sudo tee /etc/yum.repos.d/kubernetes.repo > /dev/null <<EOF
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/repodata/repomd.xml.key
+EOF
+
+# Install prerequisites
+sudo dnf install -y podman kubectl
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+
+# Start Docker
+sudo systemctl enable podman
+sudo systemctl start podman
+
+# Deploy Kind cluster with OVN-Kubernetes
+python3 dpu-sim.py --config config-kind.yaml
+```
+
+### VM Mode
+
+```bash
+# Run quickstart script
+./quickstart.sh
+
+# Deploy VMs and install Kubernetes
+python3 dpu-sim.py
+```
 
 ## Prerequisites
 
 ### System Requirements
 - Fedora/RHEL/CentOS Linux
-- KVM/QEMU virtualization support
-- At least 12GB RAM (for all 4 VMs)
-- At least 100GB free disk space
+- **For VM Mode**: KVM/QEMU virtualization support, at least 12GB RAM, 100GB disk
+- **For Kind Mode**: Docker installed and running, at least 8GB RAM
 
 ### Required Packages
 
@@ -34,6 +93,7 @@ subscription-manager repos --enable=openstack-17-for-rhel-9-$(arch)-rpms
 
 # Install required system packages
 sudo dnf install -y \
+    gcc \
     qemu-kvm \
     qemu-img \
     python3.12 \
@@ -67,16 +127,6 @@ sudo usermod -a -G libvirt $USER
 newgrp libvirt
 ```
 
-### Python Dependencies
-
-```bash
-python3.12 -m venv dpu-sim-venv
-
-source dpu-sim-venv/bin/activate
-
-pip3 install -r requirements.txt
-```
-
 ### SSH Key Setup
 
 Generate SSH keys if you don't have them:
@@ -86,6 +136,32 @@ ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa
 ```
 
 ## Configuration
+
+The simulator supports two deployment modes, configured via different sections in the YAML config file:
+
+- **VM Mode**: Uses `vms` section (libvirt-based VMs)
+- **Kind Mode**: Uses `kind` section (Docker containers)
+
+### Kind Mode Configuration (config-kind.yaml)
+
+```yaml
+# Kind cluster configuration
+kind:
+  nodes:
+    - role: control-plane
+    - role: worker
+    - role: worker
+
+kubernetes:
+  version: "1.33"
+  clusters:
+    - name: "dpu-sim-kind"
+      pod_cidr: "10.244.0.0/16"
+      service_cidr: "10.96.0.0/16"
+      cni: "ovn-kubernetes"  # or 'kindnet' (default)
+```
+
+### VM Mode Configuration (config.yaml)
 
 Edit `config.yaml` to customize your deployment:
 
@@ -259,11 +335,50 @@ operating_system:
 
 ## Usage
 
-### Step 0: Choosing the right script
+The `dpu-sim.py` script automatically detects whether to use VM or Kind mode based on your config file.
+
+### Deployment Options
+
+```bash
+# Auto-detect mode from config (default: config.yaml = VM mode)
+python3 dpu-sim.py
+
+# Use Kind mode explicitly
+python3 dpu-sim.py --config config-kind.yaml
+
+# Force a specific mode
+python3 dpu-sim.py --mode kind
+python3 dpu-sim.py --mode vm
+
+# Skip cleanup (for incremental changes)
+python3 dpu-sim.py --no-cleanup
+
+# Parallel installation (VM mode only)
+python3 dpu-sim.py --parallel
+```
+
+### Kind Mode Usage
+
+```bash
+# Deploy Kind cluster
+python3 kind_deploy.py --config config-kind.yaml
+
+# Cleanup only
+python3 kind_deploy.py --cleanup-only
+
+# After deployment, use the cluster
+export KUBECONFIG=kubeconfig/dpu-sim-kind.yaml
+kubectl get nodes
+kubectl get pods -A
+```
+
+### VM Mode Usage
+
+#### Step 0: Choosing the right script
 
 You can choose to deploy just the VMs with `deploy.py` or deploy the software installation with `install_software.py`. The `dpu-sim.py` script will run both for your convenience.
 
-### Step 1: Deploy VMs
+#### Step 1: Deploy VMs
 
 Deploy all Host and DPU VMs and the network:
 
@@ -481,19 +596,22 @@ python3 cleanup.py
 ## Project File Structure
 
 ```
-├── bridge_utils.py       # For Bridge and networking naming utilities.
-├── cfg_utils.py          # For Configuration utilities
-├── cleanup.py            # For removing VMs, network, and associated resources
-├── config-2-cluster.yaml # Configuration file for 2 cluster deployment
-├── config.yaml           # Configuration file
-├── deploy.py             # VM (Host and DPU) and VM Networking deployment script
-├── dpu-sim.py            # Calls all components (deploy and install software)
-├── install_software.py   # For K8s and OVS installation script
-├── quickstart.sh         # For quick setup of dependencies
+├── bridge_utils.py       # Bridge and networking naming utilities
+├── cfg_utils.py          # Configuration utilities
+├── cleanup.py            # For removing VMs, networks, and resources
+├── config-2-cluster.yaml # Configuration for 2-cluster deployment
+├── config-kind.yaml      # Configuration for Kind (container) mode
+├── config.yaml           # Default configuration (VM mode)
+├── deploy.py             # VM and networking deployment script
+├── dpu-sim.py            # Main entry point (supports both modes)
+├── install_software.py   # K8s and OVS installation for VMs
+├── kind_deploy.py        # Kind cluster deployment script
+├── kind_utils.py         # Kind-specific utilities
+├── quickstart.sh         # Quick setup of dependencies
 ├── README.md             # This file
-├── requirements.txt      # For Python dependencies
-├── ssh_utils.py          # For accessing VMs with SSH utilies
-├── vm_utils.py           # For VM (libvirt) utilities
+├── requirements.txt      # Python dependencies
+├── ssh_utils.py          # SSH utilities for VMs
+├── vm_utils.py           # VM (libvirt) utilities
 └── vmctl.py              # VM management utility
 ```
 
