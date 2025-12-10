@@ -4,15 +4,13 @@ Kind Cluster Deployment Script
 Deploys Kubernetes clusters using Kind (Kubernetes in Docker) containers
 """
 
-import os
 import sys
 import subprocess
 import tempfile
-import time
 import argparse
 import traceback
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List
 
 from cfg_utils import load_config, get_cluster_names
 from kind_utils import (
@@ -20,15 +18,17 @@ from kind_utils import (
     check_docker_running,
     cluster_exists,
     delete_cluster,
-    get_kind_clusters,
     get_cluster_nodes,
     get_node_ip,
-    exec_on_node,
-    get_kubeconfig,
     export_kubeconfig,
     wait_for_node_ready,
-    generate_kind_config
+    generate_kind_config,
+    configure_ipv6_on_nodes,
+    is_ovn_kubernetes,
+    patch_coredns_for_ovn,
+    get_api_server_url
 )
+from ovn_kubernetes_deploy import prepare_ovn_kubernetes_deployment, load_ovn_image, install_ovn_kubernetes
 
 
 class KindCleanup:
@@ -190,25 +190,6 @@ class KindDeployer:
             print("  sudo mv kubectl /usr/local/bin/")
             return False
 
-        # Check Helm (needed for OVN-Kubernetes)
-        kind_config = self.config.get('kind', {})
-        clusters = self.config.get('kubernetes', {}).get('clusters', [])
-
-        for cluster in clusters:
-            cni = cluster.get('cni', 'kindnet').lower()
-            if cni in ['ovn-kubernetes', 'ovn']:
-                try:
-                    result = subprocess.run(['helm', 'version', '--short'],
-                                            capture_output=True, text=True)
-                    if result.returncode != 0:
-                        raise FileNotFoundError
-                    print("✓ Helm is installed (required for OVN-Kubernetes)")
-                except FileNotFoundError:
-                    print("✗ Helm is not installed. Please install Helm (required for OVN-Kubernetes):")
-                    print("  curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash")
-                    return False
-                break
-
         return True
 
     def cleanup_all(self) -> bool:
@@ -264,17 +245,19 @@ class KindDeployer:
             self.kubeconfig_dir.mkdir(parents=True, exist_ok=True)
             kubeconfig_path = self.kubeconfig_dir / f'{cluster_name}.yaml'
             if export_kubeconfig(cluster_name, str(kubeconfig_path)):
-                print(f"  ✓ Kubeconfig saved to: {kubeconfig_path}")
+                print(f"✓ Kubeconfig saved to: {kubeconfig_path}")
             else:
-                print(f"  ✗ Failed to save kubeconfig")
+                print(f"✗ Failed to save kubeconfig")
                 return False
 
-            # Wait for nodes to be ready
-            print("  Waiting for nodes to be ready...")
-            if not wait_for_node_ready(str(kubeconfig_path), timeout=300):
-                print("  ✗ Nodes did not become ready in time")
-                return False
-            print("  ✓ All nodes are ready")
+            # Nodes will not be ready for none kindnet CNI clusters
+            if not is_ovn_kubernetes(cluster_config.get('cni', 'kindnet')):
+                # Wait for nodes to be ready
+                print("  Waiting for nodes to be ready...")
+                if not wait_for_node_ready(str(kubeconfig_path), timeout=300):
+                    print("✗ Nodes did not become ready in time")
+                    return False
+                print("✓ All nodes are ready")
 
             self.clusters.append(cluster_name)
             return True
@@ -283,8 +266,8 @@ class KindDeployer:
             # Cleanup temp file
             Path(config_file).unlink(missing_ok=True)
 
-    def install_ovn_kubernetes(self, cluster_name: str, cluster_config: Dict[str, Any]) -> bool:
-        """Install OVN-Kubernetes CNI using Helm
+    def deploy_ovn_kubernetes(self, cluster_name: str, cluster_config: Dict[str, Any]) -> bool:
+        """Install OVN-Kubernetes CNI
 
         Args:
             cluster_name: Name of the cluster
@@ -293,79 +276,51 @@ class KindDeployer:
         Returns:
             True if OVN-Kubernetes was installed successfully, False otherwise
         """
-        print(f"\n--- Installing OVN-Kubernetes on cluster '{cluster_name}' ---")
+        print(f"\n=== Installing OVN-Kubernetes on cluster '{cluster_name}' ===")
 
         kubeconfig_path = self.kubeconfig_dir / f'{cluster_name}.yaml'
         if not kubeconfig_path.exists():
             print(f"  ✗ Kubeconfig not found: {kubeconfig_path}")
             return False
 
-        pod_cidr = cluster_config.get('pod_cidr', '10.244.0.0/16')
-        service_cidr = cluster_config.get('service_cidr', '10.96.0.0/16')
+        print("\nDisabling IPv6 on all nodes for OVN-Kubernetes...")
+        if not configure_ipv6_on_nodes(cluster_name):
+            print("✗ Failed to configure IPv6 on some nodes")
+            return False
+        print("✓ Disabling of IPv6 configured on all nodes")
 
-        # Clone OVN-Kubernetes repo if not exists
-        ovnk_repo_path = Path('/tmp/ovn-kubernetes')
-        if not ovnk_repo_path.exists():
-            print("  Cloning OVN-Kubernetes repository...")
-            result = subprocess.run(
-                ['git', 'clone', '--depth', '1',
-                 'https://github.com/ovn-org/ovn-kubernetes.git',
-                 str(ovnk_repo_path)],
-                capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                print(f"  ✗ Failed to clone OVN-Kubernetes: {result.stderr}")
-                return False
-            print("  ✓ Repository cloned")
+        print("\nPatching CoreDNS for OVN-Kubernetes...")
+        if not patch_coredns_for_ovn(str(kubeconfig_path)):
+            print("✗ Failed to patch CoreDNS")
+            return False
+        print("✓ CoreDNS patched successfully")
 
-        # Get API server endpoint
-        print("  Getting API server endpoint...")
-        result = subprocess.run(
-            ['kubectl', '--kubeconfig', str(kubeconfig_path),
-             'get', 'pods', '-n', 'kube-system', '-l', 'component=kube-apiserver',
-             '-o', 'jsonpath={.items[0].status.hostIP}'],
-            capture_output=True, text=True
-        )
-
-        if result.returncode != 0 or not result.stdout:
-            # For Kind, try to get the control-plane node IP
-            nodes = get_cluster_nodes(cluster_name)
-            control_plane = next((n for n in nodes if n['role'] == 'control-plane'), None)
-            if control_plane:
-                api_server_ip = get_node_ip(control_plane['name'])
-            else:
-                print(f"  ✗ Failed to get API server IP")
-                return False
+        print("\nGetting API server URL...")
+        api_server_url = get_api_server_url(cluster_name)
+        if api_server_url:
+            print(f"✓ API Server URL: {api_server_url}")
         else:
-            api_server_ip = result.stdout.strip()
-
-        k8s_api_server = f"https://{api_server_ip}:6443"
-        print(f"  API Server: {k8s_api_server}")
-
-        # Install OVN-Kubernetes using Helm
-        helm_chart_path = ovnk_repo_path / 'helm' / 'ovn-kubernetes'
-        values_file = helm_chart_path / 'values.yaml'
-
-        print("  Installing OVN-Kubernetes via Helm...")
-        helm_cmd = [
-            'helm', 'install', 'ovn-kubernetes', str(helm_chart_path),
-            '--kubeconfig', str(kubeconfig_path),
-            '--namespace', 'ovn-kubernetes',
-            '--create-namespace',
-            '--set', f'k8sAPIServer={k8s_api_server}',
-            '--set', f'global.image.repository=ghcr.io/ovn-kubernetes/ovn-kube-ubuntu',
-            '--set', f'global.image.tag=master',
-            '--set', f'global.enableMulticast=true',
-        ]
-
-        result = subprocess.run(helm_cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            print(f"  ✗ Failed to install OVN-Kubernetes: {result.stderr}")
-            print(f"  stdout: {result.stdout}")
+            print("✗ Could not retrieve API server URL")
             return False
 
-        print("  ✓ OVN-Kubernetes Helm chart installed")
+        print("\nPreparing OVN-Kubernetes deployment...")
+        if not prepare_ovn_kubernetes_deployment(str(kubeconfig_path), api_server_url, cluster_config):
+            print("✗ Failed to prepare OVN-Kubernetes deployment")
+            return False
+        print("✓ OVN-Kubernetes deployment prepared successfully")
+
+        print("\nLoading OVN-Kubernetes image...")
+        if not load_ovn_image(cluster_name, local_registry=cluster_config.get('local_registry', None)):
+            print("✗ Failed to load OVN-Kubernetes image")
+            return False
+        print("✓ OVN-Kubernetes image loaded successfully")
+
+        print("\nInstalling OVN-Kubernetes...")
+        if not install_ovn_kubernetes(str(kubeconfig_path)):
+            print("✗ Failed to install OVN-Kubernetes")
+            return False
+        print("✓ OVN-Kubernetes installed successfully")
+
 
         # Wait for OVN pods to be ready
         print("  Waiting for OVN-Kubernetes pods to be ready...")
@@ -379,9 +334,9 @@ class KindDeployer:
 
         result = subprocess.run(wait_cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            print(f"  ⚠ Some OVN pods may still be initializing: {result.stderr}")
+            print(f"⚠ Some OVN pods may still be initializing: {result.stderr}")
         else:
-            print("  ✓ OVN-Kubernetes pods are ready")
+            print("✓ OVN-Kubernetes pods are ready")
 
         # Display pod status
         print("\n  OVN-Kubernetes Pods:")
@@ -458,10 +413,8 @@ class KindDeployer:
             cluster_name = cluster_config['name']
             cni = cluster_config.get('cni', 'kindnet').lower()
 
-            print(f"\n{'='*60}")
             print(f"Setting up cluster: {cluster_name}")
-            print(f"CNI: {cni}")
-            print(f"{'='*60}")
+            print(f"Using CNI: {cni}")
 
             # Create the Kind cluster
             if not self.create_cluster(cluster_name, kind_config, cluster_config):
@@ -469,8 +422,8 @@ class KindDeployer:
                 return False
 
             # Install CNI if OVN-Kubernetes
-            if cni in ['ovn-kubernetes', 'ovn']:
-                if not self.install_ovn_kubernetes(cluster_name, cluster_config):
+            if is_ovn_kubernetes(cni):
+                if not self.deploy_ovn_kubernetes(cluster_name, cluster_config):
                     print(f"✗ Failed to install OVN-Kubernetes on '{cluster_name}'")
                     return False
             elif cni != 'kindnet':

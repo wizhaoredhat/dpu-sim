@@ -5,12 +5,6 @@
 #
 # To use this config:
 #   python3 dpu-sim.py --config config-kind.yaml
-#
-# Prerequisites:
-#   - Docker installed and running
-#   - Kind installed (go install sigs.k8s.io/kind@latest)
-#   - kubectl installed
-#   - Helm installed (for OVN-Kubernetes)
 
 # Kind cluster configuration
 # This replaces the 'vms' section when using container mode
@@ -27,4 +21,4 @@ kubernetes:
     - name: "dpu-sim-kind"
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
-      cni: "kindnet"
+      cni: "ovn-kubernetes"
