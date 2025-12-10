@@ -27,8 +27,13 @@ from kind_utils import (
     get_kubeconfig,
     export_kubeconfig,
     wait_for_node_ready,
-    generate_kind_config
+    generate_kind_config,
+    configure_ipv6_on_nodes,
+    is_ovn_kubernetes,
+    patch_coredns_for_ovn,
+    get_api_server_url
 )
+from ovn_kubernetes_deploy import prepare_ovn_kubernetes_deployment
 
 
 class KindCleanup:
@@ -195,8 +200,8 @@ class KindDeployer:
         clusters = self.config.get('kubernetes', {}).get('clusters', [])
 
         for cluster in clusters:
-            cni = cluster.get('cni', 'kindnet').lower()
-            if cni in ['ovn-kubernetes', 'ovn']:
+            cni = cluster.get('cni', 'kindnet')
+            if is_ovn_kubernetes(cni):
                 try:
                     result = subprocess.run(['helm', 'version', '--short'],
                                             capture_output=True, text=True)
@@ -269,12 +274,37 @@ class KindDeployer:
                 print(f"  ✗ Failed to save kubeconfig")
                 return False
 
-            # Wait for nodes to be ready
-            print("  Waiting for nodes to be ready...")
-            if not wait_for_node_ready(str(kubeconfig_path), timeout=300):
-                print("  ✗ Nodes did not become ready in time")
-                return False
-            print("  ✓ All nodes are ready")
+            if is_ovn_kubernetes(cluster_config.get('cni', 'kindnet')):
+                print("\n  Disabling IPv6 on all nodes for OVN-Kubernetes...")
+                if not configure_ipv6_on_nodes(cluster_name):
+                    print("  ✗ Failed to configure IPv6 on some nodes")
+                    return False
+                print("  ✓ Disabling of IPv6 configured on all nodes")
+
+                print("\n  Patching CoreDNS for OVN-Kubernetes...")
+                if not patch_coredns_for_ovn(str(kubeconfig_path)):
+                    print("  ✗ Failed to patch CoreDNS")
+                    return False
+                print("  ✓ CoreDNS patched successfully")
+
+                api_server_url = get_api_server_url(cluster_name)
+                if api_server_url:
+                    print(f"  API Server URL: {api_server_url}")
+                else:
+                    print("  ⚠ Could not retrieve API server URL")
+
+                if not prepare_ovn_kubernetes_deployment(str(kubeconfig_path), api_server_url, cluster_config):
+                    print("  ✗ Failed to prepare OVN-Kubernetes deployment")
+                    return False
+                print("  ✓ OVN-Kubernetes deployment prepared successfully")
+
+            else:
+                # Wait for nodes to be ready
+                print("  Waiting for nodes to be ready...")
+                if not wait_for_node_ready(str(kubeconfig_path), timeout=300):
+                    print("  ✗ Nodes did not become ready in time")
+                    return False
+                print("  ✓ All nodes are ready")
 
             self.clusters.append(cluster_name)
             return True
@@ -469,7 +499,7 @@ class KindDeployer:
                 return False
 
             # Install CNI if OVN-Kubernetes
-            if cni in ['ovn-kubernetes', 'ovn']:
+            if is_ovn_kubernetes(cni):
                 if not self.install_ovn_kubernetes(cluster_name, cluster_config):
                     print(f"✗ Failed to install OVN-Kubernetes on '{cluster_name}'")
                     return False

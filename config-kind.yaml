@@ -27,4 +27,4 @@ kubernetes:
     - name: "dpu-sim-kind"
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
-      cni: "kindnet"
+      cni: "ovn-kubernetes"
