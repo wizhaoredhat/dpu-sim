@@ -23,7 +23,22 @@ dpu-sim-venv/
 
 # Kubeconfig files
 kubeconfig/
+kind-configs/
 
 # Temporary files
 *.tmp
 *.bak
+
+# Go binaries and build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Go workspace file
+go.work
