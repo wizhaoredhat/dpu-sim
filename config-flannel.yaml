@@ -51,7 +51,6 @@ operating_system:
   # Download from https://download.fedoraproject.org/pub/fedora/linux/releases/
   image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
   image_name: "Fedora-x86_64.qcow2"
-  cloud_init_iso_name: "Fedora-x86_64-cloud-init.iso"
 
 ssh:
   user: "root"
