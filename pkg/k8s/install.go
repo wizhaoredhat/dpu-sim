@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -413,7 +414,7 @@ func (m *K8sMachineManager) PrintOVNBrExStatus(machineIP string) {
 	if err != nil {
 		fmt.Printf("Error listing bridges: %s\n", stderr)
 	} else {
-		fmt.Println(stdout)
+		fmt.Println(strings.TrimSpace(stdout))
 	}
 
 	fmt.Println("--- br-ex Ports ---")
@@ -421,15 +422,7 @@ func (m *K8sMachineManager) PrintOVNBrExStatus(machineIP string) {
 	if err != nil {
 		fmt.Printf("Error: %s\n", stderr)
 	} else {
-		fmt.Println(stdout)
-	}
-
-	fmt.Println("--- br-int Ports ---")
-	stdout, stderr, err = m.sshClient.ExecuteWithTimeout(machineIP, "sudo ovs-vsctl list-ports br-int 2>/dev/null || echo 'br-int not found'", 30*time.Second)
-	if err != nil {
-		fmt.Printf("Error: %s\n", stderr)
-	} else {
-		fmt.Println(stdout)
+		fmt.Println(strings.TrimSpace(stdout))
 	}
 
 	fmt.Println("--- OVS Show (Full Config) ---")
@@ -437,14 +430,14 @@ func (m *K8sMachineManager) PrintOVNBrExStatus(machineIP string) {
 	if err != nil {
 		fmt.Printf("Error: %s\n", stderr)
 	} else {
-		fmt.Println(stdout)
+		fmt.Println(strings.TrimSpace(stdout))
 	}
 
 	stdout, stderr, err = m.sshClient.ExecuteWithTimeout(machineIP, "ip route show", 30*time.Second)
 	if err != nil {
 		fmt.Printf("Error: %s\n", stderr)
 	} else {
-		fmt.Println(stdout)
+		fmt.Println(strings.TrimSpace(stdout))
 	}
 
 	fmt.Println("--- br-ex Linux Interface ---")
@@ -452,7 +445,7 @@ func (m *K8sMachineManager) PrintOVNBrExStatus(machineIP string) {
 	if err != nil {
 		fmt.Printf("Error: %s\n", stderr)
 	} else {
-		fmt.Println(stdout)
+		fmt.Println(strings.TrimSpace(stdout))
 	}
 
 	fmt.Println("--- NetworkManager Connections ---")
@@ -460,7 +453,7 @@ func (m *K8sMachineManager) PrintOVNBrExStatus(machineIP string) {
 	if err != nil {
 		fmt.Printf("Error: %s\n", stderr)
 	} else {
-		fmt.Println(stdout)
+		fmt.Println(strings.TrimSpace(stdout))
 	}
 
 	fmt.Println("--- OVS External IDs (Open_vSwitch) ---")
@@ -468,7 +461,7 @@ func (m *K8sMachineManager) PrintOVNBrExStatus(machineIP string) {
 	if err != nil {
 		fmt.Printf("Error: %s\n", stderr)
 	} else {
-		fmt.Println(stdout)
+		fmt.Println(strings.TrimSpace(stdout))
 	}
 
 	fmt.Println("--- br-ex External IDs ---")
@@ -476,7 +469,7 @@ func (m *K8sMachineManager) PrintOVNBrExStatus(machineIP string) {
 	if err != nil {
 		fmt.Printf("Error: %s\n", stderr)
 	} else {
-		fmt.Println(stdout)
+		fmt.Println(strings.TrimSpace(stdout))
 	}
 
 	fmt.Println("--- br-int External IDs ---")
@@ -484,7 +477,7 @@ func (m *K8sMachineManager) PrintOVNBrExStatus(machineIP string) {
 	if err != nil {
 		fmt.Printf("Error: %s\n", stderr)
 	} else {
-		fmt.Println(stdout)
+		fmt.Println(strings.TrimSpace(stdout))
 	}
 
 	fmt.Println("==========================================")
@@ -575,7 +568,7 @@ func (m *K8sMachineManager) InitializeControlPlane(machineName, mgmtIP, k8sIP, p
 	controlPlaneJoinCommand := fmt.Sprintf("%s --control-plane --certificate-key %s", workerJoinCommand, certificateKey)
 
 	// Get the kubeconfig for API access
-	kubeconfig, err := m.GetKubeconfigContent(mgmtIP)
+	kubeconfig, err := m.getKubeconfigContent(mgmtIP)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
 	}
@@ -643,8 +636,8 @@ func (m *K8sMachineManager) JoinWorker(machineName, mgmtIP string, joinInfo *Con
 	return nil
 }
 
-// GetKubeconfigContent retrieves the kubeconfig content from a control plane node
-func (m *K8sMachineManager) GetKubeconfigContent(controlPlaneIP string) (string, error) {
+// getKubeconfigContent retrieves the kubeconfig content from a control plane node
+func (m *K8sMachineManager) getKubeconfigContent(controlPlaneIP string) (string, error) {
 	script := "sudo cat /etc/kubernetes/admin.conf"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -660,7 +653,7 @@ func (m *K8sMachineManager) GetKubeconfigContent(controlPlaneIP string) (string,
 
 // GetKubeconfig retrieves the kubeconfig from a control plane node and saves it to a file
 func (m *K8sMachineManager) GetKubeconfig(controlPlaneIP, outputPath string) error {
-	kubeconfig, err := m.GetKubeconfigContent(controlPlaneIP)
+	kubeconfig, err := m.getKubeconfigContent(controlPlaneIP)
 	if err != nil {
 		return err
 	}
@@ -683,7 +676,7 @@ func SaveKubeconfigToFile(kubeconfigContent, clusterName, kubeconfigDir string) 
 	}
 
 	// Build the file path
-	filepath := GetKubeconfigPath(clusterName, kubeconfigDir)
+	filepath := getKubeconfigPath(clusterName, kubeconfigDir)
 
 	// Write kubeconfig to file with restricted permissions
 	if err := os.WriteFile(filepath, []byte(kubeconfigContent), 0600); err != nil {
@@ -694,9 +687,9 @@ func SaveKubeconfigToFile(kubeconfigContent, clusterName, kubeconfigDir string) 
 	return nil
 }
 
-// GetKubeconfigPath returns the path to the kubeconfig file for a given cluster name
+// getKubeconfigPath returns the path to the kubeconfig file for a given cluster name
 // The path is <kubeconfigDir>/<clusterName>.kubeconfig
-func GetKubeconfigPath(clusterName, kubeconfigDir string) string {
+func getKubeconfigPath(clusterName, kubeconfigDir string) string {
 	filename := fmt.Sprintf("%s.kubeconfig", clusterName)
 	return fmt.Sprintf("%s/%s", kubeconfigDir, filename)
 }
@@ -704,7 +697,7 @@ func GetKubeconfigPath(clusterName, kubeconfigDir string) string {
 // FindKubeconfig returns the kubeconfig file path for a cluster if it exists
 // Returns the path and nil error if found, or empty string and error if not found
 func findKubeconfig(clusterName, kubeconfigDir string) (string, error) {
-	filepath := GetKubeconfigPath(clusterName, kubeconfigDir)
+	filepath := getKubeconfigPath(clusterName, kubeconfigDir)
 
 	if _, err := os.Stat(filepath); err != nil {
 		if os.IsNotExist(err) {
@@ -729,4 +722,22 @@ func ReadKubeconfigFile(clusterName, kubeconfigDir string) (string, error) {
 	}
 
 	return string(content), nil
+}
+
+func CleanupKubeconfig(kubeconfigDir string) error {
+	// Find all kubeconfig files in the directory
+	files, err := filepath.Glob(filepath.Join(kubeconfigDir, "*.kubeconfig"))
+	if err != nil {
+		return fmt.Errorf("failed to glob kubeconfig files: %w", err)
+	}
+
+	// Remove each file individually
+	for _, file := range files {
+		if err := os.Remove(file); err != nil {
+			return fmt.Errorf("failed to remove kubeconfig file %s: %w", file, err)
+		}
+		fmt.Printf("✓ Kubeconfig file removed: %s\n", file)
+	}
+
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/kind"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 	"github.com/wizhao/dpu-sim/pkg/ssh"
@@ -114,6 +115,15 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to determine deployment mode: %w", err)
 	}
 	fmt.Printf("Deployment mode: %s\n", deployMode)
+
+	if !skipCleanup || cleanupOnly {
+		fmt.Println("\n=== Cleaning up K8s ===")
+		if err := k8s.CleanupAll(cfg); err != nil {
+			fmt.Printf("Warning: Kubernetes cleanup failed: %v\n", err)
+		}
+	} else {
+		fmt.Println("\nSkipping Kubernetes cleanup")
+	}
 
 	switch deployMode {
 	case "vm":
