@@ -4,12 +4,37 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+
+	"github.com/wizhao/dpu-sim/pkg/k8s"
+	"go.yaml.in/yaml/v2"
+	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
+	"sigs.k8s.io/kind/pkg/cluster"
 )
 
-// CreateCluster creates a new Kind cluster
-func (m *Manager) CreateCluster(name string, configPath string) error {
+// DeployAllClusters deploys all Kind clusters defined in the config
+func (m *KindManager) DeployAllClusters() error {
+	for _, cluster := range m.config.Kubernetes.Clusters {
+		// Build Kind config
+		kindCfg, err := m.BuildKindConfig(cluster.Name, cluster)
+		if err != nil {
+			return fmt.Errorf("failed to build Kind config for %s: %w", cluster.Name, err)
+		}
+
+		if err := m.CreateCluster(cluster.Name, kindCfg); err != nil {
+			return fmt.Errorf("failed to create cluster %s: %w", cluster.Name, err)
+		}
+
+		kubeconfigPath := k8s.GetKubeconfigPath(cluster.Name, m.config.Kubernetes.GetKubeconfigDir())
+		if err := m.GetKubeconfig(cluster.Name, kubeconfigPath); err != nil {
+			return fmt.Errorf("failed to save kubeconfig for %s: %w", cluster.Name, err)
+		}
+	}
+	return nil
+}
+
+// CreateCluster creates a new Kind cluster using the v1alpha4.Cluster config directly
+func (m *KindManager) CreateCluster(name string, cfg *v1alpha4.Cluster) error {
 	// Check if cluster already exists
 	if m.ClusterExists(name) {
 		fmt.Printf("Kind cluster %s already exists, skipping creation\n", name)
@@ -18,16 +43,20 @@ func (m *Manager) CreateCluster(name string, configPath string) error {
 
 	fmt.Printf("Creating Kind cluster: %s\n", name)
 
-	args := []string{"create", "cluster", "--name", name}
-	if configPath != "" {
-		args = append(args, "--config", configPath)
+	var opts []cluster.CreateOption
+	if cfg != nil {
+		data, err := yaml.Marshal(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to marshal Kind config: %w", err)
+		}
+
+		fmt.Println("Generated Kind config:")
+		fmt.Println(string(data))
+
+		opts = append(opts, cluster.CreateWithV1Alpha4Config(cfg))
 	}
 
-	cmd := exec.Command("kind", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := m.provider.Create(name, opts...); err != nil {
 		return fmt.Errorf("failed to create Kind cluster %s: %w", name, err)
 	}
 
@@ -36,7 +65,7 @@ func (m *Manager) CreateCluster(name string, configPath string) error {
 }
 
 // DeleteCluster deletes a Kind cluster
-func (m *Manager) DeleteCluster(name string) error {
+func (m *KindManager) DeleteCluster(name string) error {
 	if !m.ClusterExists(name) {
 		fmt.Printf("Kind cluster %s does not exist, skipping deletion\n", name)
 		return nil
@@ -44,11 +73,7 @@ func (m *Manager) DeleteCluster(name string) error {
 
 	fmt.Printf("Deleting Kind cluster: %s\n", name)
 
-	cmd := exec.Command("kind", "delete", "cluster", "--name", name)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := m.provider.Delete(name, ""); err != nil {
 		return fmt.Errorf("failed to delete Kind cluster %s: %w", name, err)
 	}
 
@@ -57,16 +82,14 @@ func (m *Manager) DeleteCluster(name string) error {
 }
 
 // ClusterExists checks if a Kind cluster exists
-func (m *Manager) ClusterExists(name string) bool {
-	cmd := exec.Command("kind", "get", "clusters")
-	output, err := cmd.Output()
+func (m *KindManager) ClusterExists(name string) bool {
+	clusters, err := m.provider.List()
 	if err != nil {
 		return false
 	}
 
-	clusters := strings.Split(strings.TrimSpace(string(output)), "\n")
 	for _, cluster := range clusters {
-		if strings.TrimSpace(cluster) == name {
+		if cluster == name {
 			return true
 		}
 	}
@@ -74,29 +97,16 @@ func (m *Manager) ClusterExists(name string) bool {
 }
 
 // ListClusters lists all Kind clusters
-func (m *Manager) ListClusters() ([]string, error) {
-	cmd := exec.Command("kind", "get", "clusters")
-	output, err := cmd.Output()
+func (m *KindManager) ListClusters() ([]string, error) {
+	clusters, err := m.provider.List()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list Kind clusters: %w", err)
 	}
-
-	if len(output) == 0 {
-		return []string{}, nil
-	}
-
-	clusters := strings.Split(strings.TrimSpace(string(output)), "\n")
-	result := make([]string, 0, len(clusters))
-	for _, cluster := range clusters {
-		if trimmed := strings.TrimSpace(cluster); trimmed != "" {
-			result = append(result, trimmed)
-		}
-	}
-	return result, nil
+	return clusters, nil
 }
 
 // GetClusterInfo retrieves information about a Kind cluster
-func (m *Manager) GetClusterInfo(name string) (*ClusterInfo, error) {
+func (m *KindManager) GetClusterInfo(name string) (*ClusterInfo, error) {
 	if !m.ClusterExists(name) {
 		return nil, fmt.Errorf("cluster %s does not exist", name)
 	}
@@ -107,79 +117,84 @@ func (m *Manager) GetClusterInfo(name string) (*ClusterInfo, error) {
 		Nodes:  []NodeInfo{},
 	}
 
-	// Get nodes using kubectl
-	cmd := exec.Command("kubectl", "get", "nodes", 
-		"--context", fmt.Sprintf("kind-%s", name),
-		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.status.conditions[?(@.type=='Ready')].status}{\"\\n\"}{end}")
-	
-	output, err := cmd.Output()
+	// Get nodes using the kind provider
+	nodes, err := m.provider.ListNodes(name)
 	if err != nil {
 		return info, nil // Return partial info on error
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
-		if line == "" {
-			continue
+	for _, node := range nodes {
+		nodeName := node.String()
+		role := "worker"
+		if strings.Contains(nodeName, "control-plane") {
+			role = "control-plane"
 		}
-		parts := strings.Split(line, "\t")
-		if len(parts) >= 2 {
-			nodeName := parts[0]
-			status := "NotReady"
-			if parts[1] == "True" {
+
+		// Check node status using kubectl (still needed for detailed status)
+		status := "Unknown"
+		cmd := exec.Command("kubectl", "get", "node", nodeName,
+			"--context", fmt.Sprintf("kind-%s", name),
+			"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+		output, err := cmd.Output()
+		if err == nil {
+			if strings.TrimSpace(string(output)) == "True" {
 				status = "Ready"
+			} else {
+				status = "NotReady"
 			}
-			
-			role := "worker"
-			if strings.Contains(nodeName, "control-plane") {
-				role = "control-plane"
-			}
-			
-			info.Nodes = append(info.Nodes, NodeInfo{
-				Name:   nodeName,
-				Role:   role,
-				Status: status,
-			})
 		}
+
+		info.Nodes = append(info.Nodes, NodeInfo{
+			Name:   nodeName,
+			Role:   role,
+			Status: status,
+		})
 	}
 
 	return info, nil
 }
 
 // GetKubeconfig retrieves the kubeconfig for a Kind cluster
-func (m *Manager) GetKubeconfig(name string, outputPath string) error {
+func (m *KindManager) GetKubeconfig(name string, kubeconfigPath string) error {
 	if !m.ClusterExists(name) {
 		return fmt.Errorf("cluster %s does not exist", name)
 	}
 
-	// Create output directory if it doesn't exist
-	dir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", dir, err)
-	}
-
-	cmd := exec.Command("kind", "get", "kubeconfig", "--name", name)
-	output, err := cmd.Output()
+	kubeconfig, err := m.provider.KubeConfig(name, false)
 	if err != nil {
 		return fmt.Errorf("failed to get kubeconfig for cluster %s: %w", name, err)
 	}
 
-	if err := os.WriteFile(outputPath, output, 0600); err != nil {
-		return fmt.Errorf("failed to write kubeconfig to %s: %w", outputPath, err)
+	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
+		return fmt.Errorf("failed to write kubeconfig to %s: %w", kubeconfigPath, err)
 	}
 
-	fmt.Printf("✓ Kubeconfig saved to: %s\n", outputPath)
+	fmt.Printf("✓ Kubeconfig saved to: %s\n", kubeconfigPath)
 	return nil
 }
 
 // LoadImage loads a Docker image into a Kind cluster
-func (m *Manager) LoadImage(clusterName, imageName string) error {
+func (m *KindManager) LoadImage(clusterName, imageName string) error {
 	if !m.ClusterExists(clusterName) {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
 	fmt.Printf("Loading image %s into cluster %s...\n", imageName, clusterName)
 
+	// Get the nodes for this cluster
+	nodes, err := m.provider.ListNodes(clusterName)
+	if err != nil {
+		return fmt.Errorf("failed to list nodes for cluster %s: %w", clusterName, err)
+	}
+
+	// Convert nodes to node names for LoadImageArchive
+	nodeNames := make([]string, len(nodes))
+	for i, node := range nodes {
+		nodeNames[i] = node.String()
+	}
+
+	// Use the provider's internal node loading - fall back to exec for now
+	// as the library doesn't expose a simple LoadImage function
 	cmd := exec.Command("kind", "load", "docker-image", imageName, "--name", clusterName)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -193,7 +208,7 @@ func (m *Manager) LoadImage(clusterName, imageName string) error {
 }
 
 // ExportLogs exports logs from a Kind cluster
-func (m *Manager) ExportLogs(clusterName, outputDir string) error {
+func (m *KindManager) ExportLogs(clusterName, outputDir string) error {
 	if !m.ClusterExists(clusterName) {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
 	}
@@ -204,11 +219,7 @@ func (m *Manager) ExportLogs(clusterName, outputDir string) error {
 
 	fmt.Printf("Exporting logs from cluster %s to %s...\n", clusterName, outputDir)
 
-	cmd := exec.Command("kind", "export", "logs", outputDir, "--name", clusterName)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := m.provider.CollectLogs(clusterName, outputDir); err != nil {
 		return fmt.Errorf("failed to export logs: %w", err)
 	}
 

@@ -2,128 +2,91 @@ package kind
 
 import (
 	"fmt"
-	"os"
-	"strings"
 	"os/exec"
+
+	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
-// GenerateKindConfig generates a Kind cluster configuration file
-func (m *Manager) GenerateKindConfig(clusterCfg config.ClusterConfig, outputPath string) error {
-	var sb strings.Builder
-
-	sb.WriteString("kind: Cluster\n")
-	sb.WriteString("apiVersion: kind.x-k8s.io/v1alpha4\n")
+// BuildKindConfig builds a Kind cluster configuration using the kind library's data structures
+func (m *KindManager) BuildKindConfig(clusterName string, clusterCfg config.ClusterConfig) (*v1alpha4.Cluster, error) {
+	cluster := &v1alpha4.Cluster{
+		TypeMeta: v1alpha4.TypeMeta{
+			Kind:       "Cluster",
+			APIVersion: "kind.x-k8s.io/v1alpha4",
+		},
+		Name: clusterName,
+	}
 
 	// Networking configuration
-	sb.WriteString("networking:\n")
-	if clusterCfg.PodCIDR != "" {
-		sb.WriteString(fmt.Sprintf("  podSubnet: \"%s\"\n", clusterCfg.PodCIDR))
-	}
-	if clusterCfg.ServiceCIDR != "" {
-		sb.WriteString(fmt.Sprintf("  serviceSubnet: \"%s\"\n", clusterCfg.ServiceCIDR))
-	}
-	
-	// Disable default CNI if a custom CNI is specified
-	if clusterCfg.CNI != "" && clusterCfg.CNI != "kindnet" {
-		sb.WriteString("  disableDefaultCNI: true\n")
+	cluster.Networking = v1alpha4.Networking{
+		PodSubnet:     clusterCfg.PodCIDR,
+		ServiceSubnet: clusterCfg.ServiceCIDR,
+		IPFamily:      v1alpha4.IPv4Family,
 	}
 
-	// Nodes configuration
-	if m.config.Kind != nil && len(m.config.Kind.Nodes) > 0 {
-		sb.WriteString("nodes:\n")
-		for _, node := range m.config.Kind.Nodes {
-			sb.WriteString(fmt.Sprintf("- role: %s\n", node.Role))
-		}
-	} else {
-		// Default configuration: 1 control-plane node
-		sb.WriteString("nodes:\n")
-		sb.WriteString("- role: control-plane\n")
-	}
-
-	// Write to file
-	if err := os.WriteFile(outputPath, []byte(sb.String()), 0644); err != nil {
-		return fmt.Errorf("failed to write Kind config to %s: %w", outputPath, err)
-	}
-
-	fmt.Printf("✓ Generated Kind config: %s\n", outputPath)
-	return nil
-}
-
-// GenerateKindConfigForDPU generates a Kind cluster configuration optimized for DPU simulation
-func (m *Manager) GenerateKindConfigForDPU(clusterName string, clusterCfg config.ClusterConfig, outputPath string) error {
-	var sb strings.Builder
-
-	sb.WriteString("kind: Cluster\n")
-	sb.WriteString("apiVersion: kind.x-k8s.io/v1alpha4\n")
-	sb.WriteString(fmt.Sprintf("name: %s\n", clusterName))
-
-	// Networking configuration
-	sb.WriteString("networking:\n")
-	if clusterCfg.PodCIDR != "" {
-		sb.WriteString(fmt.Sprintf("  podSubnet: \"%s\"\n", clusterCfg.PodCIDR))
-	}
-	if clusterCfg.ServiceCIDR != "" {
-		sb.WriteString(fmt.Sprintf("  serviceSubnet: \"%s\"\n", clusterCfg.ServiceCIDR))
-	}
-	
 	// Disable default CNI for custom CNI installation
 	if clusterCfg.CNI != "" && clusterCfg.CNI != "kindnet" {
-		sb.WriteString("  disableDefaultCNI: true\n")
+		cluster.Networking.DisableDefaultCNI = true
+		cluster.Networking.KubeProxyMode = v1alpha4.ProxyMode("none")
 	}
 
-	// Nodes configuration from Kind config
+	// Nodes configuration for kind configuration
 	if m.config.Kind != nil && len(m.config.Kind.Nodes) > 0 {
-		sb.WriteString("nodes:\n")
 		for i, node := range m.config.Kind.Nodes {
-			sb.WriteString(fmt.Sprintf("- role: %s\n", node.Role))
-			
-			// Add extra port mappings for control-plane nodes
-			if node.Role == "control-plane" && i == 0 {
-				sb.WriteString("  extraPortMappings:\n")
-				sb.WriteString("  - containerPort: 6443\n")
-				sb.WriteString("    hostPort: 6443\n")
-				sb.WriteString("    protocol: TCP\n")
+			kindNode := v1alpha4.Node{
+				Role: v1alpha4.NodeRole(node.Role),
 			}
 
-			// Mount host paths for DPU simulation if needed
-			sb.WriteString("  extraMounts:\n")
-			sb.WriteString("  - hostPath: /var/run/docker.sock\n")
-			sb.WriteString("    containerPath: /var/run/docker.sock\n")
+			// Add extra port mappings for the first control-plane node
+			if node.Role == "control-plane" && i == 0 {
+				kindNode.KubeadmConfigPatches = []string{
+					`kind: InitConfiguration
+nodeRegistration:
+  kubeletExtraArgs:
+    node-labels: "ingress-ready=true"
+    authorization-mode: "AlwaysAllow"`,
+				}
+			}
+
+			cluster.Nodes = append(cluster.Nodes, kindNode)
 		}
 	} else {
-		// Default: single control-plane node
-		sb.WriteString("nodes:\n")
-		sb.WriteString("- role: control-plane\n")
-		sb.WriteString("  extraPortMappings:\n")
-		sb.WriteString("  - containerPort: 6443\n")
-		sb.WriteString("    hostPort: 6443\n")
-		sb.WriteString("    protocol: TCP\n")
+		return nil, fmt.Errorf("nodes configuration is required for kind configuration")
 	}
 
-	// Write to file
-	if err := os.WriteFile(outputPath, []byte(sb.String()), 0644); err != nil {
-		return fmt.Errorf("failed to write Kind config to %s: %w", outputPath, err)
+	cluster.KubeadmConfigPatches = []string{
+		`kind: ClusterConfiguration
+metadata:
+  name: config
+apiServer:
+  extraArgs:
+    "v": "4"
+controllerManager:
+  extraArgs:
+    "v": "4"
+    "controllers": "*,bootstrap-signer-controller,token-cleaner-controller,-service-lb-controller"
+scheduler:
+  extraArgs:
+    "v": "4"
+networking:
+  dnsDomain: "cluster.local"`,
+		`kind: InitConfiguration
+nodeRegistration:
+  kubeletExtraArgs:
+    "v": "4"`,
+		`kind: JoinConfiguration
+nodeRegistration:
+  kubeletExtraArgs:
+    "v": "4"`,
 	}
 
-	fmt.Printf("✓ Generated Kind config for DPU: %s\n", outputPath)
-	return nil
-}
-
-// ValidateKindInstallation checks if Kind is installed and available
-func ValidateKindInstallation() error {
-	cmd := exec.Command("kind", "version")
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("kind is not installed or not in PATH: %w", err)
-	}
-
-	fmt.Printf("Kind version: %s\n", strings.TrimSpace(string(output)))
-	return nil
+	return cluster, nil
 }
 
 // ValidateDockerInstallation checks if Docker is installed and running
+// This is required for the kind library to work
 func ValidateDockerInstallation() error {
 	cmd := exec.Command("docker", "ps")
 	if err := cmd.Run(); err != nil {

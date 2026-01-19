@@ -1,12 +1,14 @@
 package kind
 
 import (
+	"sigs.k8s.io/kind/pkg/cluster"
+
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
-// Manager manages Kind clusters
-type Manager struct {
-	config *config.Config
+type KindManager struct {
+	config   *config.Config
+	provider *cluster.Provider
 }
 
 // ClusterInfo represents information about a Kind cluster
@@ -23,9 +25,10 @@ type NodeInfo struct {
 	Status string
 }
 
-// NewManager creates a new Kind cluster manager
-func NewManager(cfg *config.Config) *Manager {
-	return &Manager{
-		config: cfg,
+// NewKindManager creates a new Kind cluster manager
+func NewKindManager(cfg *config.Config) *KindManager {
+	return &KindManager{
+		config:   cfg,
+		provider: cluster.NewProvider(),
 	}
 }

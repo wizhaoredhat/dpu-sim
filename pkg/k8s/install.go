@@ -676,7 +676,7 @@ func SaveKubeconfigToFile(kubeconfigContent, clusterName, kubeconfigDir string) 
 	}
 
 	// Build the file path
-	filepath := getKubeconfigPath(clusterName, kubeconfigDir)
+	filepath := GetKubeconfigPath(clusterName, kubeconfigDir)
 
 	// Write kubeconfig to file with restricted permissions
 	if err := os.WriteFile(filepath, []byte(kubeconfigContent), 0600); err != nil {
@@ -687,9 +687,9 @@ func SaveKubeconfigToFile(kubeconfigContent, clusterName, kubeconfigDir string) 
 	return nil
 }
 
-// getKubeconfigPath returns the path to the kubeconfig file for a given cluster name
+// GetKubeconfigPath returns the path to the kubeconfig file for a given cluster name
 // The path is <kubeconfigDir>/<clusterName>.kubeconfig
-func getKubeconfigPath(clusterName, kubeconfigDir string) string {
+func GetKubeconfigPath(clusterName, kubeconfigDir string) string {
 	filename := fmt.Sprintf("%s.kubeconfig", clusterName)
 	return fmt.Sprintf("%s/%s", kubeconfigDir, filename)
 }
@@ -697,7 +697,7 @@ func getKubeconfigPath(clusterName, kubeconfigDir string) string {
 // FindKubeconfig returns the kubeconfig file path for a cluster if it exists
 // Returns the path and nil error if found, or empty string and error if not found
 func findKubeconfig(clusterName, kubeconfigDir string) (string, error) {
-	filepath := getKubeconfigPath(clusterName, kubeconfigDir)
+	filepath := GetKubeconfigPath(clusterName, kubeconfigDir)
 
 	if _, err := os.Stat(filepath); err != nil {
 		if os.IsNotExist(err) {

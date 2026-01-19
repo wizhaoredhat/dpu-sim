@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,19 +25,7 @@ var (
 	skipCleanup bool
 	cleanupOnly bool
 	skipDeploy  bool
-	deployOnly  bool
 	skipK8s     bool
-	k8sOnly     bool
-
-	// deploy-kind flags
-	kindNoCleanup   bool
-	kindCleanupOnly bool
-
-	// install-software flags
-	installParallel bool
-	installVMName   string
-	installSkipCNI  bool
-	installCluster  string
 )
 
 var rootCmd = &cobra.Command{
@@ -49,20 +36,11 @@ using either VMs (libvirt) or containers (Kind), pre-configured with
 Kubernetes and CNI for container networking experiments.
 
 This is the main orchestrator that runs the complete deployment workflow:
-  1. Deploy infrastructure (VMs or Kind clusters)
-  2. Install Kubernetes and CNI components
-  3. Verify deployment
-
-For more control, use subcommands:
-  - vmctl: Manage VMs (separate command)`,
+  1. Install dependencies
+  2. Clean up existing resources (Idempotent deployment - can be run multiple times safely)
+  3. Deploy infrastructure (VMs or Kind clusters)
+  4. Install Kubernetes and CNI components`,
 	RunE: runDeploy,
-}
-
-var installSoftwareCmd = &cobra.Command{
-	Use:   "install-software",
-	Short: "Install software components on VMs or Kind clusters",
-	Long:  `Install Kubernetes and CNI components on VMs via SSH or on Kind clusters via kubectl`,
-	RunE:  runInstallSoftwareCmd,
 }
 
 func init() {
@@ -74,16 +52,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&skipDeps, "skip-deps", false, "Skip dependency checks")
 	rootCmd.Flags().BoolVar(&skipCleanup, "skip-cleanup", false, "Skip cleanup of existing resources")
 	rootCmd.Flags().BoolVar(&skipDeploy, "skip-deploy", false, "Skip VM/Kind deployment")
-	rootCmd.Flags().BoolVar(&skipK8s, "skip-k8s", false, "Skip Kubernetes and CNI installation")
-
-	// install-software flags
-	installSoftwareCmd.Flags().BoolVarP(&installParallel, "parallel", "p", false, "Install on all VMs in parallel")
-	installSoftwareCmd.Flags().StringVar(&installVMName, "vm", "", "Install only on specific VM")
-	installSoftwareCmd.Flags().BoolVar(&installSkipCNI, "skip-cni", false, "Skip CNI installation")
-	installSoftwareCmd.Flags().StringVar(&installCluster, "cluster", "", "Target specific cluster (for Kind deployments)")
-
-	// Add subcommands
-	rootCmd.AddCommand(installSoftwareCmd)
+	rootCmd.Flags().BoolVar(&skipK8s, "skip-k8s", false, "Skip Kubernetes (VM only) and CNI installation")
 }
 
 // =============================================================================
@@ -176,7 +145,7 @@ func runVMDeploymentWorkflow(cfg *config.Config) error {
 		fmt.Println("\nSkipping Kubernetes installation")
 	}
 
-	printSuccessMessage("VM")
+	printSuccessMessage(cfg, "VM")
 	return nil
 }
 
@@ -186,31 +155,42 @@ func runKindDeploymentWorkflow(cfg *config.Config) error {
 	fmt.Println("║      Kind-Based Deployment Workflow           ║")
 	fmt.Println("╚═══════════════════════════════════════════════╝")
 
-	// Step 1: Deploy Kind clusters
+	kindMgr := kind.NewKindManager(cfg)
+
+	if !skipCleanup || cleanupOnly {
+		fmt.Println("\n=== Cleaning up existing kind clusters ===")
+		if err := kindMgr.CleanupAll(cfg); err != nil {
+			return fmt.Errorf("failed to cleanup Kind clusters: %w", err)
+		}
+		if cleanupOnly {
+			fmt.Println("✓ Cleanup complete")
+			return nil
+		}
+	}
+
 	if !skipDeploy {
-		fmt.Println("\n[Step 1/2] Deploying Kind clusters...")
-		if err := doKindDeploy(cfg, !skipCleanup, false); err != nil {
+		fmt.Println("\n=== Deploying Kind clusters ===")
+		if err := doKindDeploy(cfg, kindMgr); err != nil {
 			return fmt.Errorf("Kind deployment failed: %w", err)
 		}
 	} else {
-		fmt.Println("\n[Step 1/2] Skipping Kind deployment")
+		fmt.Println("\nSkipping Kind deployment")
 	}
 
-	// Step 2: Install CNI
 	if !skipK8s {
-		fmt.Println("\n[Step 2/2] Installing CNI...")
-		if err := doInstallSoftware(cfg, "", false, ""); err != nil {
+		fmt.Println("\n=== Installing CNI ===")
+		if err := doKindInstallCNI(cfg); err != nil {
 			return fmt.Errorf("CNI installation failed: %w", err)
 		}
 	} else {
-		fmt.Println("\n[Step 2/2] Skipping CNI installation")
+		fmt.Println("\nSkipping CNI installation")
 	}
 
-	printSuccessMessage("Kind")
+	printSuccessMessage(cfg, "Kind")
 	return nil
 }
 
-func printSuccessMessage(deployType string) {
+func printSuccessMessage(cfg *config.Config, deployType string) {
 	fmt.Println("")
 	fmt.Println("╔═══════════════════════════════════════════════╗")
 	fmt.Println("║         Deployment Completed Successfully!    ║")
@@ -225,7 +205,7 @@ func printSuccessMessage(deployType string) {
 		fmt.Println("\nUseful commands:")
 		fmt.Println("  vmctl list                    # List all VMs")
 		fmt.Println("  vmctl ssh <vm-name>           # SSH into a VM")
-		fmt.Println("  kubectl --kubeconfig kubeconfig/<cluster>.kubeconfig get nodes")
+		fmt.Printf("  kubectl --kubeconfig %s/<cluster>.kubeconfig get nodes\n", cfg.Kubernetes.GetKubeconfigDir())
 	} else {
 		fmt.Println("\n✓ Kind deployment complete!")
 		fmt.Println("\nYour DPU simulation environment is ready:")
@@ -233,11 +213,10 @@ func printSuccessMessage(deployType string) {
 		fmt.Println("  • CNI is deployed and ready")
 		fmt.Println("\nUseful commands:")
 		fmt.Println("  kind get clusters             # List all clusters")
-		fmt.Println("  kubectl --kubeconfig kubeconfig/<cluster>.kubeconfig get nodes")
-		fmt.Println("  kubectl --kubeconfig kubeconfig/<cluster>.kubeconfig get pods -A")
+		fmt.Printf("  kubectl --kubeconfig %s/<cluster>.kubeconfig get nodes\n", cfg.Kubernetes.GetKubeconfigDir())
 	}
 
-	fmt.Println("\nKubeconfig files: ./kubeconfig/")
+	fmt.Printf("\nKubeconfig files: %s\n", cfg.Kubernetes.GetKubeconfigDir())
 	fmt.Println("\nFor more information, see README.md")
 }
 
@@ -287,61 +266,18 @@ func doVMInstallK8s(cfg *config.Config, conn *libvirt.Connect) error {
 	return nil
 }
 
-func doKindDeploy(cfg *config.Config, cleanup bool, cleanupOnly bool) error {
-	// Validate prerequisites
-	fmt.Println("\n=== Validating Prerequisites ===")
-	if err := kind.ValidateKindInstallation(); err != nil {
-		return fmt.Errorf("prerequisite check failed: %w", err)
-	}
+func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager) error {
+	// Validate prerequisites (Docker is required by the kind library)
+	fmt.Println("\n=== Validating DockerPrerequisites ===")
 	if err := kind.ValidateDockerInstallation(); err != nil {
 		return fmt.Errorf("prerequisite check failed: %w", err)
 	}
 
-	// Create Kind manager
-	kindMgr := kind.NewManager(cfg)
-
-	// Cleanup if requested
-	if cleanup || cleanupOnly {
-		fmt.Println("\n=== Cleaning up existing clusters ===")
-		for _, cluster := range cfg.Kubernetes.Clusters {
-			if err := kindMgr.DeleteCluster(cluster.Name); err != nil {
-				fmt.Printf("Warning: failed to delete cluster %s: %v\n", cluster.Name, err)
-			}
-		}
-		if cleanupOnly {
-			fmt.Println("✓ Cleanup complete")
-			return nil
-		}
-	}
-
-	// Create clusters
 	fmt.Println("\n=== Creating Kind Clusters ===")
-	for _, cluster := range cfg.Kubernetes.Clusters {
-		// Generate Kind config
-		configDir := filepath.Join(".", "kind-configs")
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			return fmt.Errorf("failed to create config directory: %w", err)
-		}
-
-		kindConfigPath := filepath.Join(configDir, fmt.Sprintf("%s-config.yaml", cluster.Name))
-		if err := kindMgr.GenerateKindConfigForDPU(cluster.Name, cluster, kindConfigPath); err != nil {
-			return fmt.Errorf("failed to generate Kind config for %s: %w", cluster.Name, err)
-		}
-
-		// Create cluster
-		if err := kindMgr.CreateCluster(cluster.Name, kindConfigPath); err != nil {
-			return fmt.Errorf("failed to create cluster %s: %w", cluster.Name, err)
-		}
-
-		// Save kubeconfig
-		kubeconfigDir := filepath.Join(".", "kubeconfig")
-		kubeconfigPath := filepath.Join(kubeconfigDir, fmt.Sprintf("%s.yaml", cluster.Name))
-		if err := kindMgr.GetKubeconfig(cluster.Name, kubeconfigPath); err != nil {
-			return fmt.Errorf("failed to save kubeconfig for %s: %w", cluster.Name, err)
-		}
+	if err := kindMgr.DeployAllClusters(); err != nil {
+		return fmt.Errorf("failed to deploy Kind clusters: %w", err)
 	}
 
-	// Display cluster information
 	fmt.Println("\n=== Cluster Information ===")
 	for _, cluster := range cfg.Kubernetes.Clusters {
 		info, err := kindMgr.GetClusterInfo(cluster.Name)
@@ -358,63 +294,15 @@ func doKindDeploy(cfg *config.Config, cleanup bool, cleanupOnly bool) error {
 		}
 	}
 
-	fmt.Println("\n=== Deployment Complete ===")
-	fmt.Println("Kind clusters are ready!")
-	fmt.Println("\nNext steps:")
-	fmt.Println("  - Kubeconfig files are in ./kubeconfig/")
-	fmt.Println("  - Use 'kubectl --kubeconfig kubeconfig/<cluster>.yaml get nodes' to verify")
-	fmt.Println("  - Run 'dpu-sim install-software' to install CNI components")
-
 	return nil
 }
 
-func runInstallSoftwareCmd(cmd *cobra.Command, args []string) error {
-	fmt.Println("=== Software Installation ===")
-	fmt.Printf("Configuration: %s\n", configPath)
-
-	// Load configuration
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	return doInstallSoftware(cfg, installVMName, installSkipCNI, installCluster)
-}
-
-func doInstallSoftware(cfg *config.Config, vmName string, skipCNI bool, clusterName string) error {
-	// Determine deployment mode
-	mode, err := cfg.GetDeploymentMode()
-	if err != nil {
-		return fmt.Errorf("failed to determine deployment mode: %w", err)
-	}
-	fmt.Printf("Deployment mode: %s\n", mode)
-
-	switch mode {
-	case "vm":
-		return nil
-	case "kind":
-		return installOnKind(cfg, skipCNI, clusterName)
-	default:
-		return fmt.Errorf("unknown deployment mode: %s", mode)
-	}
-}
-
-func installOnKind(cfg *config.Config, skipCNI bool, clusterName string) error {
+func doKindInstallCNI(cfg *config.Config) error {
 	fmt.Println("\n=== Installing CNI on Kind clusters ===")
 
 	for _, cluster := range cfg.Kubernetes.Clusters {
-		if clusterName != "" && cluster.Name != clusterName {
-			continue
-		}
-
-		if skipCNI {
-			fmt.Printf("Skipping CNI installation on cluster %s\n", cluster.Name)
-			continue
-		}
-
 		fmt.Printf("\n--- Installing CNI on cluster %s ---\n", cluster.Name)
-
-		kubeconfigPath := filepath.Join("kubeconfig", fmt.Sprintf("%s.yaml", cluster.Name))
+		kubeconfigPath := k8s.GetKubeconfigPath(cluster.Name, cfg.Kubernetes.GetKubeconfigDir())
 		cniType := cni.CNIType(cluster.CNI)
 		cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(cfg, kubeconfigPath)
 		if err != nil {
