@@ -66,7 +66,7 @@ ssh:
 
 kubernetes:
   version: "1.33"
-  kubeconfig_dir: "kubeconfig"  # Directory to store kubeconfig files (default: "kubeconfig")
+  kubeconfig_dir: "kubeconfig"
   clusters:
     - name: "cluster-1"
       pod_cidr: "10.244.0.0/16"
