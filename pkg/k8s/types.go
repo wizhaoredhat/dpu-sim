@@ -21,7 +21,7 @@ type Client struct {
 // K8sMachineManager manages Kubernetes cluster operations
 type K8sMachineManager struct {
 	config      *config.Config
-	sshClient   *ssh.Client
+	sshClient   *ssh.SSHClient
 	linuxDistro *platform.Distro
 }
 
@@ -60,7 +60,7 @@ type ControlPlaneInfo struct {
 func NewK8sMachineManager(cfg *config.Config) *K8sMachineManager {
 	return &K8sMachineManager{
 		config:      cfg,
-		sshClient:   ssh.NewClient(&cfg.SSH),
+		sshClient:   ssh.NewSSHClient(&cfg.SSH),
 		linuxDistro: nil,
 	}
 }

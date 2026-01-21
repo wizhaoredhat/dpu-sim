@@ -17,25 +17,25 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
-// Client represents an SSH client for executing commands on remote hosts
-type Client struct {
+// SSHClient represents an SSH client for executing commands on remote hosts
+type SSHClient struct {
 	config *config.SSHConfig
 }
 
-// NewClient creates a new SSH client
-func NewClient(cfg *config.SSHConfig) *Client {
-	return &Client{
+// NewSSHClient creates a new SSH client
+func NewSSHClient(cfg *config.SSHConfig) *SSHClient {
+	return &SSHClient{
 		config: cfg,
 	}
 }
 
 // Execute executes a command on a remote host via SSH
-func (c *Client) Execute(ip, command string) (stdout, stderr string, err error) {
+func (c *SSHClient) Execute(ip, command string) (stdout, stderr string, err error) {
 	return c.ExecuteWithTimeout(ip, command, 10*time.Second)
 }
 
 // ExecuteWithTimeout executes a command with a specific timeout
-func (c *Client) ExecuteWithTimeout(ip, command string, timeout time.Duration) (stdout, stderr string, err error) {
+func (c *SSHClient) ExecuteWithTimeout(ip, command string, timeout time.Duration) (stdout, stderr string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -43,7 +43,7 @@ func (c *Client) ExecuteWithTimeout(ip, command string, timeout time.Duration) (
 }
 
 // ExecuteWithContext executes a command with a context for cancellation
-func (c *Client) ExecuteWithContext(ctx context.Context, ip, command string) (stdout, stderr string, err error) {
+func (c *SSHClient) ExecuteWithContext(ctx context.Context, ip, command string) (stdout, stderr string, err error) {
 	// Read private key
 	key, err := os.ReadFile(c.config.KeyPath)
 	if err != nil {
@@ -105,7 +105,7 @@ func (c *Client) ExecuteWithContext(ctx context.Context, ip, command string) (st
 }
 
 // WaitForSSH waits for SSH to become available on a host
-func (c *Client) WaitForSSH(ip string, timeout time.Duration) error {
+func (c *SSHClient) WaitForSSH(ip string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

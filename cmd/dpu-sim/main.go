@@ -232,7 +232,7 @@ func doVMDeploy(cfg *config.Config, vmMgr *vm.VMManager) error {
 
 	// Wait for VMs to get IP addresses
 	fmt.Println("\n=== Waiting for VMs to boot and get IPs ===")
-	sshClient := ssh.NewClient(&cfg.SSH)
+	sshClient := ssh.NewSSHClient(&cfg.SSH)
 
 	for _, vmCfg := range cfg.VMs {
 		fmt.Printf("Waiting for %s to get an IP address...\n", vmCfg.Name)

@@ -14,7 +14,7 @@ func TestNewClient(t *testing.T) {
 		Password: "password",
 	}
 
-	client := NewClient(cfg)
+	client := NewSSHClient(cfg)
 	assert.NotNil(t, client)
 	assert.Equal(t, cfg, client.config)
 }

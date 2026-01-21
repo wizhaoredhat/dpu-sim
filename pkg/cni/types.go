@@ -20,7 +20,7 @@ const (
 // CNIManager manages CNI installations
 type CNIManager struct {
 	config    *config.Config
-	sshClient *ssh.Client
+	sshClient *ssh.SSHClient
 	// k8sClient is an optional Kubernetes client for direct API access
 	k8sClient *k8s.Client
 }
@@ -42,7 +42,7 @@ func NewCNIManagerWithKubeconfig(cfg *config.Config, kubeconfigContent string) (
 
 	return &CNIManager{
 		config:    cfg,
-		sshClient: ssh.NewClient(&cfg.SSH),
+		sshClient: ssh.NewSSHClient(&cfg.SSH),
 		k8sClient: k8sClient,
 	}, nil
 }
@@ -60,7 +60,7 @@ func NewCNIManagerWithKubeconfigFile(cfg *config.Config, kubeconfigPath string) 
 
 	return &CNIManager{
 		config:    cfg,
-		sshClient: ssh.NewClient(&cfg.SSH),
+		sshClient: ssh.NewSSHClient(&cfg.SSH),
 		k8sClient: k8sClient,
 	}, nil
 }

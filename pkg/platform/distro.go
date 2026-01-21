@@ -64,7 +64,7 @@ func DetectPackageManager(distro *Distro) string {
 }
 
 // Detect detects the Linux distribution of a remote machine via SSH
-func Detect(sshClient *ssh.Client, machineIP string) (*Distro, error) {
+func Detect(sshClient *ssh.SSHClient, machineIP string) (*Distro, error) {
 	// Read /etc/os-release which is standard on most modern Linux distributions
 	script := `cat /etc/os-release`
 

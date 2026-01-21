@@ -60,12 +60,12 @@ func (i *InterfaceInfo) String() string {
 
 // GetInterfaceByIP retrieves interface information for the interface that has the specified IP address.
 // It SSHs into the machine at targetMachineIP and finds the interface with searchIP.
-func GetInterfaceByIP(sshClient *ssh.Client, targetMachineIP, searchIP string) (*InterfaceInfo, error) {
+func GetInterfaceByIP(sshClient *ssh.SSHClient, targetMachineIP, searchIP string) (*InterfaceInfo, error) {
 	return GetInterfaceByIPWithTimeout(sshClient, targetMachineIP, searchIP, 30*time.Second)
 }
 
 // GetInterfaceByIPWithTimeout retrieves interface information with a custom timeout.
-func GetInterfaceByIPWithTimeout(sshClient *ssh.Client, targetMachineIP, searchIP string, timeout time.Duration) (*InterfaceInfo, error) {
+func GetInterfaceByIPWithTimeout(sshClient *ssh.SSHClient, targetMachineIP, searchIP string, timeout time.Duration) (*InterfaceInfo, error) {
 	// Use 'ip -j addr show' to get JSON output of all interfaces
 	cmd := "ip -j addr show"
 
@@ -94,12 +94,12 @@ func GetInterfaceByIPWithTimeout(sshClient *ssh.Client, targetMachineIP, searchI
 }
 
 // GetAllInterfaces retrieves information about all network interfaces on a remote machine.
-func GetAllInterfaces(sshClient *ssh.Client, targetMachineIP string) ([]InterfaceInfo, error) {
+func GetAllInterfaces(sshClient *ssh.SSHClient, targetMachineIP string) ([]InterfaceInfo, error) {
 	return GetAllInterfacesWithTimeout(sshClient, targetMachineIP, 30*time.Second)
 }
 
 // GetAllInterfacesWithTimeout retrieves all interface information with a custom timeout.
-func GetAllInterfacesWithTimeout(sshClient *ssh.Client, targetMachineIP string, timeout time.Duration) ([]InterfaceInfo, error) {
+func GetAllInterfacesWithTimeout(sshClient *ssh.SSHClient, targetMachineIP string, timeout time.Duration) ([]InterfaceInfo, error) {
 	cmd := "ip -j addr show"
 
 	stdout, stderr, err := sshClient.ExecuteWithTimeout(targetMachineIP, cmd, timeout)
@@ -116,12 +116,12 @@ func GetAllInterfacesWithTimeout(sshClient *ssh.Client, targetMachineIP string, 
 }
 
 // GetInterfaceByName retrieves interface information by name from a remote machine.
-func GetInterfaceByName(sshClient *ssh.Client, targetMachineIP, ifaceName string) (*InterfaceInfo, error) {
+func GetInterfaceByName(sshClient *ssh.SSHClient, targetMachineIP, ifaceName string) (*InterfaceInfo, error) {
 	return GetInterfaceByNameWithTimeout(sshClient, targetMachineIP, ifaceName, 30*time.Second)
 }
 
 // GetInterfaceByNameWithTimeout retrieves interface information by name with a custom timeout.
-func GetInterfaceByNameWithTimeout(sshClient *ssh.Client, targetMachineIP, ifaceName string, timeout time.Duration) (*InterfaceInfo, error) {
+func GetInterfaceByNameWithTimeout(sshClient *ssh.SSHClient, targetMachineIP, ifaceName string, timeout time.Duration) (*InterfaceInfo, error) {
 	cmd := fmt.Sprintf("ip -j addr show dev %s", ifaceName)
 
 	stdout, stderr, err := sshClient.ExecuteWithTimeout(targetMachineIP, cmd, timeout)

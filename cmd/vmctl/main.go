@@ -177,7 +177,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	// Execute command via SSH
-	sshClient := ssh.NewClient(&cfg.SSH)
+	sshClient := ssh.NewSSHClient(&cfg.SSH)
 	stdout, stderr, err := sshClient.Execute(ip, command)
 
 	// Print output
