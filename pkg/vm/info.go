@@ -166,13 +166,6 @@ func GetVMInterfaceInfo(conn *libvirt.Connect, vmName string) ([]InterfaceInfo, 
 	return result, nil
 }
 
-// InterfaceInfo represents VM interface information
-type InterfaceInfo struct {
-	Name   string
-	Hwaddr string
-	Addrs  []string
-}
-
 // GetVMInfo retrieves comprehensive information about a VM.
 // networkType should be "mgmt" or "k8s" to specify which network's IP to retrieve.
 // cfg can be nil, in which case the IP field will be empty.
@@ -209,16 +202,6 @@ func GetVMInfo(conn *libvirt.Connect, vmName string, networkType string, cfg *co
 		MemoryMB:  info.Memory / 1024,
 		MaxMemory: info.MaxMem / 1024,
 	}, nil
-}
-
-// VMInfo represents comprehensive VM information
-type VMInfo struct {
-	Name      string
-	State     VMState
-	IP        string
-	VCPUs     uint
-	MemoryMB  uint64
-	MaxMemory uint64
 }
 
 // String returns a formatted string representation of VMInfo

@@ -23,14 +23,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// Client wraps Kubernetes client-go for cluster operations
-type Client struct {
-	clientset       *kubernetes.Clientset
-	dynamicClient   dynamic.Interface
-	cachedDiscovery discovery.CachedDiscoveryInterface
-	restMapper      *restmapper.DeferredDiscoveryRESTMapper
-}
-
 // NewClient creates a new Kubernetes client from kubeconfig content
 func NewClient(kubeconfigContent string) (*Client, error) {
 	clientConfig, err := clientcmd.RESTConfigFromKubeConfig([]byte(kubeconfigContent))

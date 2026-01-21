@@ -7,29 +7,9 @@ import (
 )
 
 // Manager manages libvirt virtual machines and networks
-type Manager struct {
+type VMManager struct {
 	conn   *libvirt.Connect
 	config *config.Config
-	vms    []vmInfo
-}
-
-// vmInfo tracks created VM information
-type vmInfo struct {
-	name   string
-	domain *libvirt.Domain
-}
-
-// NetworkManager manages libvirt networks
-type NetworkManager struct {
-	conn     *libvirt.Connect
-	config   *config.Config
-	networks []networkInfo
-}
-
-// networkInfo tracks created network information
-type networkInfo struct {
-	name    string
-	network *libvirt.Network
 }
 
 // VMState represents the state of a virtual machine
@@ -63,4 +43,21 @@ func (s VMState) String() string {
 	default:
 		return "Unknown"
 	}
+}
+
+// InterfaceInfo represents VM interface information
+type InterfaceInfo struct {
+	Name   string
+	Hwaddr string
+	Addrs  []string
+}
+
+// VMInfo represents comprehensive VM information
+type VMInfo struct {
+	Name      string
+	State     VMState
+	IP        string
+	VCPUs     uint
+	MemoryMB  uint64
+	MaxMemory uint64
 }

@@ -4,7 +4,19 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 	"github.com/wizhao/dpu-sim/pkg/ssh"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/restmapper"
 )
+
+// Client wraps Kubernetes client-go for cluster operations
+type Client struct {
+	clientset       *kubernetes.Clientset
+	dynamicClient   dynamic.Interface
+	cachedDiscovery discovery.CachedDiscoveryInterface
+	restMapper      *restmapper.DeferredDiscoveryRESTMapper
+}
 
 // K8sMachineManager manages Kubernetes cluster operations
 type K8sMachineManager struct {
