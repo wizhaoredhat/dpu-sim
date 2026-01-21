@@ -32,13 +32,18 @@ func GetProjectRoot() (string, error) {
 
 // InstallFunc is a function that installs a package dependency
 // It receives the detected distro and config for platform-specific installation
-type InstallFunc func(distro *Distro, cfg *config.Config) error
+type InstallFunc func(distro *Distro, cfg *config.Config, dep *Dependency) error
+
+// CheckFunc is a function that checks if a package dependency is installed
+// Used for packages without executables (e.g., development libraries)
+type CheckFunc func(distro *Distro, cfg *config.Config, dep *Dependency) error
 
 // Dependency represents a tool dependency
 type Dependency struct {
 	Name        string      // Name of the dependency
 	Reason      string      // Reason for the dependency
-	CheckCmd    []string    // Command to check if dependency is installed
+	CheckCmd    []string    // Command to check if dependency is installed (for packages with executables)
+	CheckFunc   CheckFunc   // Function to check if dependency is installed (for libraries without executables)
 	InstallFunc InstallFunc // Function to install the dependency
 }
 
@@ -71,20 +76,35 @@ func runCmd(name string, args ...string) error {
 	return cmd.Run()
 }
 
+// unsupportedPackageManager returns an error for an unsupported package manager
 func unsupportedPackageManager(distro *Distro) error {
 	return fmt.Errorf("unsupported package manager: %s", distro.PackageManager)
 }
 
+// unsupportedArchitecture returns an error for an unsupported architecture
 func unsupportedArchitecture(distro *Distro) error {
 	return fmt.Errorf("unsupported architecture: %s", distro.Architecture)
 }
 
-// installPip3 installs pip3 using the system package manager
-func installPip3(distro *Distro, cfg *config.Config) error {
+// installGenericPackage installs a package dependency using the package manager
+func installGenericPackage(distro *Distro, cfg *config.Config, dep *Dependency) error {
 	switch distro.PackageManager {
 	case DNF:
-		if err := runCmd("sudo", DNF, "install", "-y", "python3-pip"); err != nil {
-			return fmt.Errorf("failed to install python3-pip: %w", err)
+		if err := runCmd("sudo", DNF, "install", "-y", dep.Name); err != nil {
+			return fmt.Errorf("failed to install genisoimage: %w", err)
+		}
+	default:
+		return unsupportedPackageManager(distro)
+	}
+	return nil
+}
+
+// checkGenericPackage checks if a package dependency is installed using the package manager
+func checkGenericPackage(distro *Distro, cfg *config.Config, dep *Dependency) error {
+	switch distro.PackageManager {
+	case DNF:
+		if err := runCmd("sudo", "rpm", "-q", dep.Name); err != nil {
+			return fmt.Errorf("package %s is not installed: %w", dep.Name, err)
 		}
 	default:
 		return unsupportedPackageManager(distro)
@@ -93,7 +113,7 @@ func installPip3(distro *Distro, cfg *config.Config) error {
 }
 
 // installJinjanator installs jinjanator via pip3
-func installJinjanator(distro *Distro, cfg *config.Config) error {
+func installJinjanator(distro *Distro, cfg *config.Config, dep *Dependency) error {
 	// First ensure ~/.local/bin is in PATH
 	ensureLocalBinInPath()
 	if err := runCmd("pip3", "install", "--user", "jinjanator[yaml]"); err != nil {
@@ -102,21 +122,8 @@ func installJinjanator(distro *Distro, cfg *config.Config) error {
 	return nil
 }
 
-// installGit installs git using the system package manager
-func installGit(distro *Distro, cfg *config.Config) error {
-	switch distro.PackageManager {
-	case DNF:
-		if err := runCmd("sudo", DNF, "install", "-y", "git"); err != nil {
-			return fmt.Errorf("failed to install git: %w", err)
-		}
-	default:
-		return unsupportedPackageManager(distro)
-	}
-	return nil
-}
-
 // installKubectl installs kubectl by adding the Kubernetes repository
-func installKubectl(distro *Distro, cfg *config.Config) error {
+func installKubectl(distro *Distro, cfg *config.Config, dep *Dependency) error {
 	version := cfg.Kubernetes.Version
 	switch distro.PackageManager {
 	case DNF:
@@ -144,7 +151,7 @@ gpgkey=https://pkgs.k8s.io/core:/stable:/%s/rpm/repodata/repomd.xml.key
 }
 
 // installDocker installs Docker using the official installation method
-func installDocker(distro *Distro, cfg *config.Config) error {
+func installDocker(distro *Distro, cfg *config.Config, dep *Dependency) error {
 	switch distro.PackageManager {
 	case DNF:
 		if err := runCmd("sudo", DNF, "install", "-y", "podman"); err != nil {
@@ -166,7 +173,7 @@ func installDocker(distro *Distro, cfg *config.Config) error {
 }
 
 // installKind installs Kind (Kubernetes in Docker)
-func installKind(distro *Distro, cfg *config.Config) error {
+func installKind(distro *Distro, cfg *config.Config, dep *Dependency) error {
 	if distro.Architecture == X86_64 {
 		if err := runCmd("curl", "-Lo", "./kind", "https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64"); err != nil {
 			return fmt.Errorf("failed to download kind: %w", err)
@@ -184,7 +191,8 @@ func installKind(distro *Distro, cfg *config.Config) error {
 	return nil
 }
 
-func installOVS(distro *Distro, cfg *config.Config) error {
+// installOVS installs Open vSwitch using the official installation method
+func installOVS(distro *Distro, cfg *config.Config, dep *Dependency) error {
 	switch distro.PackageManager {
 	case DNF:
 		if distro.Architecture == X86_64 {
@@ -203,26 +211,56 @@ func installOVS(distro *Distro, cfg *config.Config) error {
 	return nil
 }
 
-func installGenisoimage(distro *Distro, cfg *config.Config) error {
-	switch distro.PackageManager {
-	case DNF:
-		if err := runCmd("sudo", DNF, "install", "-y", "genisoimage"); err != nil {
-			return fmt.Errorf("failed to install genisoimage: %w", err)
-		}
-	default:
-		return unsupportedPackageManager(distro)
-	}
-	return nil
-}
-
 // GetDependencies returns the list of dependencies needed by dpu-sim
 func GetDependencies() []Dependency {
 	return []Dependency{
 		{
+			Name:        "libvirt",
+			Reason:      "Required for VM management",
+			CheckCmd:    []string{"virsh", "--version"},
+			InstallFunc: installGenericPackage,
+		},
+		{
+			Name:        "qemu-kvm",
+			Reason:      "Required for VM management",
+			CheckFunc:   checkGenericPackage,
+			InstallFunc: installGenericPackage,
+		},
+		{
+			Name:        "qemu-img",
+			Reason:      "Required for VM management",
+			CheckCmd:    []string{"qemu-img", "--version"},
+			InstallFunc: installGenericPackage,
+		},
+		{
+			Name:        "libvirt-devel",
+			Reason:      "Required for VM management",
+			CheckFunc:   checkGenericPackage,
+			InstallFunc: installGenericPackage,
+		},
+		{
+			Name:        "virt-install",
+			Reason:      "Required for VM management",
+			CheckCmd:    []string{"virt-install", "--version"},
+			InstallFunc: installGenericPackage,
+		},
+		{
+			Name:        "genisoimage",
+			Reason:      "Required for VM cloud-init ISOs",
+			CheckCmd:    []string{"genisoimage", "-version"},
+			InstallFunc: installGenericPackage,
+		},
+		{
+			Name:        "wget",
+			Reason:      "Required for downloading images",
+			CheckCmd:    []string{"wget", "--version"},
+			InstallFunc: installGenericPackage,
+		},
+		{
 			Name:        "pip3",
 			Reason:      "Required for OVN-Kubernetes daemonset.sh script",
 			CheckCmd:    []string{"pip3", "--version"},
-			InstallFunc: installPip3,
+			InstallFunc: installGenericPackage,
 		},
 		{
 			Name:        "jinjanator",
@@ -234,7 +272,7 @@ func GetDependencies() []Dependency {
 			Name:        "git",
 			Reason:      "Required for OVN-Kubernetes git submodule",
 			CheckCmd:    []string{"git", "--version"},
-			InstallFunc: installGit,
+			InstallFunc: installGenericPackage,
 		},
 		{
 			Name:        "kubectl",
@@ -255,29 +293,32 @@ func GetDependencies() []Dependency {
 			InstallFunc: installKind,
 		},
 		{
-			Name:        "ovs",
+			Name:        "openvswitch",
 			Reason:      "Required for OVS Networks",
 			CheckCmd:    []string{"ovs-vsctl", "--version"},
 			InstallFunc: installOVS,
-		},
-		{
-			Name:        "genisoimage",
-			Reason:      "Required for VM cloud-init ISOs",
-			CheckCmd:    []string{"genisoimage", "-version"},
-			InstallFunc: installGenisoimage,
 		},
 	}
 }
 
 // checkDependency checks if a single dependency is installed
-func checkDependency(dep Dependency) DependencyResult {
+func checkDependency(dep Dependency, distro *Distro, cfg *config.Config) DependencyResult {
 	result := DependencyResult{
 		Name:      dep.Name,
 		Installed: false,
 	}
 
+	// If CheckCmd is empty, use CheckFunc (for libraries without executables)
 	if len(dep.CheckCmd) == 0 {
-		result.Error = fmt.Errorf("no check command defined")
+		if dep.CheckFunc == nil {
+			result.Error = fmt.Errorf("no check command or check function defined for dependency %s", dep.Name)
+			return result
+		}
+		if err := dep.CheckFunc(distro, cfg, &dep); err != nil {
+			result.Error = err
+			return result
+		}
+		result.Installed = true
 		return result
 	}
 
@@ -301,7 +342,7 @@ func installDependency(dep Dependency, distro *Distro, cfg *config.Config) error
 
 	fmt.Printf("Installing %s for %s...\n", dep.Name, distro.ID)
 
-	if err := dep.InstallFunc(distro, cfg); err != nil {
+	if err := dep.InstallFunc(distro, cfg, &dep); err != nil {
 		return fmt.Errorf("failed to install %s: %w. Needed for %s", dep.Name, err, dep.Reason)
 	}
 
@@ -329,7 +370,7 @@ func EnsureDependencies(cfg *config.Config) error {
 	var missing []Dependency
 
 	for _, dep := range deps {
-		result := checkDependency(dep)
+		result := checkDependency(dep, distro, cfg)
 		if result.Installed {
 			fmt.Printf("✓ %s is installed\n", dep.Name)
 		} else {
@@ -349,7 +390,7 @@ func EnsureDependencies(cfg *config.Config) error {
 				return fmt.Errorf("failed to install dependency %s: %w", dep.Name, err)
 			}
 
-			result := checkDependency(dep)
+			result := checkDependency(dep, distro, cfg)
 			if !result.Installed {
 				return fmt.Errorf("dependency %s was installed but verification failed", dep.Name)
 			}
