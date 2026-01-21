@@ -5,15 +5,13 @@ import (
 	"os/exec"
 	"strings"
 
-	"libvirt.org/go/libvirt"
-
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/network"
 )
 
 // NetworkExists checks if a network exists
-func NetworkExists(conn *libvirt.Connect, networkName string) bool {
-	net, err := conn.LookupNetworkByName(networkName)
+func (m *VMManager) NetworkExists(networkName string) bool {
+	net, err := m.conn.LookupNetworkByName(networkName)
 	if err != nil {
 		return false
 	}
@@ -22,8 +20,8 @@ func NetworkExists(conn *libvirt.Connect, networkName string) bool {
 }
 
 // CreateNetwork creates a libvirt network based on the configuration
-func CreateNetwork(conn *libvirt.Connect, cfg *config.Config, netCfg config.NetworkConfig) error {
-	if NetworkExists(conn, netCfg.Name) {
+func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
+	if m.NetworkExists(netCfg.Name) {
 		fmt.Printf("Network %s already exists, skipping creation\n", netCfg.Name)
 		return nil
 	}
@@ -33,7 +31,7 @@ func CreateNetwork(conn *libvirt.Connect, cfg *config.Config, netCfg config.Netw
 
 	switch netCfg.Mode {
 	case "nat":
-		xml = generateNATNetworkXML(cfg, netCfg)
+		xml = m.generateNATNetworkXML(netCfg)
 	case "l2-bridge":
 		if netCfg.UseOVS {
 			// For OVS networks, create the OVS bridge first, then the libvirt network
@@ -48,7 +46,7 @@ func CreateNetwork(conn *libvirt.Connect, cfg *config.Config, netCfg config.Netw
 		return fmt.Errorf("unsupported network mode: %s", netCfg.Mode)
 	}
 
-	net, err := conn.NetworkDefineXML(xml)
+	net, err := m.conn.NetworkDefineXML(xml)
 	if err != nil {
 		return fmt.Errorf("failed to define network %s: %w", netCfg.Name, err)
 	}
@@ -66,9 +64,9 @@ func CreateNetwork(conn *libvirt.Connect, cfg *config.Config, netCfg config.Netw
 	return nil
 }
 
-func buildDHCPReservations(cfg *config.Config) string {
+func (m *VMManager) buildDHCPReservations() string {
 	var sb strings.Builder
-	for _, vmCfg := range cfg.VMs {
+	for _, vmCfg := range m.config.VMs {
 		if vmCfg.K8sNodeMAC != "" && vmCfg.K8sNodeIP != "" {
 			sb.WriteString(fmt.Sprintf("      <host mac='%s' name='%s' ip='%s'/>\n", vmCfg.K8sNodeMAC, vmCfg.Name, vmCfg.K8sNodeIP))
 		}
@@ -77,7 +75,7 @@ func buildDHCPReservations(cfg *config.Config) string {
 }
 
 // generateNATNetworkXML generates XML for a NAT network with Linux bridges and DHCP
-func generateNATNetworkXML(cfg *config.Config, netCfg config.NetworkConfig) string {
+func (m *VMManager) generateNATNetworkXML(netCfg config.NetworkConfig) string {
 	var sb strings.Builder
 
 	sb.WriteString("<network>\n")
@@ -91,7 +89,7 @@ func generateNATNetworkXML(cfg *config.Config, netCfg config.NetworkConfig) stri
 	if netCfg.DHCPStart != "" && netCfg.DHCPEnd != "" {
 		sb.WriteString(fmt.Sprintf("      <range start='%s' end='%s'/>\n", netCfg.DHCPStart, netCfg.DHCPEnd))
 	}
-	sb.WriteString(buildDHCPReservations(cfg))
+	sb.WriteString(m.buildDHCPReservations())
 	sb.WriteString("    </dhcp>\n")
 
 	sb.WriteString("  </ip>\n")
@@ -166,11 +164,11 @@ func DeleteOVSBridge(bridgeName string) error {
 
 // CreateHostToDPUNetwork creates a network for host-to-DPU connection.
 // Currently this is hardcoded to usee OvS for the bridge.
-func CreateHostToDPUNetwork(conn *libvirt.Connect, hostName, dpuName string) error {
+func (m *VMManager) CreateHostToDPUNetwork(hostName, dpuName string) error {
 	networkName := network.GetHostToDPUNetworkName(hostName, dpuName)
 	bridgeName := network.GenerateBridgeName(hostName, dpuName)
 
-	if NetworkExists(conn, networkName) {
+	if m.NetworkExists(networkName) {
 		return fmt.Errorf("host-to-DPU network %s already exists", networkName)
 	}
 
@@ -180,7 +178,7 @@ func CreateHostToDPUNetwork(conn *libvirt.Connect, hostName, dpuName string) err
 
 	xml := generateOVSNetworkXML(networkName, bridgeName)
 
-	net, err := conn.NetworkDefineXML(xml)
+	net, err := m.conn.NetworkDefineXML(xml)
 	if err != nil {
 		return fmt.Errorf("failed to define host-to-DPU network %s: %w", networkName, err)
 	}
@@ -200,21 +198,21 @@ func CreateHostToDPUNetwork(conn *libvirt.Connect, hostName, dpuName string) err
 
 // CreateAllNetworks creates all networks defined in the configuration and
 // implicit host to DPU networks.
-func CreateAllNetworks(cfg *config.Config, conn *libvirt.Connect) error {
+func (m *VMManager) CreateAllNetworks() error {
 	fmt.Println("=== Creating Networks ===")
 
 	// Create configured networks
-	for _, netCfg := range cfg.Networks {
-		if err := CreateNetwork(conn, cfg, netCfg); err != nil {
+	for _, netCfg := range m.config.Networks {
+		if err := m.CreateNetwork(netCfg); err != nil {
 			return fmt.Errorf("failed to create network %s: %w", netCfg.Name, err)
 		}
 	}
 
 	// Create implicit host to DPU networks
-	mappings := cfg.GetHostDPUMappings()
+	mappings := m.config.GetHostDPUMappings()
 	for _, mapping := range mappings {
 		for _, dpuConn := range mapping.Connections {
-			if err := CreateHostToDPUNetwork(conn, mapping.Host.Name, dpuConn.DPU.Name); err != nil {
+			if err := m.CreateHostToDPUNetwork(mapping.Host.Name, dpuConn.DPU.Name); err != nil {
 				return fmt.Errorf("failed to create host-to-DPU network for host %s and DPU %s: %w",
 					mapping.Host.Name, dpuConn.DPU.Name, err)
 			}
@@ -226,8 +224,8 @@ func CreateAllNetworks(cfg *config.Config, conn *libvirt.Connect) error {
 }
 
 // DeleteNetwork removes a libvirt network by name
-func DeleteNetwork(conn *libvirt.Connect, networkName string) error {
-	net, err := conn.LookupNetworkByName(networkName)
+func (m *VMManager) DeleteNetwork(networkName string) error {
+	net, err := m.conn.LookupNetworkByName(networkName)
 	if err != nil {
 		// Network doesn't exist, nothing to do
 		return nil
@@ -253,17 +251,17 @@ func DeleteNetwork(conn *libvirt.Connect, networkName string) error {
 }
 
 // CleanupNetworks removes all networks defined in the configuration
-func CleanupNetworks(cfg *config.Config, conn *libvirt.Connect) error {
+func (m *VMManager) CleanupNetworks() error {
 	fmt.Println("=== Cleaning up Networks ===")
 
 	errors := make([]string, 0)
 
 	// Cleanup configured networks
-	for _, netCfg := range cfg.Networks {
+	for _, netCfg := range m.config.Networks {
 		netName := netCfg.Name
 		fmt.Printf("Cleaning up network: %s... ", netName)
 
-		if err := DeleteNetwork(conn, netName); err != nil {
+		if err := m.DeleteNetwork(netName); err != nil {
 			fmt.Printf("✗ Failed to remove network %s: %v\n", netName, err)
 			errors = append(errors, fmt.Sprintf("failed to remove network %s: %v", netName, err))
 			continue
@@ -282,14 +280,14 @@ func CleanupNetworks(cfg *config.Config, conn *libvirt.Connect) error {
 	}
 
 	// Cleanup implicit host-to-DPU networks
-	mappings := cfg.GetHostDPUMappings()
+	mappings := m.config.GetHostDPUMappings()
 	for _, mapping := range mappings {
 		for _, dpuConn := range mapping.Connections {
 			netName := dpuConn.Link.NetworkName
 			bridgeName := network.GenerateBridgeName(mapping.Host.Name, dpuConn.DPU.Name)
 			fmt.Printf("Cleaning up host-to-DPU network: %s... ", netName)
 
-			if err := DeleteNetwork(conn, netName); err != nil {
+			if err := m.DeleteNetwork(netName); err != nil {
 				fmt.Printf("✗ Failed to remove network %s: %v\n", netName, err)
 				errors = append(errors, fmt.Sprintf("failed to remove network %s: %v", netName, err))
 				continue

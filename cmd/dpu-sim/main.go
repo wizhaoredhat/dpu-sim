@@ -13,7 +13,6 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/platform"
 	"github.com/wizhao/dpu-sim/pkg/ssh"
 	"github.com/wizhao/dpu-sim/pkg/vm"
-	"libvirt.org/go/libvirt"
 )
 
 var (
@@ -110,15 +109,15 @@ func runVMDeploymentWorkflow(cfg *config.Config) error {
 	fmt.Println("║       VM-Based Deployment Workflow            ║")
 	fmt.Println("╚═══════════════════════════════════════════════╝")
 
-	conn, err := vm.Connect()
+	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to connect to libvirt: %w", err)
+		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
-	defer conn.Close()
+	defer vmMgr.Close()
 
 	if !skipCleanup || cleanupOnly {
 		fmt.Println("\n=== Cleaning up VMs and networks ===")
-		if err := vm.CleanupAll(cfg, conn); err != nil {
+		if err := vmMgr.CleanupAll(); err != nil {
 			fmt.Printf("Warning: cleanup failed: %v\n", err)
 		}
 		if cleanupOnly {
@@ -129,7 +128,7 @@ func runVMDeploymentWorkflow(cfg *config.Config) error {
 
 	if !skipDeploy {
 		fmt.Println("\n=== Deploying VMs ===")
-		if err := doVMDeploy(cfg, conn); err != nil {
+		if err := doVMDeploy(cfg, vmMgr); err != nil {
 			return fmt.Errorf("VM deployment failed: %w", err)
 		}
 	} else {
@@ -138,7 +137,7 @@ func runVMDeploymentWorkflow(cfg *config.Config) error {
 
 	if !skipK8s {
 		fmt.Println("\n=== Installing Kubernetes and CNI ===")
-		if err := doVMInstallK8s(cfg, conn); err != nil {
+		if err := doVMInstallK8s(vmMgr); err != nil {
 			return fmt.Errorf("Kubernetes installation failed: %w", err)
 		}
 	} else {
@@ -220,14 +219,14 @@ func printSuccessMessage(cfg *config.Config, deployType string) {
 	fmt.Println("\nFor more information, see README.md")
 }
 
-func doVMDeploy(cfg *config.Config, conn *libvirt.Connect) error {
+func doVMDeploy(cfg *config.Config, vmMgr *vm.VMManager) error {
 	// Create networks
-	if err := vm.CreateAllNetworks(cfg, conn); err != nil {
+	if err := vmMgr.CreateAllNetworks(); err != nil {
 		return fmt.Errorf("failed to create networks: %w", err)
 	}
 
 	// Create VMs
-	if err := vm.CreateAllVMs(cfg, conn); err != nil {
+	if err := vmMgr.CreateAllVMs(); err != nil {
 		return fmt.Errorf("failed to create VMs: %w", err)
 	}
 
@@ -237,7 +236,7 @@ func doVMDeploy(cfg *config.Config, conn *libvirt.Connect) error {
 
 	for _, vmCfg := range cfg.VMs {
 		fmt.Printf("Waiting for %s to get an IP address...\n", vmCfg.Name)
-		ip, err := vm.WaitForVMIP(conn, vmCfg.Name, config.MgmtNetworkName, cfg, 5*time.Minute)
+		ip, err := vmMgr.WaitForVMIP(vmCfg.Name, config.MgmtNetworkName, 5*time.Minute)
 		if err != nil {
 			return fmt.Errorf("failed to get IP for %s: %w", vmCfg.Name, err)
 		}
@@ -254,12 +253,12 @@ func doVMDeploy(cfg *config.Config, conn *libvirt.Connect) error {
 	return nil
 }
 
-func doVMInstallK8s(cfg *config.Config, conn *libvirt.Connect) error {
-	if err := vm.InstallKubernetes(conn, cfg, ""); err != nil {
+func doVMInstallK8s(vmMgr *vm.VMManager) error {
+	if err := vmMgr.InstallKubernetes(""); err != nil {
 		return fmt.Errorf("failed to install Kubernetes: %w", err)
 	}
 
-	if err := vm.SetupAllK8sClusters(conn, cfg); err != nil {
+	if err := vmMgr.SetupAllK8sClusters(); err != nil {
 		return fmt.Errorf("failed to setup Kubernetes clusters: %w", err)
 	}
 

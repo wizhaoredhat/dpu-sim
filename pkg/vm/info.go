@@ -6,25 +6,26 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wizhao/dpu-sim/pkg/config"
 	"libvirt.org/go/libvirt"
+
+	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
 // GetVMMgmtIP retrieves the management network IP address of a VM.
-func GetVMMgmtIP(conn *libvirt.Connect, vmName string, cfg *config.Config) (string, error) {
-	return WaitForVMIP(conn, vmName, config.MgmtNetworkName, cfg, 10*time.Second)
+func (m *VMManager) GetVMMgmtIP(vmName string) (string, error) {
+	return m.WaitForVMIP(vmName, config.MgmtNetworkName, 10*time.Second)
 }
 
-// GetVMOvnIP retrieves the OVN network IP address of a VM.
-func GetVMK8sIP(conn *libvirt.Connect, vmName string, cfg *config.Config) (string, error) {
-	return WaitForVMIP(conn, vmName, config.K8sNetworkName, cfg, 10*time.Second)
+// GetVMK8sIP retrieves the Kubernetes network IP address of a VM.
+func (m *VMManager) GetVMK8sIP(vmName string) (string, error) {
+	return m.WaitForVMIP(vmName, config.K8sNetworkName, 10*time.Second)
 }
 
 // GetVMIP retrieves the IP address of a VM by name and network type.
 // networkType should be "mgmt" or "k8s" to specify which network's IP to retrieve.
 // The subnet information is retrieved from the config file based on the network type.
-func GetVMIP(conn *libvirt.Connect, vmName string, networkType string, cfg *config.Config) (string, error) {
-	network := cfg.GetNetworkByType(networkType)
+func (m *VMManager) GetVMIP(vmName string, networkType string) (string, error) {
+	network := m.config.GetNetworkByType(networkType)
 	if network == nil {
 		return "", fmt.Errorf("network type %q not found in configuration", networkType)
 	}
@@ -34,18 +35,18 @@ func GetVMIP(conn *libvirt.Connect, vmName string, networkType string, cfg *conf
 		return "", fmt.Errorf("could not determine subnet for network type %q", networkType)
 	}
 
-	return GetVMIPBySubnet(conn, vmName, subnet)
+	return m.GetVMIPBySubnet(vmName, subnet)
 }
 
 // WaitForVMIP waits for a VM to get an IP address on the specified network type.
 // networkType should be "mgmt" or "k8s" to specify which network's IP to wait for.
-func WaitForVMIP(conn *libvirt.Connect, vmName string, networkType string, cfg *config.Config, timeout time.Duration) (string, error) {
+func (m *VMManager) WaitForVMIP(vmName string, networkType string, timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for time.Now().Before(deadline) {
-		ip, err := GetVMIP(conn, vmName, networkType, cfg)
+		ip, err := m.GetVMIP(vmName, networkType)
 		if err == nil && ip != "" {
 			return ip, nil
 		}
@@ -57,8 +58,8 @@ func WaitForVMIP(conn *libvirt.Connect, vmName string, networkType string, cfg *
 
 // GetVMIPBySubnet retrieves the IP address of a VM that belongs to the specified subnet.
 // subnet should be in CIDR notation (e.g., "192.168.120.0/24").
-func GetVMIPBySubnet(conn *libvirt.Connect, vmName string, subnet string) (string, error) {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) GetVMIPBySubnet(vmName string, subnet string) (string, error) {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return "", fmt.Errorf("failed to lookup domain %s: %w", vmName, err)
 	}
@@ -92,8 +93,8 @@ func GetVMIPBySubnet(conn *libvirt.Connect, vmName string, subnet string) (strin
 }
 
 // GetVMState retrieves the state of a VM
-func GetVMState(conn *libvirt.Connect, vmName string) (VMState, error) {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) GetVMState(vmName string) (VMState, error) {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return VMStateUnknown, fmt.Errorf("failed to lookup domain %s: %w", vmName, err)
 	}
@@ -128,8 +129,8 @@ func libvirtStateToVMState(state libvirt.DomainState) VMState {
 }
 
 // VMExists checks if a VM exists
-func VMExists(conn *libvirt.Connect, vmName string) bool {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) VMExists(vmName string) bool {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return false
 	}
@@ -138,8 +139,8 @@ func VMExists(conn *libvirt.Connect, vmName string) bool {
 }
 
 // GetVMInterfaceInfo retrieves interface information from a VM
-func GetVMInterfaceInfo(conn *libvirt.Connect, vmName string) ([]InterfaceInfo, error) {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) GetVMInterfaceInfo(vmName string) ([]InterfaceInfo, error) {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lookup domain %s: %w", vmName, err)
 	}
@@ -168,9 +169,8 @@ func GetVMInterfaceInfo(conn *libvirt.Connect, vmName string) ([]InterfaceInfo, 
 
 // GetVMInfo retrieves comprehensive information about a VM.
 // networkType should be "mgmt" or "k8s" to specify which network's IP to retrieve.
-// cfg can be nil, in which case the IP field will be empty.
-func GetVMInfo(conn *libvirt.Connect, vmName string, networkType string, cfg *config.Config) (*VMInfo, error) {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) GetVMInfo(vmName string, networkType string) (*VMInfo, error) {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lookup domain %s: %w", vmName, err)
 	}
@@ -188,11 +188,8 @@ func GetVMInfo(conn *libvirt.Connect, vmName string, networkType string, cfg *co
 		return nil, fmt.Errorf("failed to get domain info: %w", err)
 	}
 
-	// Get IP address (may fail if VM is not running or config not provided)
-	var ip string
-	if cfg != nil {
-		ip, _ = GetVMIP(conn, vmName, networkType, cfg)
-	}
+	// Get IP address (may fail if VM is not running)
+	ip, _ := m.GetVMIP(vmName, networkType)
 
 	return &VMInfo{
 		Name:      vmName,

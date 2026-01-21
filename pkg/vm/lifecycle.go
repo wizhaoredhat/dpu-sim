@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wizhao/dpu-sim/pkg/config"
 	"libvirt.org/go/libvirt"
 )
 
 // StartVM starts a VM
-func StartVM(conn *libvirt.Connect, vmName string) error {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) StartVM(vmName string) error {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return fmt.Errorf("failed to lookup domain %s: %w", vmName, err)
 	}
@@ -33,8 +32,8 @@ func StartVM(conn *libvirt.Connect, vmName string) error {
 }
 
 // StopVM shuts down a VM
-func StopVM(conn *libvirt.Connect, vmName string) error {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) StopVM(vmName string) error {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return fmt.Errorf("failed to lookup domain %s: %w", vmName, err)
 	}
@@ -57,8 +56,8 @@ func StopVM(conn *libvirt.Connect, vmName string) error {
 }
 
 // DestroyVM forcefully stops a VM
-func DestroyVM(conn *libvirt.Connect, vmName string) error {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) DestroyVM(vmName string) error {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return fmt.Errorf("failed to lookup domain %s: %w", vmName, err)
 	}
@@ -80,8 +79,8 @@ func DestroyVM(conn *libvirt.Connect, vmName string) error {
 }
 
 // RebootVM reboots a VM
-func RebootVM(conn *libvirt.Connect, vmName string) error {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) RebootVM(vmName string) error {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return fmt.Errorf("failed to lookup domain %s: %w", vmName, err)
 	}
@@ -104,8 +103,8 @@ func RebootVM(conn *libvirt.Connect, vmName string) error {
 }
 
 // DeleteVM undefines (deletes) a VM and its associated storage
-func DeleteVM(conn *libvirt.Connect, vmName string) error {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) DeleteVM(vmName string) error {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		// VM doesn't exist, nothing to do
 		return nil
@@ -141,15 +140,15 @@ func DeleteVM(conn *libvirt.Connect, vmName string) error {
 }
 
 // CleanupVMs removes all VMs defined in the configuration
-func CleanupVMs(cfg *config.Config, conn *libvirt.Connect) error {
+func (m *VMManager) CleanupVMs() error {
 	fmt.Println("=== Cleaning up VMs ===")
 
 	errors := make([]string, 0)
-	for _, vmCfg := range cfg.VMs {
+	for _, vmCfg := range m.config.VMs {
 		vmName := vmCfg.Name
 		fmt.Printf("Cleaning up VM: %s... ", vmName)
 
-		if err := DeleteVM(conn, vmName); err != nil {
+		if err := m.DeleteVM(vmName); err != nil {
 			fmt.Printf("✗ Failed to remove VM %s: %v\n", vmName, err)
 			errors = append(errors, fmt.Sprintf("failed to remove VM %s: %v", vmName, err))
 			continue
@@ -166,8 +165,8 @@ func CleanupVMs(cfg *config.Config, conn *libvirt.Connect) error {
 }
 
 // SetAutostart configures a VM to start automatically on host boot
-func SetAutostart(conn *libvirt.Connect, vmName string, autostart bool) error {
-	domain, err := conn.LookupDomainByName(vmName)
+func (m *VMManager) SetAutostart(vmName string, autostart bool) error {
+	domain, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
 		return fmt.Errorf("failed to lookup domain %s: %w", vmName, err)
 	}
@@ -181,8 +180,8 @@ func SetAutostart(conn *libvirt.Connect, vmName string, autostart bool) error {
 }
 
 // ListAllVMs returns a list of all VMs
-func ListAllVMs(conn *libvirt.Connect) ([]string, error) {
-	domains, err := conn.ListAllDomains(libvirt.CONNECT_LIST_DOMAINS_ACTIVE | libvirt.CONNECT_LIST_DOMAINS_INACTIVE)
+func (m *VMManager) ListAllVMs() ([]string, error) {
+	domains, err := m.conn.ListAllDomains(libvirt.CONNECT_LIST_DOMAINS_ACTIVE | libvirt.CONNECT_LIST_DOMAINS_INACTIVE)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list domains: %w", err)
 	}

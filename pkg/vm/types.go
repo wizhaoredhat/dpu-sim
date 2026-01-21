@@ -1,15 +1,51 @@
 package vm
 
 import (
+	"fmt"
+
 	"libvirt.org/go/libvirt"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
-// Manager manages libvirt virtual machines and networks
+// VMManager manages libvirt virtual machines and networks
 type VMManager struct {
 	conn   *libvirt.Connect
 	config *config.Config
+}
+
+// NewVMManager creates a new VMManager with the given config, connecting to libvirt.
+// cfg can be nil for operations that don't require configuration.
+func NewVMManager(cfg *config.Config) (*VMManager, error) {
+	conn, err := libvirt.NewConnect("qemu:///system")
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to libvirt: %w", err)
+	}
+
+	hostname, err := conn.GetHostname()
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to get hostname: %w", err)
+	}
+	fmt.Printf("✓ Connected to libvirt: %s\n", hostname)
+
+	if cfg == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+
+	return &VMManager{
+		conn:   conn,
+		config: cfg,
+	}, nil
+}
+
+// Close closes the libvirt connection
+func (m *VMManager) Close() error {
+	if m.conn != nil {
+		_, err := m.conn.Close()
+		return err
+	}
+	return nil
 }
 
 // VMState represents the state of a virtual machine

@@ -4,22 +4,20 @@ import (
 	"fmt"
 	"strings"
 
-	"libvirt.org/go/libvirt"
-
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
 // CreateVM creates a complete VM including disk, cloud-init ISO, and domain
-func CreateVM(conn *libvirt.Connect, cfg *config.Config, vmCfg config.VMConfig) error {
+func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
 	fmt.Printf("=== Creating VM: %s ===\n", vmCfg.Name)
 
-	if VMExists(conn, vmCfg.Name) {
+	if m.VMExists(vmCfg.Name) {
 		return fmt.Errorf("VM %s already exists", vmCfg.Name)
 	}
 
-	imagePath := GetImagePath(cfg.OperatingSystem)
+	imagePath := GetImagePath(m.config.OperatingSystem)
 
-	if err := DownloadCloudImage(cfg.OperatingSystem.ImageURL, imagePath); err != nil {
+	if err := DownloadCloudImage(m.config.OperatingSystem.ImageURL, imagePath); err != nil {
 		return fmt.Errorf("failed to download cloud image: %w", err)
 	}
 
@@ -28,15 +26,15 @@ func CreateVM(conn *libvirt.Connect, cfg *config.Config, vmCfg config.VMConfig) 
 		return fmt.Errorf("failed to create VM disk: %w", err)
 	}
 
-	cloudInitPath, err := CreateCloudInitISO(vmCfg.Name, cfg.SSH, vmCfg)
+	cloudInitPath, err := CreateCloudInitISO(vmCfg.Name, m.config.SSH, vmCfg)
 	if err != nil {
 		return fmt.Errorf("failed to create cloud-init ISO: %w", err)
 	}
 
 	// Generate libvirt domain XML
-	xml := GenerateVMXML(vmCfg, diskPath, cloudInitPath, cfg)
+	xml := m.GenerateVMXML(vmCfg, diskPath, cloudInitPath)
 
-	domain, err := conn.DomainDefineXML(xml)
+	domain, err := m.conn.DomainDefineXML(xml)
 	if err != nil {
 		return fmt.Errorf("failed to define domain: %w", err)
 	}
@@ -54,10 +52,10 @@ func CreateVM(conn *libvirt.Connect, cfg *config.Config, vmCfg config.VMConfig) 
 	return nil
 }
 
-func generateNetworkInterfaces(vmCfg config.VMConfig, cfg *config.Config) string {
+func (m *VMManager) generateNetworkInterfaces(vmCfg config.VMConfig) string {
 	var sb strings.Builder
 
-	for _, network := range cfg.Networks {
+	for _, network := range m.config.Networks {
 		// AttachTo determines which type of VM the network should be attached to.
 		if network.AttachTo != "any" && network.AttachTo != vmCfg.Type {
 			continue
@@ -79,7 +77,7 @@ func generateNetworkInterfaces(vmCfg config.VMConfig, cfg *config.Config) string
 }
 
 // GenerateVMXML generates libvirt domain XML for a VM
-func GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath string, cfg *config.Config) string {
+func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath string) string {
 	var sb strings.Builder
 
 	sb.WriteString("<domain type='kvm'>\n")
@@ -129,9 +127,9 @@ func GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath string, cfg *c
 	// Generate network interfaces from looking at the Networks configuration section and seeing if the
 	// VM is attached to any of the networks. If so, generate the network interface XML for each of those
 	// networks.
-	sb.WriteString(generateNetworkInterfaces(vmCfg, cfg))
+	sb.WriteString(m.generateNetworkInterfaces(vmCfg))
 
-	mappings := cfg.GetHostDPUMappings()
+	mappings := m.config.GetHostDPUMappings()
 
 	// Add implicit host-to-DPU network interface if this is a host
 	if vmCfg.Type == "host" {
@@ -179,11 +177,11 @@ func GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath string, cfg *c
 }
 
 // CreateAllVMs creates all VMs defined in the configuration
-func CreateAllVMs(cfg *config.Config, conn *libvirt.Connect) error {
+func (m *VMManager) CreateAllVMs() error {
 	fmt.Println("=== Creating All VMs ===")
 
-	for _, vmCfg := range cfg.VMs {
-		if err := CreateVM(conn, cfg, vmCfg); err != nil {
+	for _, vmCfg := range m.config.VMs {
+		if err := m.CreateVM(vmCfg); err != nil {
 			return fmt.Errorf("failed to create VM %s: %w", vmCfg.Name, err)
 		}
 	}

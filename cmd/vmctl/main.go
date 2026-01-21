@@ -88,11 +88,11 @@ func runList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	conn, err := vm.Connect()
+	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to connect to libvirt: %w", err)
+		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
-	defer conn.Close()
+	defer vmMgr.Close()
 
 	fmt.Printf("%-20s %-15s %-15s %-8s %-10s\n", "VM Name", "State", "IP Address", "vCPUs", "Memory")
 	fmt.Println("--------------------------------------------------------------------------------")
@@ -100,7 +100,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	for _, vmCfg := range cfg.VMs {
 		vmName := vmCfg.Name
 
-		info, err := vm.GetVMInfo(conn, vmName, config.MgmtNetworkName, cfg)
+		info, err := vmMgr.GetVMInfo(vmName, config.MgmtNetworkName)
 		if err != nil {
 			// VM doesn't exist
 			fmt.Printf("%-20s %-15s %-15s %-8s %-10s\n", vmName, "Not Found", "N/A", "N/A", "N/A")
@@ -128,15 +128,15 @@ func runSSH(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Connect to libvirt
-	conn, err := vm.Connect()
+	// Create VM manager
+	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to connect to libvirt: %w", err)
+		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
-	defer conn.Close()
+	defer vmMgr.Close()
 
 	// Get VM IP
-	ip, err := vm.GetVMMgmtIP(conn, vmName, cfg)
+	ip, err := vmMgr.GetVMMgmtIP(vmName)
 	if err != nil {
 		return fmt.Errorf("failed to get IP for VM %s: %w", vmName, err)
 	}
@@ -163,15 +163,15 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Connect to libvirt
-	conn, err := vm.Connect()
+	// Create VM manager
+	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to connect to libvirt: %w", err)
+		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
-	defer conn.Close()
+	defer vmMgr.Close()
 
 	// Get VM IP
-	ip, err := vm.GetVMMgmtIP(conn, vmName, cfg)
+	ip, err := vmMgr.GetVMMgmtIP(vmName)
 	if err != nil {
 		return fmt.Errorf("failed to get IP for VM %s: %w", vmName, err)
 	}
@@ -198,13 +198,13 @@ func runExec(cmd *cobra.Command, args []string) error {
 func runStart(cmd *cobra.Command, args []string) error {
 	vmName := args[0]
 
-	conn, err := vm.Connect()
+	vmMgr, err := vm.NewVMManager(nil)
 	if err != nil {
-		return fmt.Errorf("failed to connect to libvirt: %w", err)
+		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
-	defer conn.Close()
+	defer vmMgr.Close()
 
-	if err := vm.StartVM(conn, vmName); err != nil {
+	if err := vmMgr.StartVM(vmName); err != nil {
 		return err
 	}
 
@@ -215,13 +215,13 @@ func runStart(cmd *cobra.Command, args []string) error {
 func runStop(cmd *cobra.Command, args []string) error {
 	vmName := args[0]
 
-	conn, err := vm.Connect()
+	vmMgr, err := vm.NewVMManager(nil)
 	if err != nil {
-		return fmt.Errorf("failed to connect to libvirt: %w", err)
+		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
-	defer conn.Close()
+	defer vmMgr.Close()
 
-	if err := vm.StopVM(conn, vmName); err != nil {
+	if err := vmMgr.StopVM(vmName); err != nil {
 		return err
 	}
 
@@ -232,13 +232,13 @@ func runStop(cmd *cobra.Command, args []string) error {
 func runDestroy(cmd *cobra.Command, args []string) error {
 	vmName := args[0]
 
-	conn, err := vm.Connect()
+	vmMgr, err := vm.NewVMManager(nil)
 	if err != nil {
-		return fmt.Errorf("failed to connect to libvirt: %w", err)
+		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
-	defer conn.Close()
+	defer vmMgr.Close()
 
-	if err := vm.DestroyVM(conn, vmName); err != nil {
+	if err := vmMgr.DestroyVM(vmName); err != nil {
 		return err
 	}
 
@@ -249,13 +249,13 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 func runReboot(cmd *cobra.Command, args []string) error {
 	vmName := args[0]
 
-	conn, err := vm.Connect()
+	vmMgr, err := vm.NewVMManager(nil)
 	if err != nil {
-		return fmt.Errorf("failed to connect to libvirt: %w", err)
+		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
-	defer conn.Close()
+	defer vmMgr.Close()
 
-	if err := vm.RebootVM(conn, vmName); err != nil {
+	if err := vmMgr.RebootVM(vmName); err != nil {
 		return err
 	}
 
