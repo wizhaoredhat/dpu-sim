@@ -63,6 +63,7 @@ func ensureLocalBinInPath() {
 	}
 	localBin := filepath.Join(homeDir, ".local", "bin")
 	currentPath := os.Getenv("PATH")
+
 	if !strings.Contains(currentPath, localBin) {
 		os.Setenv("PATH", localBin+":"+currentPath)
 	}
@@ -130,10 +131,10 @@ func installKubectl(distro *Distro, cfg *config.Config, dep *Dependency) error {
 		// Add Kubernetes repository for Fedora/RHEL/CentOS
 		repoContent := fmt.Sprintf(`[kubernetes]
 name=Kubernetes
-baseurl=https://pkgs.k8s.io/core:/stable:/%s/rpm/
+baseurl=https://pkgs.k8s.io/core:/stable:/v%s/rpm/
 enabled=1
 gpgcheck=1
-gpgkey=https://pkgs.k8s.io/core:/stable:/%s/rpm/repodata/repomd.xml.key
+gpgkey=https://pkgs.k8s.io/core:/stable:/v%s/rpm/repodata/repomd.xml.key
 `, version, version)
 		if err := os.WriteFile("/tmp/kubernetes.repo", []byte(repoContent), 0644); err != nil {
 			return fmt.Errorf("failed to write repo file: %w", err)
