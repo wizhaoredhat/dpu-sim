@@ -94,9 +94,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	switch deployMode {
-	case "vm":
+	case config.VMDeploymentMode:
 		return runVMDeploymentWorkflow(cfg)
-	case "kind":
+	case config.KindDeploymentMode:
 		return runKindDeploymentWorkflow(cfg)
 	default:
 		return fmt.Errorf("unknown deployment mode: %s", deployMode)

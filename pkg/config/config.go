@@ -13,9 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const MgmtNetworkName = "mgmt"
-const K8sNetworkName = "k8s"
-
 // LoadConfig loads configuration from a YAML file
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -73,8 +70,8 @@ func (c *Config) validateAndSetDefaults() error {
 		}
 		if vm.Type == "" {
 			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'type' is required", i, vm.Name))
-		} else if vm.Type != "host" && vm.Type != "dpu" {
-			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'type' must be 'host' or 'dpu', got '%s'", i, vm.Name, vm.Type))
+		} else if vm.Type != VMHostType && vm.Type != VMDPUType {
+			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'type' must be '%s' or '%s', got '%s'", i, vm.Name, VMHostType, VMDPUType, vm.Type))
 		}
 		if vm.K8sCluster == "" {
 			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'k8s_cluster' is required", i, vm.Name))
@@ -98,8 +95,8 @@ func (c *Config) validateAndSetDefaults() error {
 			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'disk_size' must be greater than 0", i, vm.Name))
 		}
 		// If DPU type, host field should reference an existing host
-		if vm.Type == "dpu" && vm.Host == "" {
-			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'host' is required for DPU type VMs", i, vm.Name))
+		if vm.Type == VMDPUType && vm.Host == "" {
+			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'host' is required for %s type VMs", i, vm.Name, VMDPUType))
 		}
 	}
 
@@ -171,12 +168,12 @@ func (c *Config) validateAndSetDefaults() error {
 	if len(c.VMs) > 0 {
 		hostNames := make(map[string]bool)
 		for _, vm := range c.VMs {
-			if vm.Type == "host" {
+			if vm.Type == VMHostType {
 				hostNames[vm.Name] = true
 			}
 		}
 		for i, vm := range c.VMs {
-			if vm.Type == "dpu" && vm.Host != "" {
+			if vm.Type == VMDPUType && vm.Host != "" {
 				if !hostNames[vm.Host] {
 					errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'host' references non-existent host '%s'", i, vm.Name, vm.Host))
 				}
@@ -199,9 +196,9 @@ func (c *Config) GetDeploymentMode() (string, error) {
 	if hasKind && hasVMs {
 		return "", fmt.Errorf("both 'vms' and 'kind' sections found in config - please use only one deployment mode")
 	} else if hasKind {
-		return "kind", nil
+		return KindDeploymentMode, nil
 	} else if hasVMs {
-		return "vm", nil
+		return VMDeploymentMode, nil
 	}
 
 	return "", fmt.Errorf("neither 'vms' nor 'kind' section found in config")
@@ -210,13 +207,13 @@ func (c *Config) GetDeploymentMode() (string, error) {
 // IsKindMode returns true if the configuration is for Kind mode
 func (c *Config) IsKindMode() bool {
 	mode, _ := c.GetDeploymentMode()
-	return mode == "kind"
+	return mode == KindDeploymentMode
 }
 
 // IsVMMode returns true if the configuration is for VM mode
 func (c *Config) IsVMMode() bool {
 	mode, _ := c.GetDeploymentMode()
-	return mode == "vm"
+	return mode == VMDeploymentMode
 }
 
 // GetHostDPUMappings returns all host-to-DPU mappings from VM configuration
@@ -224,7 +221,7 @@ func (c *Config) GetHostDPUMappings() []HostDPUMapping {
 	// Build map of hosts by name for lookup
 	hosts := make(map[string]VMConfig)
 	for _, vm := range c.VMs {
-		if vm.Type == "host" {
+		if vm.Type == VMHostType {
 			hosts[vm.Name] = vm
 		}
 	}
@@ -232,7 +229,7 @@ func (c *Config) GetHostDPUMappings() []HostDPUMapping {
 	// Build map of host name -> DPU connections
 	hostConnections := make(map[string][]DPUConnection)
 	for _, vm := range c.VMs {
-		if vm.Type == "dpu" && vm.Host != "" {
+		if vm.Type == VMDPUType && vm.Host != "" {
 			if _, ok := hosts[vm.Host]; ok {
 				conn := DPUConnection{
 					DPU: vm,

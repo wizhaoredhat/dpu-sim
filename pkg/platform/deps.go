@@ -213,44 +213,8 @@ func installOVS(distro *Distro, cfg *config.Config, dep *Dependency) error {
 }
 
 // GetDependencies returns the list of dependencies needed by dpu-sim
-func GetDependencies() []Dependency {
-	return []Dependency{
-		{
-			Name:        "libvirt",
-			Reason:      "Required for VM management",
-			CheckCmd:    []string{"virsh", "--version"},
-			InstallFunc: installGenericPackage,
-		},
-		{
-			Name:        "qemu-kvm",
-			Reason:      "Required for VM management",
-			CheckFunc:   checkGenericPackage,
-			InstallFunc: installGenericPackage,
-		},
-		{
-			Name:        "qemu-img",
-			Reason:      "Required for VM management",
-			CheckCmd:    []string{"qemu-img", "--version"},
-			InstallFunc: installGenericPackage,
-		},
-		{
-			Name:        "libvirt-devel",
-			Reason:      "Required for VM management",
-			CheckFunc:   checkGenericPackage,
-			InstallFunc: installGenericPackage,
-		},
-		{
-			Name:        "virt-install",
-			Reason:      "Required for VM management",
-			CheckCmd:    []string{"virt-install", "--version"},
-			InstallFunc: installGenericPackage,
-		},
-		{
-			Name:        "genisoimage",
-			Reason:      "Required for VM cloud-init ISOs",
-			CheckCmd:    []string{"genisoimage", "-version"},
-			InstallFunc: installGenericPackage,
-		},
+func GetDependencies(cfg *config.Config) ([]Dependency, error) {
+	deps := []Dependency{
 		{
 			Name:        "wget",
 			Reason:      "Required for downloading images",
@@ -276,30 +240,75 @@ func GetDependencies() []Dependency {
 			InstallFunc: installGenericPackage,
 		},
 		{
-			Name:        "kubectl",
-			Reason:      "Required for cluster management",
-			CheckCmd:    []string{"kubectl"},
-			InstallFunc: installKubectl,
-		},
-		{
-			Name:        "docker",
-			Reason:      "Required for Kind",
-			CheckCmd:    []string{"docker", "--version"},
-			InstallFunc: installDocker,
-		},
-		{
-			Name:        "kind",
-			Reason:      "Required for Kind clusters",
-			CheckCmd:    []string{"kind", "version"},
-			InstallFunc: installKind,
-		},
-		{
 			Name:        "openvswitch",
-			Reason:      "Required for OVS Networks",
+			Reason:      "Required for OVS bridged networks",
 			CheckCmd:    []string{"ovs-vsctl", "--version"},
 			InstallFunc: installOVS,
 		},
 	}
+	mode, err := cfg.GetDeploymentMode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get deployment mode: %w", err)
+	}
+	switch mode {
+	case config.VMDeploymentMode:
+		deps = append(deps, Dependency{
+			Name:        "libvirt",
+			Reason:      "Required for VM management",
+			CheckCmd:    []string{"virsh", "--version"},
+			InstallFunc: installGenericPackage,
+		})
+		deps = append(deps, Dependency{
+			Name:        "qemu-kvm",
+			Reason:      "Required for VM management",
+			CheckFunc:   checkGenericPackage,
+			InstallFunc: installGenericPackage,
+		})
+		deps = append(deps, Dependency{
+			Name:        "qemu-img",
+			Reason:      "Required for VM management",
+			CheckCmd:    []string{"qemu-img", "--version"},
+			InstallFunc: installGenericPackage,
+		})
+		deps = append(deps, Dependency{
+			Name:        "libvirt-devel",
+			Reason:      "Required for VM management",
+			CheckFunc:   checkGenericPackage,
+			InstallFunc: installGenericPackage,
+		})
+		deps = append(deps, Dependency{
+			Name:        "virt-install",
+			Reason:      "Required for VM management",
+			CheckCmd:    []string{"virt-install", "--version"},
+			InstallFunc: installGenericPackage,
+		})
+		deps = append(deps, Dependency{
+			Name:        "genisoimage",
+			Reason:      "Required for VM cloud-init ISOs",
+			CheckCmd:    []string{"genisoimage", "-version"},
+			InstallFunc: installGenericPackage,
+		})
+	case config.KindDeploymentMode:
+		deps = append(deps, Dependency{
+			Name:        "kubectl",
+			Reason:      "Required for cluster management",
+			CheckCmd:    []string{"kubectl"},
+			InstallFunc: installKubectl,
+		})
+		deps = append(deps, Dependency{
+			Name:        "docker",
+			Reason:      "Required for Kind",
+			CheckCmd:    []string{"docker", "--version"},
+			InstallFunc: installDocker,
+		})
+		deps = append(deps, Dependency{
+			Name:        "kind",
+			Reason:      "Required for Kind clusters",
+			CheckCmd:    []string{"kind", "version"},
+			InstallFunc: installKind,
+		})
+	}
+	return deps, nil
 }
 
 // checkDependency checks if a single dependency is installed
@@ -367,9 +376,12 @@ func EnsureDependencies(cfg *config.Config) error {
 	}
 	fmt.Printf("Detected Linux distribution: %s %s (package manager: %s, architecture: %s)\n", distro.ID, distro.VersionID, distro.PackageManager, distro.Architecture)
 
-	deps := GetDependencies()
-	var missing []Dependency
+	deps, err := GetDependencies(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to get dependencies: %w", err)
+	}
 
+	var missing []Dependency
 	for _, dep := range deps {
 		result := checkDependency(dep, distro, cfg)
 		if result.Installed {

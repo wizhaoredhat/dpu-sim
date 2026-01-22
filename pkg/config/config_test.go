@@ -89,7 +89,7 @@ func TestGetDeploymentMode(t *testing.T) {
 			config: Config{
 				VMs: []VMConfig{{Name: "vm1"}},
 			},
-			expected:    "vm",
+			expected:    VMDeploymentMode,
 			expectError: false,
 		},
 		{
@@ -99,7 +99,7 @@ func TestGetDeploymentMode(t *testing.T) {
 					Nodes: []KindNodeConfig{{Role: "control-plane"}},
 				},
 			},
-			expected:    "kind",
+			expected:    KindDeploymentMode,
 			expectError: false,
 		},
 		{
@@ -137,12 +137,12 @@ func TestGetDeploymentMode(t *testing.T) {
 func TestGetHostDPUMappings(t *testing.T) {
 	cfg := Config{
 		VMs: []VMConfig{
-			{Name: "host-1", Type: "host"},
-			{Name: "dpu-1a", Type: "dpu", Host: "host-1"},
-			{Name: "dpu-1b", Type: "dpu", Host: "host-1"},
-			{Name: "host-2", Type: "host"},
-			{Name: "dpu-2", Type: "dpu", Host: "host-2"},
-			{Name: "standalone", Type: "host"},
+			{Name: "host-1", Type: VMHostType},
+			{Name: "dpu-1a", Type: VMDPUType, Host: "host-1"},
+			{Name: "dpu-1b", Type: VMDPUType, Host: "host-1"},
+			{Name: "host-2", Type: VMHostType},
+			{Name: "dpu-2", Type: VMDPUType, Host: "host-2"},
+			{Name: "standalone", Type: VMHostType},
 		},
 	}
 

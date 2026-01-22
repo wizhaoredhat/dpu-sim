@@ -5,6 +5,13 @@ import (
 	"net"
 )
 
+const MgmtNetworkName = "mgmt"
+const K8sNetworkName = "k8s"
+const VMDeploymentMode = "vm"
+const KindDeploymentMode = "kind"
+const VMHostType = "host"
+const VMDPUType = "dpu"
+
 // Config represents the complete DPU simulator configuration
 type Config struct {
 	Networks        []NetworkConfig  `yaml:"networks"`
