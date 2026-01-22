@@ -24,7 +24,7 @@ import (
 )
 
 // NewClient creates a new Kubernetes client from kubeconfig content
-func NewClient(kubeconfigContent string) (*Client, error) {
+func NewClient(kubeconfigContent string) (*K8sClient, error) {
 	clientConfig, err := clientcmd.RESTConfigFromKubeConfig([]byte(kubeconfigContent))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create REST config from kubeconfig: %w", err)
@@ -52,7 +52,7 @@ func NewClient(kubeconfigContent string) (*Client, error) {
 	// unknown resources (e.g., after CRDs are created)
 	mapper := restmapper.NewDeferredDiscoveryRESTMapper(cachedDiscovery)
 
-	return &Client{
+	return &K8sClient{
 		clientset:       clientset,
 		dynamicClient:   dynamicClient,
 		cachedDiscovery: cachedDiscovery,
@@ -61,7 +61,7 @@ func NewClient(kubeconfigContent string) (*Client, error) {
 }
 
 // NewClientFromFile creates a new Kubernetes client from a kubeconfig file path
-func NewClientFromFile(kubeconfigPath string) (*Client, error) {
+func NewClientFromFile(kubeconfigPath string) (*K8sClient, error) {
 	kubeconfigContent, err := os.ReadFile(kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read kubeconfig file %s: %w", kubeconfigPath, err)
@@ -71,24 +71,24 @@ func NewClientFromFile(kubeconfigPath string) (*Client, error) {
 }
 
 // Clientset returns the underlying Kubernetes clientset for advanced operations
-func (c *Client) Clientset() *kubernetes.Clientset {
+func (c *K8sClient) Clientset() *kubernetes.Clientset {
 	return c.clientset
 }
 
 // DynamicClient returns the underlying dynamic client for unstructured operations
-func (c *Client) DynamicClient() dynamic.Interface {
+func (c *K8sClient) DynamicClient() dynamic.Interface {
 	return c.dynamicClient
 }
 
 // InvalidateDiscoveryCache invalidates the cached API discovery information.
 // Call this after creating CRDs so the client can discover the new resource types.
-func (c *Client) InvalidateDiscoveryCache() {
+func (c *K8sClient) InvalidateDiscoveryCache() {
 	c.cachedDiscovery.Invalidate()
 	c.restMapper.Reset()
 }
 
 // ApplyManifest applies a YAML manifest (potentially with multiple objects) to the cluster
-func (c *Client) ApplyManifest(manifest []byte) error {
+func (c *K8sClient) ApplyManifest(manifest []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -96,7 +96,7 @@ func (c *Client) ApplyManifest(manifest []byte) error {
 }
 
 // ApplyManifestFromURL downloads and applies a YAML manifest from a URL
-func (c *Client) ApplyManifestFromURL(url string) error {
+func (c *K8sClient) ApplyManifestFromURL(url string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -124,7 +124,7 @@ func (c *Client) ApplyManifestFromURL(url string) error {
 	return c.applyManifest(ctx, body)
 }
 
-func (c *Client) applyManifest(ctx context.Context, manifest []byte) error {
+func (c *K8sClient) applyManifest(ctx context.Context, manifest []byte) error {
 	decoder := yaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(manifest)))
 
 	for {
@@ -160,7 +160,7 @@ func (c *Client) applyManifest(ctx context.Context, manifest []byte) error {
 }
 
 // applyResource applies a single Kubernetes resource to the cluster
-func (c *Client) applyResource(ctx context.Context, obj *unstructured.Unstructured) error {
+func (c *K8sClient) applyResource(ctx context.Context, obj *unstructured.Unstructured) error {
 	gvk := obj.GroupVersionKind()
 
 	// Use RESTMapper to get the correct GVR from the API server's discovery
@@ -217,7 +217,7 @@ func (c *Client) applyResource(ctx context.Context, obj *unstructured.Unstructur
 }
 
 // ListPods lists pods in a namespace with an optional label selector
-func (c *Client) ListPods(namespace, labelSelector string) ([]corev1.Pod, error) {
+func (c *K8sClient) ListPods(namespace, labelSelector string) ([]corev1.Pod, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -232,7 +232,7 @@ func (c *Client) ListPods(namespace, labelSelector string) ([]corev1.Pod, error)
 }
 
 // GetPod gets a specific pod by name and namespace
-func (c *Client) GetPod(namespace, name string) (*corev1.Pod, error) {
+func (c *K8sClient) GetPod(namespace, name string) (*corev1.Pod, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -240,7 +240,7 @@ func (c *Client) GetPod(namespace, name string) (*corev1.Pod, error) {
 }
 
 // DeletePod deletes a specific pod by name and namespace
-func (c *Client) DeletePod(namespace, name string) error {
+func (c *K8sClient) DeletePod(namespace, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -248,7 +248,7 @@ func (c *Client) DeletePod(namespace, name string) error {
 }
 
 // CreatePod creates a new pod
-func (c *Client) CreatePod(pod *corev1.Pod) (*corev1.Pod, error) {
+func (c *K8sClient) CreatePod(pod *corev1.Pod) (*corev1.Pod, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -266,7 +266,7 @@ func IsPodReady(pod *corev1.Pod) bool {
 }
 
 // WaitForPodRunning waits for a specific pod to be in Running state
-func (c *Client) WaitForPodRunning(namespace, name string, timeout time.Duration) error {
+func (c *K8sClient) WaitForPodRunning(namespace, name string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -291,7 +291,7 @@ func (c *Client) WaitForPodRunning(namespace, name string, timeout time.Duration
 
 // WaitForPodsReady waits for pods to be ready. If labelSelector is empty,
 // it waits for all pods in the namespace.
-func (c *Client) WaitForPodsReady(namespace, labelSelector string, timeout time.Duration) error {
+func (c *K8sClient) WaitForPodsReady(namespace, labelSelector string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -338,7 +338,7 @@ func (c *Client) WaitForPodsReady(namespace, labelSelector string, timeout time.
 }
 
 // GetNodes returns all nodes in the cluster
-func (c *Client) GetNodes() ([]corev1.Node, error) {
+func (c *K8sClient) GetNodes() ([]corev1.Node, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -351,7 +351,7 @@ func (c *Client) GetNodes() ([]corev1.Node, error) {
 }
 
 // GetNode gets a specific node by name
-func (c *Client) GetNode(name string) (*corev1.Node, error) {
+func (c *K8sClient) GetNode(name string) (*corev1.Node, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -359,7 +359,7 @@ func (c *Client) GetNode(name string) (*corev1.Node, error) {
 }
 
 // LabelNode adds or updates labels on a node
-func (c *Client) LabelNode(name string, labels map[string]string) error {
+func (c *K8sClient) LabelNode(name string, labels map[string]string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -384,7 +384,7 @@ func (c *Client) LabelNode(name string, labels map[string]string) error {
 }
 
 // RemoveNodeTaint removes a taint from a node by key and effect (best effort, ignores if not found)
-func (c *Client) RemoveNodeTaint(name string, taintKey string, effect corev1.TaintEffect) error {
+func (c *K8sClient) RemoveNodeTaint(name string, taintKey string, effect corev1.TaintEffect) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -413,7 +413,7 @@ func (c *Client) RemoveNodeTaint(name string, taintKey string, effect corev1.Tai
 }
 
 // GetNamespaces returns all namespaces in the cluster
-func (c *Client) GetNamespaces() ([]corev1.Namespace, error) {
+func (c *K8sClient) GetNamespaces() ([]corev1.Namespace, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -426,7 +426,7 @@ func (c *Client) GetNamespaces() ([]corev1.Namespace, error) {
 }
 
 // GetNamespace gets a specific namespace by name
-func (c *Client) GetNamespace(name string) (*corev1.Namespace, error) {
+func (c *K8sClient) GetNamespace(name string) (*corev1.Namespace, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -434,7 +434,7 @@ func (c *Client) GetNamespace(name string) (*corev1.Namespace, error) {
 }
 
 // CreateNamespace creates a new namespace
-func (c *Client) CreateNamespace(name string) error {
+func (c *K8sClient) CreateNamespace(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -449,7 +449,7 @@ func (c *Client) CreateNamespace(name string) error {
 }
 
 // DeleteNamespace deletes a namespace
-func (c *Client) DeleteNamespace(name string) error {
+func (c *K8sClient) DeleteNamespace(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -457,7 +457,7 @@ func (c *Client) DeleteNamespace(name string) error {
 }
 
 // GetServices returns all services in a namespace
-func (c *Client) GetServices(namespace string) ([]corev1.Service, error) {
+func (c *K8sClient) GetServices(namespace string) ([]corev1.Service, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -470,7 +470,7 @@ func (c *Client) GetServices(namespace string) ([]corev1.Service, error) {
 }
 
 // GetService gets a specific service by name and namespace
-func (c *Client) GetService(namespace, name string) (*corev1.Service, error) {
+func (c *K8sClient) GetService(namespace, name string) (*corev1.Service, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -478,7 +478,7 @@ func (c *Client) GetService(namespace, name string) (*corev1.Service, error) {
 }
 
 // CreateService creates a new service
-func (c *Client) CreateService(service *corev1.Service) (*corev1.Service, error) {
+func (c *K8sClient) CreateService(service *corev1.Service) (*corev1.Service, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -486,7 +486,7 @@ func (c *Client) CreateService(service *corev1.Service) (*corev1.Service, error)
 }
 
 // DeleteService deletes a service
-func (c *Client) DeleteService(namespace, name string) error {
+func (c *K8sClient) DeleteService(namespace, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -494,7 +494,7 @@ func (c *Client) DeleteService(namespace, name string) error {
 }
 
 // GetConfigMap gets a ConfigMap by name and namespace
-func (c *Client) GetConfigMap(namespace, name string) (*corev1.ConfigMap, error) {
+func (c *K8sClient) GetConfigMap(namespace, name string) (*corev1.ConfigMap, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -502,7 +502,7 @@ func (c *Client) GetConfigMap(namespace, name string) (*corev1.ConfigMap, error)
 }
 
 // CreateConfigMap creates a new ConfigMap
-func (c *Client) CreateConfigMap(configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
+func (c *K8sClient) CreateConfigMap(configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -510,7 +510,7 @@ func (c *Client) CreateConfigMap(configMap *corev1.ConfigMap) (*corev1.ConfigMap
 }
 
 // UpdateConfigMap updates an existing ConfigMap
-func (c *Client) UpdateConfigMap(configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
+func (c *K8sClient) UpdateConfigMap(configMap *corev1.ConfigMap) (*corev1.ConfigMap, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -518,7 +518,7 @@ func (c *Client) UpdateConfigMap(configMap *corev1.ConfigMap) (*corev1.ConfigMap
 }
 
 // DeleteConfigMap deletes a ConfigMap
-func (c *Client) DeleteConfigMap(namespace, name string) error {
+func (c *K8sClient) DeleteConfigMap(namespace, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -526,7 +526,7 @@ func (c *Client) DeleteConfigMap(namespace, name string) error {
 }
 
 // GetSecret gets a Secret by name and namespace
-func (c *Client) GetSecret(namespace, name string) (*corev1.Secret, error) {
+func (c *K8sClient) GetSecret(namespace, name string) (*corev1.Secret, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -534,7 +534,7 @@ func (c *Client) GetSecret(namespace, name string) (*corev1.Secret, error) {
 }
 
 // CreateSecret creates a new Secret
-func (c *Client) CreateSecret(secret *corev1.Secret) (*corev1.Secret, error) {
+func (c *K8sClient) CreateSecret(secret *corev1.Secret) (*corev1.Secret, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -542,7 +542,7 @@ func (c *Client) CreateSecret(secret *corev1.Secret) (*corev1.Secret, error) {
 }
 
 // UpdateSecret updates an existing Secret
-func (c *Client) UpdateSecret(secret *corev1.Secret) (*corev1.Secret, error) {
+func (c *K8sClient) UpdateSecret(secret *corev1.Secret) (*corev1.Secret, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -550,7 +550,7 @@ func (c *Client) UpdateSecret(secret *corev1.Secret) (*corev1.Secret, error) {
 }
 
 // DeleteSecret deletes a Secret
-func (c *Client) DeleteSecret(namespace, name string) error {
+func (c *K8sClient) DeleteSecret(namespace, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -559,7 +559,7 @@ func (c *Client) DeleteSecret(namespace, name string) error {
 
 // RolloutRestartDaemonSet triggers a rolling restart of a DaemonSet by updating
 // a pod template annotation with the current timestamp
-func (c *Client) RolloutRestartDaemonSet(namespace, name string) error {
+func (c *K8sClient) RolloutRestartDaemonSet(namespace, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

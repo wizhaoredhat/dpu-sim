@@ -10,8 +10,8 @@ import (
 	"k8s.io/client-go/restmapper"
 )
 
-// Client wraps Kubernetes client-go for cluster operations
-type Client struct {
+// K8sClient wraps Kubernetes client-go for cluster operations
+type K8sClient struct {
 	clientset       *kubernetes.Clientset
 	dynamicClient   dynamic.Interface
 	cachedDiscovery discovery.CachedDiscoveryInterface

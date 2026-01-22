@@ -22,7 +22,7 @@ type CNIManager struct {
 	config    *config.Config
 	sshClient *ssh.SSHClient
 	// k8sClient is an optional Kubernetes client for direct API access
-	k8sClient *k8s.Client
+	k8sClient *k8s.K8sClient
 }
 
 // NewCNIManagerWithKubeconfig creates a new CNI manager with Kubernetes client from kubeconfig content
@@ -66,6 +66,6 @@ func NewCNIManagerWithKubeconfigFile(cfg *config.Config, kubeconfigPath string) 
 }
 
 // K8sClient returns the underlying Kubernetes client for advanced operations
-func (m *CNIManager) K8sClient() *k8s.Client {
+func (m *CNIManager) K8sClient() *k8s.K8sClient {
 	return m.k8sClient
 }
