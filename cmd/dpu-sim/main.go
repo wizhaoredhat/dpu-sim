@@ -10,7 +10,7 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/kind"
-	"github.com/wizhao/dpu-sim/pkg/platform"
+	"github.com/wizhao/dpu-sim/pkg/requirements"
 	"github.com/wizhao/dpu-sim/pkg/ssh"
 	"github.com/wizhao/dpu-sim/pkg/vm"
 )
@@ -71,7 +71,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	if !skipDeps {
 		fmt.Println("\n=== Checking Dependencies ===")
-		if err := platform.EnsureDependencies(cfg); err != nil {
+		if err := requirements.EnsureDependencies(cfg); err != nil {
 			return fmt.Errorf("dependency check failed: %w", err)
 		}
 	} else {

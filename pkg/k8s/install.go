@@ -9,319 +9,81 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wizhao/dpu-sim/pkg/linux"
 	"github.com/wizhao/dpu-sim/pkg/network"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
-
-// GetLinuxDistro detects the Linux distribution of a remote machine via SSH
-func (m *K8sMachineManager) GetLinuxDistro(machineIP string) (*platform.Distro, error) {
-	return platform.Detect(m.sshClient, machineIP)
-}
 
 // InstallKubernetes installs Kubernetes on a machine (baremetal or VM)
 func (m *K8sMachineManager) InstallKubernetes(machineIP, machineName, k8sVersion string) error {
 	fmt.Printf("Installing Kubernetes on %s (%s)...\n", machineName, machineIP)
 
-	if err := m.sshClient.WaitForSSH(machineIP, 5*time.Minute); err != nil {
+	exec := platform.NewSSHExecutor(&m.config.SSH, machineIP)
+	if err := exec.WaitUntilReady(5 * time.Minute); err != nil {
 		return fmt.Errorf("failed to wait for SSH: %w", err)
 	}
 
-	// Get Linux distribution
-	linuxDistro, err := m.GetLinuxDistro(machineIP)
+	linuxDistro, err := exec.GetDistro()
 	if err != nil {
 		return fmt.Errorf("failed to get Linux distribution: %w", err)
 	}
 	m.linuxDistro = linuxDistro
 	fmt.Printf("✓ Detected Linux distribution: %s %s (package manager: %s, architecture: %s) on %s\n", m.linuxDistro.ID, m.linuxDistro.VersionID, m.linuxDistro.PackageManager, m.linuxDistro.Architecture, machineName)
 
-	if err := m.disableSwap(machineIP); err != nil {
-		return fmt.Errorf("failed to disable swap for Kubernetes: %w", err)
-	}
-
-	if err := m.setHostname(machineIP, machineName); err != nil {
+	if err := linux.SetHostname(exec, machineName); err != nil {
 		return fmt.Errorf("failed to set hostname for Kubernetes: %w", err)
 	}
 
-	if err := m.configureKernelModules(machineIP); err != nil {
-		return fmt.Errorf("failed to configure kernel modules for Kubernetes: %w", err)
+	reason := "Required for Kubernetes installation"
+	deps := []platform.Dependency{
+		{
+			Name:        "Swap Off",
+			Reason:      reason,
+			CheckFunc:   linux.CheckSwapDisabled,
+			InstallFunc: linux.DisableSwap,
+		},
+		{
+			Name:        "K8s Kernel Modules",
+			Reason:      reason,
+			CheckFunc:   linux.CheckK8sKernelModules,
+			InstallFunc: linux.ConfigureK8sKernelModules,
+		},
+		{
+			Name:        "crio",
+			Reason:      reason,
+			CheckCmd:    []string{"systemctl", "is-active", "crio"},
+			InstallFunc: linux.InstallCRIO,
+		},
+		{
+			Name:        "openvswitch",
+			Reason:      reason,
+			CheckCmd:    []string{"ovs-vsctl", "--version"},
+			InstallFunc: linux.InstallOpenVSwitch,
+		},
+		{
+			Name:        "NetworkManager-ovs",
+			Reason:      reason,
+			CheckFunc:   linux.CheckGenericPackage,
+			InstallFunc: linux.InstallNetworkManagerOpenVSwitch,
+		},
+		{
+			Name:        "Kubelet Tools",
+			Reason:      reason,
+			CheckCmd:    []string{"kubeadm", "version", "-o", "short"},
+			InstallFunc: linux.InstallKubelet,
+		},
+		{
+			Name:        "Disable firewalld",
+			Reason:      reason,
+			CheckFunc:   linux.CheckFirewallDisabled,
+			InstallFunc: linux.DisableFirewall,
+		},
 	}
-
-	if err := m.installCRIO(machineIP, k8sVersion); err != nil {
-		return fmt.Errorf("failed to install CRI-O container runtime: %w", err)
-	}
-
-	if err := m.installOpenVSwitch(machineIP); err != nil {
-		return fmt.Errorf("failed to install Open vSwitch: %w", err)
-	}
-
-	if err := m.addKubernetesRepository(machineIP, k8sVersion); err != nil {
-		return fmt.Errorf("failed to add Kubernetes repository: %w", err)
-	}
-
-	if err := m.installKubelet(machineIP); err != nil {
-		return fmt.Errorf("failed to install Kubernetes Tools: %w", err)
-	}
-
-	if err := m.disableFirewall(machineIP); err != nil {
-		return fmt.Errorf("failed to disable firewall: %w", err)
-	}
-
-	if err := m.verifyK8sOvSInstallation(machineIP); err != nil {
-		return fmt.Errorf("failed to verify Kubernetes installation: %w", err)
+	if err := platform.EnsureDependenciesWithExecutor(exec, deps, m.config); err != nil {
+		return fmt.Errorf("failed to ensure dependencies: %w", err)
 	}
 
 	fmt.Printf("✓ Kubernetes %s installed on %s\n", k8sVersion, machineName)
-	return nil
-}
-
-// Disable swap on the machine
-//
-// From https://github.com/cri-o/packaging/blob/main/README.md
-func (m *K8sMachineManager) disableSwap(machineIP string) error {
-	fmt.Printf("Disabling swap on %s...\n", machineIP)
-
-	sb := strings.Builder{}
-	sb.WriteString("set -e\n")
-	sb.WriteString("sudo swapoff -a\n")
-	sb.WriteString("sudo sed -i '/ swap / s/^/#/' /etc/fstab\n")
-
-	stdout, stderr, err := m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to disable swap: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-
-	fmt.Printf("✓ Swap disabled\n")
-	return nil
-}
-
-// Set hostname on the machine
-func (m *K8sMachineManager) setHostname(machineIP, hostname string) error {
-	fmt.Printf("Setting hostname to %s on %s...\n", hostname, machineIP)
-
-	script := fmt.Sprintf("sudo hostnamectl set-hostname %s", hostname)
-
-	stdout, stderr, err := m.sshClient.ExecuteWithTimeout(machineIP, script, 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to set hostname: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-
-	fmt.Printf("✓ Hostname set to %s\n", hostname)
-	return nil
-}
-
-// Configure kernel modules on the machine
-//
-// From https://kubernetes.io/docs/setup/production-environment/container-runtimes/#configuring-the-container-runtime
-func (m *K8sMachineManager) configureKernelModules(machineIP string) error {
-	fmt.Printf("Configuring kernel modules on %s...\n", machineIP)
-
-	sb := strings.Builder{}
-	sb.WriteString("set -e\n")
-	sb.WriteString("sudo tee /etc/modules-load.d/k8s.conf > /dev/null <<EOF\n")
-	sb.WriteString("overlay\n")
-	sb.WriteString("br_netfilter\n")
-	sb.WriteString("EOF\n")
-
-	sb.WriteString("sudo modprobe overlay\n")
-	sb.WriteString("sudo modprobe br_netfilter\n")
-
-	// Enable IPv4 packets to be routed between interfaces
-	sb.WriteString("sudo tee /etc/sysctl.d/k8s.conf > /dev/null <<EOF\n")
-	sb.WriteString("net.bridge.bridge-nf-call-iptables = 1\n")
-	sb.WriteString("net.bridge.bridge-nf-call-ip6tables = 1\n")
-	sb.WriteString("net.ipv4.ip_forward = 1\n")
-	sb.WriteString("EOF\n")
-
-	// Apply sysctl params without reboot
-	sb.WriteString("sudo sysctl --system > /dev/null 2>&1\n")
-
-	stdout, stderr, err := m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to configure kernel modules: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-
-	fmt.Printf("✓ Kernel modules configured\n")
-	return nil
-}
-
-// Install containerd on the machine
-//
-// From https://kubernetes.io/docs/setup/production-environment/container-runtimes/#installing-cri-o
-func (m *K8sMachineManager) installCRIO(machineIP, k8sVersion string) error {
-	fmt.Printf("Installing CRIO on %s...\n", machineIP)
-
-	sb := strings.Builder{}
-	sb.WriteString("set -e\n")
-	if m.linuxDistro.PackageManager == platform.DNF {
-		sb.WriteString("sudo tee /etc/yum.repos.d/cri-o.repo > /dev/null <<EOF\n")
-		sb.WriteString("[cri-o]\n")
-		sb.WriteString("name=CRI-O\n")
-		sb.WriteString(fmt.Sprintf("baseurl=https://pkgs.k8s.io/addons:/cri-o:/stable:/v%s/rpm/\n", k8sVersion))
-		sb.WriteString("enabled=1\n")
-		sb.WriteString("gpgcheck=1\n")
-		sb.WriteString(fmt.Sprintf("gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/v%s/rpm/repodata/repomd.xml.key\n", k8sVersion))
-		sb.WriteString("EOF\n")
-
-		// Install CRI-O, iproute-tc, and containernetworking-plugins (standard CNI plugins like bridge, host-local, etc.)
-		sb.WriteString(fmt.Sprintf("sudo %s install -y cri-o iproute-tc containernetworking-plugins > /dev/null 2>&1 && \n", platform.DNF))
-
-		// On Fedora, CNI plugins are installed to /usr/libexec/cni/ but CRI-O looks in /opt/cni/bin/
-		// Create symlinks so CRI-O can find them
-		sb.WriteString("sudo mkdir -p /opt/cni/bin && \n")
-		sb.WriteString("sudo ln -sf /usr/libexec/cni/* /opt/cni/bin/ && \n")
-	} else {
-		return fmt.Errorf("unsupported Linux distribution: %s", m.linuxDistro.ID)
-	}
-	sb.WriteString("sudo systemctl enable crio > /dev/null 2>&1 && \n")
-	sb.WriteString("sudo systemctl start crio\n")
-
-	stdout, stderr, err := m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to install CRI-O: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-
-	fmt.Printf("✓ CRI-O installed\n")
-	return nil
-}
-
-func (m *K8sMachineManager) installOpenVSwitch(machineIP string) error {
-	fmt.Printf("Installing Open vSwitch on %s...\n", machineIP)
-
-	sb := strings.Builder{}
-	sb.WriteString("set -e\n")
-	if m.linuxDistro.PackageManager == platform.DNF {
-		sb.WriteString(fmt.Sprintf("sudo %s install -y NetworkManager-ovs > /dev/null 2>&1 && \n", platform.DNF))
-		sb.WriteString(fmt.Sprintf("sudo %s install -y openvswitch > /dev/null 2>&1 && \n", platform.DNF))
-	} else {
-		return fmt.Errorf("unsupported Linux distribution: %s", m.linuxDistro.ID)
-	}
-	sb.WriteString("sudo systemctl enable openvswitch > /dev/null 2>&1 && \n")
-	sb.WriteString("sudo systemctl restart NetworkManager > /dev/null 2>&1 && \n")
-	sb.WriteString("sudo systemctl start openvswitch\n")
-
-	stdout, stderr, err := m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to install Open vSwitch: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-
-	fmt.Printf("✓ Open vSwitch installed\n")
-	return nil
-}
-
-// Add Kubernetes repository on the machine
-//
-// From https://kubernetes.io/docs/setup/production-environment/container-runtimes/#installing-cri-o
-func (m *K8sMachineManager) addKubernetesRepository(machineIP, k8sVersion string) error {
-	fmt.Printf("Adding Kubernetes repository on %s...\n", machineIP)
-
-	sb := strings.Builder{}
-	sb.WriteString("set -e\n")
-	if m.linuxDistro.PackageManager == platform.DNF {
-		sb.WriteString("sudo tee /etc/yum.repos.d/kubernetes.repo > /dev/null <<EOF\n")
-		sb.WriteString("[kubernetes]\n")
-		sb.WriteString("name=Kubernetes\n")
-		sb.WriteString(fmt.Sprintf("baseurl=https://pkgs.k8s.io/core:/stable:/v%s/rpm/\n", k8sVersion))
-		sb.WriteString("enabled=1\n")
-		sb.WriteString("gpgcheck=1\n")
-		sb.WriteString(fmt.Sprintf("gpgkey=https://pkgs.k8s.io/core:/stable:/v%s/rpm/repodata/repomd.xml.key\n", k8sVersion))
-		sb.WriteString("exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni\n")
-		sb.WriteString("EOF\n")
-	} else {
-		return fmt.Errorf("unsupported Linux distribution: %s", m.linuxDistro.ID)
-	}
-
-	stdout, stderr, err := m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to add Kubernetes repository: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-
-	fmt.Printf("✓ Kubernetes repository added\n")
-	return nil
-}
-
-// Install kubeadm, kubelet, kubectl (kubernetes tools) on the machine
-//
-// From https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl
-// And https://kubernetes.io/docs/setup/production-environment/container-runtimes/#installing-cri-o
-func (m *K8sMachineManager) installKubelet(machineIP string) error {
-	fmt.Printf("Installing Kubelet, Kubeadm, Kubectl on %s...\n", machineIP)
-
-	sb := strings.Builder{}
-	sb.WriteString("set -e\n")
-	if m.linuxDistro.PackageManager == platform.DNF {
-		sb.WriteString(fmt.Sprintf("sudo %s install -y kubelet kubeadm kubectl --setopt=disable_excludes=kubernetes > /dev/null 2>&1 && \n", platform.DNF))
-	} else {
-		return fmt.Errorf("unsupported Linux distribution: %s", m.linuxDistro.ID)
-	}
-	sb.WriteString("sudo systemctl enable kubelet > /dev/null 2>&1\n")
-
-	stdout, stderr, err := m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to install Kubelet: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-
-	fmt.Printf("✓ Kubelet installed\n")
-	return nil
-}
-
-// Disable firewall on the machine
-func (m *K8sMachineManager) disableFirewall(machineIP string) error {
-	fmt.Printf("Disabling firewall on %s...\n", machineIP)
-
-	sb := strings.Builder{}
-	sb.WriteString("set -e\n")
-	if m.linuxDistro.PackageManager == platform.DNF {
-		// Check if firewalld is installed before trying to disable/remove it
-		sb.WriteString("if rpm -q firewalld &>/dev/null; then\n")
-		sb.WriteString("  sudo systemctl disable --now firewalld\n")
-		sb.WriteString(fmt.Sprintf("  sudo %s remove -y firewalld\n", platform.DNF))
-		sb.WriteString("fi\n")
-	} else {
-		return fmt.Errorf("unsupported Linux distribution: %s", m.linuxDistro.ID)
-	}
-
-	stdout, stderr, err := m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to configure firewall: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-
-	fmt.Printf("✓ Firewall disabled\n")
-	return nil
-}
-
-// Verify Kubernetes installation on the machine
-func (m *K8sMachineManager) verifyK8sOvSInstallation(machineIP string) error {
-	fmt.Printf("Verifying Kubernetes installation on %s...\n", machineIP)
-
-	sb := strings.Builder{}
-	sb.WriteString("set -e\n")
-	sb.WriteString("sudo kubeadm version -o short 2>/dev/null\n")
-
-	stdout, stderr, err := m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to verify Kubernetes installation: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-	fmt.Printf("✓ Kubeadm version: %s\n", strings.TrimSpace(stdout))
-
-	sb.Reset()
-	sb.WriteString("sudo systemctl is-active crio\n")
-
-	stdout, stderr, err = m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to verify CRI-O installation: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-	fmt.Printf("✓ CRI-O is active\n")
-
-	sb.Reset()
-	sb.WriteString("set -e\n")
-	sb.WriteString("sudo ovs-vsctl --version | head -n 1\n")
-
-	stdout, stderr, err = m.sshClient.ExecuteWithTimeout(machineIP, sb.String(), 5*time.Minute)
-	if err != nil {
-		return fmt.Errorf("failed to verify Open vSwitch installation: %w, stdout: %s, stderr: %s", err, stdout, stderr)
-	}
-
-	fmt.Printf("✓ Open vSwitch version: %s\n", strings.TrimSpace(stdout))
 	return nil
 }
 

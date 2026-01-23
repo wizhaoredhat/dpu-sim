@@ -11,19 +11,29 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/ssh"
 )
 
-const X86_64 = "x86_64"
+// Architecture represents a CPU architecture
+type Architecture string
 
-const DNF = "dnf"
-const APT = "apt"
-const APK = "apk"
+// Known architectures
+const (
+	X86_64  Architecture = "x86_64"
+	AARCH64 Architecture = "aarch64"
+)
+
+// PackageManager names
+const (
+	DNF = "dnf"
+	APT = "apt"
+	APK = "apk"
+)
 
 // Distro represents information about a Linux distribution
 type Distro struct {
-	ID             string // e.g., "fedora", "ubuntu", "debian", "centos", "rhel"
-	VersionID      string // e.g., "43", "22.04", "12"
-	IDLike         string // e.g., "rhel fedora", "debian"
-	Architecture   string // e.g., "x86_64", "aarch64"
-	PackageManager string // e.g., "dnf", "apt", "yum"
+	ID             string       // e.g., "fedora", "ubuntu", "debian", "centos", "rhel"
+	VersionID      string       // e.g., "43", "22.04", "12"
+	IDLike         string       // e.g., "rhel fedora", "debian"
+	Architecture   Architecture // e.g., X86_64, AARCH64
+	PackageManager string       // e.g., "dnf", "apt", "yum"
 }
 
 // IsFedoraLike returns true if the distro is Fedora-based (Fedora, RHEL, CentOS, etc.)
@@ -80,7 +90,7 @@ func Detect(sshClient *ssh.SSHClient, machineIP string) (*Distro, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect architecture: %w, stderr: %s", err, stderr)
 	}
-	distro.Architecture = strings.TrimSpace(arch)
+	distro.Architecture = Architecture(strings.TrimSpace(arch))
 
 	return distro, nil
 }
@@ -95,16 +105,26 @@ func DetectLocalDistro() (*Distro, error) {
 	distro := Parse(string(content))
 
 	// Detect architecture using uname -m
-	out, err := exec.Command("uname", "-m").Output()
+	arch, err := DetectLocalArchitecture()
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect architecture: %w", err)
 	}
-	distro.Architecture = strings.TrimSpace(string(out))
+	distro.Architecture = arch
 
 	return distro, nil
 }
 
+// DetectLocalArchitecture detects the CPU architecture of the local machine
+func DetectLocalArchitecture() (Architecture, error) {
+	out, err := exec.Command("uname", "-m").Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to detect architecture: %w", err)
+	}
+	return Architecture(strings.TrimSpace(string(out))), nil
+}
+
 // Parse parses the contents of /etc/os-release and returns a Distro
+// Alias: ParseOSRelease
 func Parse(osReleaseContent string) *Distro {
 	distro := &Distro{}
 
@@ -137,4 +157,13 @@ func Parse(osReleaseContent string) *Distro {
 	distro.PackageManager = DetectPackageManager(distro)
 
 	return distro
+}
+
+// ParseOSRelease is an alias for Parse for clearer naming in some contexts
+func ParseOSRelease(content string) (*Distro, error) {
+	distro := Parse(content)
+	if distro.ID == "" {
+		return nil, fmt.Errorf("failed to parse os-release: ID not found")
+	}
+	return distro, nil
 }
