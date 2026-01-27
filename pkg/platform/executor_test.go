@@ -9,7 +9,7 @@ import (
 )
 
 func TestLocalExecutor_Execute(t *testing.T) {
-	exec := NewLocalExecutor()
+	cmdExec := NewLocalExecutor()
 
 	tests := []struct {
 		name       string
@@ -43,7 +43,7 @@ func TestLocalExecutor_Execute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stdout, _, err := exec.Execute(tt.command)
+			stdout, _, err := cmdExec.Execute(tt.command)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Execute() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -56,10 +56,10 @@ func TestLocalExecutor_Execute(t *testing.T) {
 }
 
 func TestLocalExecutor_ExecuteWithTimeout(t *testing.T) {
-	exec := NewLocalExecutor()
+	cmdExec := NewLocalExecutor()
 
 	t.Run("command completes within timeout", func(t *testing.T) {
-		stdout, _, err := exec.ExecuteWithTimeout("echo test", 5*time.Second)
+		stdout, _, err := cmdExec.ExecuteWithTimeout("echo test", 5*time.Second)
 		if err != nil {
 			t.Errorf("ExecuteWithTimeout() unexpected error: %v", err)
 		}
@@ -69,7 +69,7 @@ func TestLocalExecutor_ExecuteWithTimeout(t *testing.T) {
 	})
 
 	t.Run("command times out", func(t *testing.T) {
-		_, _, err := exec.ExecuteWithTimeout("sleep 10", 100*time.Millisecond)
+		_, _, err := cmdExec.ExecuteWithTimeout("sleep 10", 100*time.Millisecond)
 		if err == nil {
 			t.Error("ExecuteWithTimeout() expected timeout error, got nil")
 		}
@@ -77,24 +77,24 @@ func TestLocalExecutor_ExecuteWithTimeout(t *testing.T) {
 }
 
 func TestLocalExecutor_RunCmd(t *testing.T) {
-	exec := NewLocalExecutor()
+	cmdExec := NewLocalExecutor()
 
 	t.Run("successful command", func(t *testing.T) {
-		err := exec.RunCmd("true")
+		err := cmdExec.RunCmd("true")
 		if err != nil {
 			t.Errorf("RunCmd() unexpected error: %v", err)
 		}
 	})
 
 	t.Run("failing command", func(t *testing.T) {
-		err := exec.RunCmd("false")
+		err := cmdExec.RunCmd("false")
 		if err == nil {
 			t.Error("RunCmd() expected error, got nil")
 		}
 	})
 
 	t.Run("command with arguments", func(t *testing.T) {
-		err := exec.RunCmd("test", "-d", "/tmp")
+		err := cmdExec.RunCmd("test", "-d", "/tmp")
 		if err != nil {
 			t.Errorf("RunCmd() unexpected error: %v", err)
 		}
@@ -102,14 +102,14 @@ func TestLocalExecutor_RunCmd(t *testing.T) {
 }
 
 func TestLocalExecutor_WriteFile(t *testing.T) {
-	exec := NewLocalExecutor()
+	cmdExec := NewLocalExecutor()
 
 	t.Run("write and verify file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		filePath := filepath.Join(tmpDir, "test.txt")
 		content := []byte("hello world")
 
-		err := exec.WriteFile(filePath, content, 0644)
+		err := cmdExec.WriteFile(filePath, content, 0644)
 		if err != nil {
 			t.Fatalf("WriteFile() unexpected error: %v", err)
 		}
@@ -136,9 +136,9 @@ func TestLocalExecutor_WriteFile(t *testing.T) {
 }
 
 func TestLocalExecutor_GetDistro(t *testing.T) {
-	exec := NewLocalExecutor()
+	cmdExec := NewLocalExecutor()
 
-	distro, err := exec.GetDistro()
+	distro, err := cmdExec.GetDistro()
 	if err != nil {
 		t.Fatalf("GetDistro() unexpected error: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestLocalExecutor_GetDistro(t *testing.T) {
 	}
 
 	// Verify caching works
-	distro2, err := exec.GetDistro()
+	distro2, err := cmdExec.GetDistro()
 	if err != nil {
 		t.Fatalf("GetDistro() second call unexpected error: %v", err)
 	}
@@ -169,9 +169,9 @@ func TestLocalExecutor_GetDistro(t *testing.T) {
 }
 
 func TestLocalExecutor_GetArchitecture(t *testing.T) {
-	exec := NewLocalExecutor()
+	cmdExec := NewLocalExecutor()
 
-	arch, err := exec.GetArchitecture()
+	arch, err := cmdExec.GetArchitecture()
 	if err != nil {
 		t.Fatalf("GetArchitecture() unexpected error: %v", err)
 	}
@@ -196,17 +196,17 @@ func TestLocalExecutor_GetArchitecture(t *testing.T) {
 }
 
 func TestLocalExecutor_String(t *testing.T) {
-	exec := NewLocalExecutor()
-	if exec.String() != "local" {
-		t.Errorf("String() = %q, want %q", exec.String(), "local")
+	cmdExec := NewLocalExecutor()
+	if cmdExec.String() != "local" {
+		t.Errorf("String() = %q, want %q", cmdExec.String(), "local")
 	}
 }
 
 func TestDockerExecutor_String(t *testing.T) {
-	exec := NewDockerExecutor("test-container")
+	cmdExec := NewDockerExecutor("test-container")
 	want := "docker://test-container"
-	if exec.String() != want {
-		t.Errorf("String() = %q, want %q", exec.String(), want)
+	if cmdExec.String() != want {
+		t.Errorf("String() = %q, want %q", cmdExec.String(), want)
 	}
 }
 
@@ -281,47 +281,47 @@ func TestMockExecutor_BasicOperations(t *testing.T) {
 		PackageManager: DNF,
 		Architecture:   X86_64,
 	}
-	exec := NewMockExecutor(distro)
+	cmdExec := NewMockExecutor(distro)
 
 	t.Run("execute records commands", func(t *testing.T) {
-		_, _, err := exec.Execute("test command")
+		_, _, err := cmdExec.Execute("test command")
 		if err != nil {
 			t.Errorf("Execute() unexpected error: %v", err)
 		}
-		if len(exec.Commands) != 1 || exec.Commands[0] != "test command" {
+		if len(cmdExec.Commands) != 1 || cmdExec.Commands[0] != "test command" {
 			t.Errorf("Execute() did not record command correctly")
 		}
 	})
 
 	t.Run("run cmd records commands", func(t *testing.T) {
-		err := exec.RunCmd("sudo", "dnf", "install", "-y", "package")
+		err := cmdExec.RunCmd("sudo", "dnf", "install", "-y", "package")
 		if err != nil {
 			t.Errorf("RunCmd() unexpected error: %v", err)
 		}
 		found := false
-		for _, cmd := range exec.Commands {
+		for _, cmd := range cmdExec.Commands {
 			if cmd == "sudo dnf install -y package" {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("RunCmd() did not record command correctly, got: %v", exec.Commands)
+			t.Errorf("RunCmd() did not record command correctly, got: %v", cmdExec.Commands)
 		}
 	})
 
 	t.Run("write file stores content", func(t *testing.T) {
-		err := exec.WriteFile("/test/path", []byte("content"), 0644)
+		err := cmdExec.WriteFile("/test/path", []byte("content"), 0644)
 		if err != nil {
 			t.Errorf("WriteFile() unexpected error: %v", err)
 		}
-		if string(exec.Files["/test/path"]) != "content" {
+		if string(cmdExec.Files["/test/path"]) != "content" {
 			t.Errorf("WriteFile() did not store content correctly")
 		}
 	})
 
 	t.Run("get distro returns configured distro", func(t *testing.T) {
-		got, err := exec.GetDistro()
+		got, err := cmdExec.GetDistro()
 		if err != nil {
 			t.Errorf("GetDistro() unexpected error: %v", err)
 		}
@@ -338,25 +338,25 @@ func TestMockExecutor_FailureScenarios(t *testing.T) {
 		PackageManager: DNF,
 		Architecture:   X86_64,
 	}
-	exec := NewMockExecutor(distro)
-	exec.ShouldFail = true
+	cmdExec := NewMockExecutor(distro)
+	cmdExec.ShouldFail = true
 
 	t.Run("execute fails when ShouldFail is true", func(t *testing.T) {
-		_, _, err := exec.Execute("test")
+		_, _, err := cmdExec.Execute("test")
 		if err == nil {
 			t.Error("Execute() expected error, got nil")
 		}
 	})
 
 	t.Run("run cmd fails when ShouldFail is true", func(t *testing.T) {
-		err := exec.RunCmd("test")
+		err := cmdExec.RunCmd("test")
 		if err == nil {
 			t.Error("RunCmd() expected error, got nil")
 		}
 	})
 
 	t.Run("write file fails when ShouldFail is true", func(t *testing.T) {
-		err := exec.WriteFile("/test", []byte("content"), 0644)
+		err := cmdExec.WriteFile("/test", []byte("content"), 0644)
 		if err == nil {
 			t.Error("WriteFile() expected error, got nil")
 		}

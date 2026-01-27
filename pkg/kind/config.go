@@ -2,7 +2,6 @@ package kind
 
 import (
 	"fmt"
-	"os/exec"
 
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 
@@ -83,16 +82,4 @@ nodeRegistration:
 	}
 
 	return cluster, nil
-}
-
-// ValidateDockerInstallation checks if Docker is installed and running
-// This is required for the kind library to work
-func ValidateDockerInstallation() error {
-	cmd := exec.Command("docker", "ps")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker is not installed or not running: %w", err)
-	}
-
-	fmt.Println("✓ Docker is running")
-	return nil
 }

@@ -108,10 +108,10 @@ func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) 
 			InstallFunc: linux.InstallKubectl,
 		})
 		deps = append(deps, platform.Dependency{
-			Name:        "docker",
+			Name:        "Container Runtime",
 			Reason:      "Required for Kind",
-			CheckCmd:    []string{"docker", "--version"},
-			InstallFunc: linux.InstallDocker,
+			CheckCmd:    []string{"podman", "ps"},
+			InstallFunc: linux.InstallContainerRuntime,
 		})
 		deps = append(deps, platform.Dependency{
 			Name:        "kind",

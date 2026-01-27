@@ -37,13 +37,13 @@ func (m *VMManager) InstallKubernetes(vmName string) error {
 			return fmt.Errorf("Kubernetes version is not set")
 		}
 
-		exec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
-		if err := exec.WaitUntilReady(5 * time.Minute); err != nil {
+		cmdExec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
+		if err := cmdExec.WaitUntilReady(5 * time.Minute); err != nil {
 			return fmt.Errorf("failed to wait for SSH on %s: %w", vmCfg.Name, err)
 		}
 
 		// Install Kubernetes
-		if err := k8sMgr.InstallKubernetes(exec, vmCfg.Name, k8sVersion); err != nil {
+		if err := k8sMgr.InstallKubernetes(cmdExec, vmCfg.Name, k8sVersion); err != nil {
 			return fmt.Errorf("failed to install Kubernetes on %s: %w", vmCfg.Name, err)
 		}
 	}

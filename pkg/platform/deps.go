@@ -50,7 +50,7 @@ func UnsupportedArchitecture(distro *Distro) error {
 }
 
 // checkDependency checks if a single dependency is installed
-func checkDependency(exec CommandExecutor, dep Dependency, distro *Distro, cfg *config.Config) DependencyResult {
+func checkDependency(cmdExec CommandExecutor, dep Dependency, distro *Distro, cfg *config.Config) DependencyResult {
 	result := DependencyResult{
 		Name:      dep.Name,
 		Installed: false,
@@ -62,7 +62,7 @@ func checkDependency(exec CommandExecutor, dep Dependency, distro *Distro, cfg *
 			result.Error = fmt.Errorf("no check command or check function defined for dependency %s", dep.Name)
 			return result
 		}
-		if err := dep.CheckFunc(exec, distro, cfg, &dep); err != nil {
+		if err := dep.CheckFunc(cmdExec, distro, cfg, &dep); err != nil {
 			result.Error = err
 			return result
 		}
@@ -72,7 +72,7 @@ func checkDependency(exec CommandExecutor, dep Dependency, distro *Distro, cfg *
 
 	// Build command string from CheckCmd
 	checkCmd := strings.Join(dep.CheckCmd, " ")
-	stdout, stderr, err := exec.Execute(checkCmd)
+	stdout, stderr, err := cmdExec.Execute(checkCmd)
 	result.Output = stdout + stderr
 	if err != nil {
 		result.Error = err
@@ -84,14 +84,14 @@ func checkDependency(exec CommandExecutor, dep Dependency, distro *Distro, cfg *
 }
 
 // installDependency attempts to install a dependency using its install function
-func installDependency(exec CommandExecutor, dep Dependency, distro *Distro, cfg *config.Config) error {
+func installDependency(cmdExec CommandExecutor, dep Dependency, distro *Distro, cfg *config.Config) error {
 	if dep.InstallFunc == nil {
 		return fmt.Errorf("no install function defined for %s", dep.Name)
 	}
 
-	fmt.Printf("Installing %s for %s on %s...\n", dep.Name, distro.ID, exec.String())
+	fmt.Printf("Installing %s for %s on %s...\n", dep.Name, distro.ID, cmdExec.String())
 
-	if err := dep.InstallFunc(exec, distro, cfg, &dep); err != nil {
+	if err := dep.InstallFunc(cmdExec, distro, cfg, &dep); err != nil {
 		return fmt.Errorf("failed to install %s: %w. Needed for %s", dep.Name, err, dep.Reason)
 	}
 
@@ -104,22 +104,22 @@ func installDependency(exec CommandExecutor, dep Dependency, distro *Distro, cfg
 // exec is the CommandExecutor that determines where commands are run
 // cfg provides configuration including version information for dependencies
 // Returns an error if any dependency cannot be installed
-func EnsureDependenciesWithExecutor(exec CommandExecutor, deps []Dependency, cfg *config.Config) error {
-	fmt.Printf("Checking dependencies on %s...\n", exec.String())
+func EnsureDependenciesWithExecutor(cmdExec CommandExecutor, deps []Dependency, cfg *config.Config) error {
+	fmt.Printf("Checking dependencies on %s...\n", cmdExec.String())
 
 	// Ensure ~/.local/bin is in PATH for pip user installs (only affects local executor)
 	ensureLocalBinInPath()
 
 	// Detect distro using the executor
-	distro, err := exec.GetDistro()
+	distro, err := cmdExec.GetDistro()
 	if err != nil {
-		return fmt.Errorf("failed to detect distribution on %s: %w", exec.String(), err)
+		return fmt.Errorf("failed to detect distribution on %s: %w", cmdExec.String(), err)
 	}
-	fmt.Printf("Detected Linux distribution: %s %s (package manager: %s, architecture: %s)\n", distro.ID, distro.VersionID, distro.PackageManager, distro.Architecture)
+	fmt.Printf("✓ Detected Linux distribution: %s %s (package manager: %s, architecture: %s)\n", distro.ID, distro.VersionID, distro.PackageManager, distro.Architecture)
 
 	var missing []Dependency
 	for _, dep := range deps {
-		result := checkDependency(exec, dep, distro, cfg)
+		result := checkDependency(cmdExec, dep, distro, cfg)
 		if result.Installed {
 			fmt.Printf("✓ %s is installed\n", dep.Name)
 		} else {
@@ -135,11 +135,11 @@ func EnsureDependenciesWithExecutor(exec CommandExecutor, deps []Dependency, cfg
 		}
 		fmt.Printf("Installing missing dependencies: %s\n", strings.Join(names, ", "))
 		for _, dep := range missing {
-			if err := installDependency(exec, dep, distro, cfg); err != nil {
+			if err := installDependency(cmdExec, dep, distro, cfg); err != nil {
 				return fmt.Errorf("failed to install dependency %s: %w", dep.Name, err)
 			}
 
-			result := checkDependency(exec, dep, distro, cfg)
+			result := checkDependency(cmdExec, dep, distro, cfg)
 			if !result.Installed {
 				return fmt.Errorf("dependency %s was installed but verification failed", dep.Name)
 			}

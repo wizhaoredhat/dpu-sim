@@ -21,7 +21,7 @@ func (m *KindManager) DeployAllClusters() error {
 			return fmt.Errorf("failed to build Kind config for %s: %w", cluster.Name, err)
 		}
 
-		if err := m.CreateCluster(cluster.Name, kindCfg); err != nil {
+		if err := m.createCluster(cluster.Name, kindCfg); err != nil {
 			return fmt.Errorf("failed to create cluster %s: %w", cluster.Name, err)
 		}
 
@@ -33,8 +33,8 @@ func (m *KindManager) DeployAllClusters() error {
 	return nil
 }
 
-// CreateCluster creates a new Kind cluster using the v1alpha4.Cluster config directly
-func (m *KindManager) CreateCluster(name string, cfg *v1alpha4.Cluster) error {
+// createCluster creates a new Kind cluster using the v1alpha4.Cluster config directly
+func (m *KindManager) createCluster(name string, cfg *v1alpha4.Cluster) error {
 	// Check if cluster already exists
 	if m.ClusterExists(name) {
 		fmt.Printf("Kind cluster %s already exists, skipping creation\n", name)

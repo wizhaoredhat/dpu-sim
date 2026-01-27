@@ -46,9 +46,9 @@ func DetectPackageManager(distro *Distro) string {
 
 // DetectDistro detects the Linux distribution using the provided executor.
 // This works uniformly across local, SSH, and Docker executors.
-func DetectDistro(exec CommandExecutor) (*Distro, error) {
+func DetectDistro(cmdExec CommandExecutor) (*Distro, error) {
 	// Read /etc/os-release which is standard on most modern Linux distributions
-	stdout, stderr, err := exec.ExecuteWithTimeout("cat /etc/os-release", 30*time.Second)
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout("cat /etc/os-release", 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read /etc/os-release: %w, stderr: %s", err, stderr)
 	}
@@ -56,7 +56,7 @@ func DetectDistro(exec CommandExecutor) (*Distro, error) {
 	distro := ParseOSRelease(stdout)
 
 	// Detect architecture using uname -m
-	arch, err := DetectArchitecture(exec)
+	arch, err := DetectArchitecture(cmdExec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect architecture: %w", err)
 	}
@@ -66,8 +66,8 @@ func DetectDistro(exec CommandExecutor) (*Distro, error) {
 }
 
 // DetectArchitecture detects the CPU architecture using the provided executor.
-func DetectArchitecture(exec CommandExecutor) (Architecture, error) {
-	stdout, _, err := exec.ExecuteWithTimeout("uname -m", 10*time.Second)
+func DetectArchitecture(cmdExec CommandExecutor) (Architecture, error) {
+	stdout, _, err := cmdExec.ExecuteWithTimeout("uname -m", 10*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("failed to detect architecture: %w", err)
 	}

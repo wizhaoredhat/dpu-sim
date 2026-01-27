@@ -240,9 +240,9 @@ func doVMDeploy(cfg *config.Config, vmMgr *vm.VMManager) error {
 		}
 		fmt.Printf("✓ %s IP: %s\n", vmCfg.Name, ip)
 
-		exec := platform.NewSSHExecutor(&cfg.SSH, ip)
+		cmdExec := platform.NewSSHExecutor(&cfg.SSH, ip)
 		fmt.Printf("Waiting for SSH on %s...\n", vmCfg.Name)
-		if err := exec.WaitUntilReady(5 * time.Minute); err != nil {
+		if err := cmdExec.WaitUntilReady(5 * time.Minute); err != nil {
 			return fmt.Errorf("failed to wait for SSH on %s: %w", vmCfg.Name, err)
 		}
 		fmt.Printf("✓ SSH ready on %s\n", vmCfg.Name)
@@ -264,12 +264,6 @@ func doVMInstallK8s(vmMgr *vm.VMManager) error {
 }
 
 func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager) error {
-	// Validate prerequisites (Docker is required by the kind library)
-	fmt.Println("\n=== Validating DockerPrerequisites ===")
-	if err := kind.ValidateDockerInstallation(); err != nil {
-		return fmt.Errorf("prerequisite check failed: %w", err)
-	}
-
 	fmt.Println("\n=== Creating Kind Clusters ===")
 	if err := kindMgr.DeployAllClusters(); err != nil {
 		return fmt.Errorf("failed to deploy Kind clusters: %w", err)

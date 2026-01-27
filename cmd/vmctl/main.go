@@ -179,11 +179,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	// Execute command via SSH
-	exec := platform.NewSSHExecutor(&cfg.SSH, ip)
-	if err := exec.WaitUntilReady(10 * time.Second); err != nil {
+	cmdExec := platform.NewSSHExecutor(&cfg.SSH, ip)
+	if err := cmdExec.WaitUntilReady(10 * time.Second); err != nil {
 		return fmt.Errorf("failed to wait for SSH on %s: %w", vmName, err)
 	}
-	stdout, stderr, err := exec.Execute(command)
+	stdout, stderr, err := cmdExec.Execute(command)
 
 	// Print output
 	if stdout != "" {

@@ -60,15 +60,15 @@ func (i *InterfaceInfo) String() string {
 
 // GetInterfaceByIP retrieves interface information for the interface that has the specified IP address
 // using a CommandExecutor.
-func GetInterfaceByIP(exec platform.CommandExecutor, searchIP string) (*InterfaceInfo, error) {
-	return getInterfaceByIPWithTimeout(exec, searchIP, 30*time.Second)
+func GetInterfaceByIP(cmdExec platform.CommandExecutor, searchIP string) (*InterfaceInfo, error) {
+	return getInterfaceByIPWithTimeout(cmdExec, searchIP, 30*time.Second)
 }
 
 // getInterfaceByIPWithTimeout retrieves interface information with a custom timeout using an executor.
-func getInterfaceByIPWithTimeout(exec platform.CommandExecutor, searchIP string, timeout time.Duration) (*InterfaceInfo, error) {
+func getInterfaceByIPWithTimeout(cmdExec platform.CommandExecutor, searchIP string, timeout time.Duration) (*InterfaceInfo, error) {
 	cmd := "ip -j addr show"
 
-	stdout, stderr, err := exec.ExecuteWithTimeout(cmd, timeout)
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(cmd, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute ip command: %w, stderr: %s", err, stderr)
 	}
@@ -91,15 +91,15 @@ func getInterfaceByIPWithTimeout(exec platform.CommandExecutor, searchIP string,
 }
 
 // GetAllInterfaces retrieves information about all network interfaces on a remote machine.
-func GetAllInterfaces(exec platform.CommandExecutor) ([]InterfaceInfo, error) {
-	return getAllInterfacesWithTimeout(exec, 30*time.Second)
+func GetAllInterfaces(cmdExec platform.CommandExecutor) ([]InterfaceInfo, error) {
+	return getAllInterfacesWithTimeout(cmdExec, 30*time.Second)
 }
 
 // getAllInterfacesWithTimeout retrieves all interface information with a custom timeout.
-func getAllInterfacesWithTimeout(exec platform.CommandExecutor, timeout time.Duration) ([]InterfaceInfo, error) {
+func getAllInterfacesWithTimeout(cmdExec platform.CommandExecutor, timeout time.Duration) ([]InterfaceInfo, error) {
 	cmd := "ip -j addr show"
 
-	stdout, stderr, err := exec.ExecuteWithTimeout(cmd, timeout)
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(cmd, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute ip command: %w, stderr: %s", err, stderr)
 	}
@@ -113,15 +113,15 @@ func getAllInterfacesWithTimeout(exec platform.CommandExecutor, timeout time.Dur
 }
 
 // GetInterfaceByName retrieves interface information by name from a remote machine.
-func GetInterfaceByName(exec platform.CommandExecutor, ifaceName string) (*InterfaceInfo, error) {
-	return getInterfaceByNameWithTimeout(exec, ifaceName, 30*time.Second)
+func GetInterfaceByName(cmdExec platform.CommandExecutor, ifaceName string) (*InterfaceInfo, error) {
+	return getInterfaceByNameWithTimeout(cmdExec, ifaceName, 30*time.Second)
 }
 
 // getInterfaceByNameWithTimeout retrieves interface information by name with a custom timeout.
-func getInterfaceByNameWithTimeout(exec platform.CommandExecutor, ifaceName string, timeout time.Duration) (*InterfaceInfo, error) {
+func getInterfaceByNameWithTimeout(cmdExec platform.CommandExecutor, ifaceName string, timeout time.Duration) (*InterfaceInfo, error) {
 	cmd := fmt.Sprintf("ip -j addr show dev %s", ifaceName)
 
-	stdout, stderr, err := exec.ExecuteWithTimeout(cmd, timeout)
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(cmd, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute ip command: %w, stderr: %s", err, stderr)
 	}
