@@ -7,31 +7,6 @@ import (
 	"time"
 )
 
-// Architecture represents a CPU architecture
-type Architecture string
-
-// Known architectures
-const (
-	X86_64  Architecture = "x86_64"
-	AARCH64 Architecture = "aarch64"
-)
-
-// PackageManager names
-const (
-	DNF = "dnf"
-	APT = "apt"
-	APK = "apk"
-)
-
-// Distro represents information about a Linux distribution
-type Distro struct {
-	ID             string       // e.g., "fedora", "ubuntu", "debian", "centos", "rhel"
-	VersionID      string       // e.g., "43", "22.04", "12"
-	IDLike         string       // e.g., "rhel fedora", "debian"
-	Architecture   Architecture // e.g., X86_64, AARCH64
-	PackageManager string       // e.g., "dnf", "apt", "yum"
-}
-
 // IsFedoraLike returns true if the distro is Fedora-based (Fedora, RHEL, CentOS, etc.)
 func (d *Distro) IsFedoraLike() bool {
 	switch d.ID {
@@ -78,7 +53,7 @@ func DetectDistro(exec CommandExecutor) (*Distro, error) {
 		return nil, fmt.Errorf("failed to read /etc/os-release: %w, stderr: %s", err, stderr)
 	}
 
-	distro := Parse(stdout)
+	distro := ParseOSRelease(stdout)
 
 	// Detect architecture using uname -m
 	arch, err := DetectArchitecture(exec)
@@ -108,9 +83,8 @@ func DetectArchitecture(exec CommandExecutor) (Architecture, error) {
 	}
 }
 
-// Parse parses the contents of /etc/os-release and returns a Distro
-// Alias: ParseOSRelease
-func Parse(osReleaseContent string) *Distro {
+// ParseOSRelease parses the contents of /etc/os-release and returns a Distro
+func ParseOSRelease(osReleaseContent string) *Distro {
 	distro := &Distro{}
 
 	// Parse the os-release file (KEY=VALUE or KEY="VALUE" format)
@@ -142,13 +116,4 @@ func Parse(osReleaseContent string) *Distro {
 	distro.PackageManager = DetectPackageManager(distro)
 
 	return distro
-}
-
-// ParseOSRelease is an alias for Parse for clearer naming in some contexts
-func ParseOSRelease(content string) (*Distro, error) {
-	distro := Parse(content)
-	if distro.ID == "" {
-		return nil, fmt.Errorf("failed to parse os-release: ID not found")
-	}
-	return distro, nil
 }

@@ -12,8 +12,8 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
-// GetProjectRoot returns the root directory of the dpu-sim project
-func GetProjectRoot() (string, error) {
+// getProjectRoot returns the root directory of the dpu-sim project
+func getProjectRoot() (string, error) {
 	// Get the directory of the current source file
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
@@ -150,9 +150,9 @@ func EnsureDependenciesWithExecutor(exec CommandExecutor, deps []Dependency, cfg
 	return nil
 }
 
-// GetOVNKubernetesPath returns the path to the ovn-kubernetes directory
-func GetOVNKubernetesPath() (string, error) {
-	projectRoot, err := GetProjectRoot()
+// getOVNKubernetesPath returns the path to the ovn-kubernetes directory
+func getOVNKubernetesPath() (string, error) {
+	projectRoot, err := getProjectRoot()
 	if err != nil {
 		return "", err
 	}
@@ -198,12 +198,12 @@ func initOVNKubernetesSubmodule(projectRoot string) error {
 // It first tries to initialize the git submodule if it exists but is empty.
 // If submodule initialization fails or the directory doesn't exist, it clones the repository.
 func EnsureOVNKubernetesSource() (string, error) {
-	ovnPath, err := GetOVNKubernetesPath()
+	ovnPath, err := getOVNKubernetesPath()
 	if err != nil {
 		return "", fmt.Errorf("failed to get OVN-Kubernetes path: %w", err)
 	}
 
-	projectRoot, err := GetProjectRoot()
+	projectRoot, err := getProjectRoot()
 	if err != nil {
 		return "", fmt.Errorf("failed to get project root: %w", err)
 	}

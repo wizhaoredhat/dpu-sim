@@ -14,15 +14,16 @@ import (
 func EnsureDependencies(cfg *config.Config) error {
 	// Create a local executor
 	exec := platform.NewLocalExecutor()
-	deps, err := getDependencies(cfg)
+	deps, err := getRequiredDependencies(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to get dependencies: %w", err)
 	}
 	return platform.EnsureDependenciesWithExecutor(exec, deps, cfg)
 }
 
-// getDependencies returns the list of dependencies needed by dpu-sim
-func getDependencies(cfg *config.Config) ([]platform.Dependency, error) {
+// getRequiredDependencies returns the list of dependencies needed by dpu-sim
+func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) {
+	// Common dependencies needed by the tool
 	deps := []platform.Dependency{
 		{
 			Name:        "wget",
@@ -55,10 +56,12 @@ func getDependencies(cfg *config.Config) ([]platform.Dependency, error) {
 			InstallFunc: linux.InstallOpenVSwitch,
 		},
 	}
+
 	mode, err := cfg.GetDeploymentMode()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get deployment mode: %w", err)
 	}
+
 	switch mode {
 	case config.VMDeploymentMode:
 		deps = append(deps, platform.Dependency{

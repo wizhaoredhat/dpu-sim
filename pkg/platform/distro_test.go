@@ -162,18 +162,18 @@ VERSION_ID=43`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Parse(tt.content)
+			got := ParseOSRelease(tt.content)
 			if got.ID != tt.want.ID {
-				t.Errorf("Parse() ID = %v, want %v", got.ID, tt.want.ID)
+				t.Errorf("ParseOSRelease() ID = %v, want %v", got.ID, tt.want.ID)
 			}
 			if got.VersionID != tt.want.VersionID {
-				t.Errorf("Parse() VersionID = %v, want %v", got.VersionID, tt.want.VersionID)
+				t.Errorf("ParseOSRelease() VersionID = %v, want %v", got.VersionID, tt.want.VersionID)
 			}
 			if got.IDLike != tt.want.IDLike {
-				t.Errorf("Parse() IDLike = %v, want %v", got.IDLike, tt.want.IDLike)
+				t.Errorf("ParseOSRelease() IDLike = %v, want %v", got.IDLike, tt.want.IDLike)
 			}
 			if got.PackageManager != tt.want.PackageManager {
-				t.Errorf("Parse() PackageManager = %v, want %v", got.PackageManager, tt.want.PackageManager)
+				t.Errorf("ParseOSRelease() PackageManager = %v, want %v", got.PackageManager, tt.want.PackageManager)
 			}
 		})
 	}
