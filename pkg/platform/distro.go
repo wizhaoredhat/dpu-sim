@@ -3,12 +3,8 @@ package platform
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
-
-	"github.com/wizhao/dpu-sim/pkg/ssh"
 )
 
 // Architecture represents a CPU architecture
@@ -73,12 +69,11 @@ func DetectPackageManager(distro *Distro) string {
 	}
 }
 
-// Detect detects the Linux distribution of a remote machine via SSH
-func Detect(sshClient *ssh.SSHClient, machineIP string) (*Distro, error) {
+// DetectDistro detects the Linux distribution using the provided executor.
+// This works uniformly across local, SSH, and Docker executors.
+func DetectDistro(exec CommandExecutor) (*Distro, error) {
 	// Read /etc/os-release which is standard on most modern Linux distributions
-	script := `cat /etc/os-release`
-
-	stdout, stderr, err := sshClient.ExecuteWithTimeout(machineIP, script, 30*time.Second)
+	stdout, stderr, err := exec.ExecuteWithTimeout("cat /etc/os-release", 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read /etc/os-release: %w, stderr: %s", err, stderr)
 	}
@@ -86,26 +81,7 @@ func Detect(sshClient *ssh.SSHClient, machineIP string) (*Distro, error) {
 	distro := Parse(stdout)
 
 	// Detect architecture using uname -m
-	arch, stderr, err := sshClient.ExecuteWithTimeout(machineIP, "uname -m", 10*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("failed to detect architecture: %w, stderr: %s", err, stderr)
-	}
-	distro.Architecture = Architecture(strings.TrimSpace(arch))
-
-	return distro, nil
-}
-
-// DetectLocalDistro detects the Linux distribution of the local machine
-func DetectLocalDistro() (*Distro, error) {
-	content, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read /etc/os-release: %w", err)
-	}
-
-	distro := Parse(string(content))
-
-	// Detect architecture using uname -m
-	arch, err := DetectLocalArchitecture()
+	arch, err := DetectArchitecture(exec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect architecture: %w", err)
 	}
@@ -114,13 +90,22 @@ func DetectLocalDistro() (*Distro, error) {
 	return distro, nil
 }
 
-// DetectLocalArchitecture detects the CPU architecture of the local machine
-func DetectLocalArchitecture() (Architecture, error) {
-	out, err := exec.Command("uname", "-m").Output()
+// DetectArchitecture detects the CPU architecture using the provided executor.
+func DetectArchitecture(exec CommandExecutor) (Architecture, error) {
+	stdout, _, err := exec.ExecuteWithTimeout("uname -m", 10*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("failed to detect architecture: %w", err)
 	}
-	return Architecture(strings.TrimSpace(string(out))), nil
+
+	arch := strings.TrimSpace(stdout)
+	switch arch {
+	case "x86_64":
+		return X86_64, nil
+	case "aarch64":
+		return AARCH64, nil
+	default:
+		return Architecture(arch), nil
+	}
 }
 
 // Parse parses the contents of /etc/os-release and returns a Distro

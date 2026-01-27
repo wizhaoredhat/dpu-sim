@@ -99,7 +99,7 @@ func (e *LocalExecutor) GetDistro() (*Distro, error) {
 	if e.cachedDistro != nil {
 		return e.cachedDistro, nil
 	}
-	distro, err := DetectLocalDistro()
+	distro, err := DetectDistro(e)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func (e *LocalExecutor) GetDistro() (*Distro, error) {
 
 // GetArchitecture returns the architecture of the local system
 func (e *LocalExecutor) GetArchitecture() (Architecture, error) {
-	return DetectLocalArchitecture()
+	return DetectArchitecture(e)
 }
 
 // String returns a description of this executor
@@ -190,46 +190,17 @@ func (e *SSHExecutor) GetDistro() (*Distro, error) {
 	if e.cachedDistro != nil {
 		return e.cachedDistro, nil
 	}
-
-	// Read /etc/os-release from the remote machine
-	stdout, stderr, err := e.ExecuteWithTimeout("cat /etc/os-release", 10*time.Second)
+	distro, err := DetectDistro(e)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read /etc/os-release: %w, stderr: %s", err, stderr)
+		return nil, err
 	}
-
-	// Parse the os-release content
-	distro, err := ParseOSRelease(stdout)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse os-release: %w", err)
-	}
-
-	// Detect architecture
-	arch, err := e.GetArchitecture()
-	if err != nil {
-		return nil, fmt.Errorf("failed to detect architecture: %w", err)
-	}
-	distro.Architecture = arch
-
 	e.cachedDistro = distro
 	return distro, nil
 }
 
 // GetArchitecture returns the architecture of the remote system
 func (e *SSHExecutor) GetArchitecture() (Architecture, error) {
-	stdout, _, err := e.ExecuteWithTimeout("uname -m", 10*time.Second)
-	if err != nil {
-		return "", fmt.Errorf("failed to get architecture: %w", err)
-	}
-
-	arch := strings.TrimSpace(stdout)
-	switch arch {
-	case "x86_64":
-		return X86_64, nil
-	case "aarch64":
-		return AARCH64, nil
-	default:
-		return Architecture(arch), nil
-	}
+	return DetectArchitecture(e)
 }
 
 // String returns a description of this executor
@@ -317,46 +288,17 @@ func (e *DockerExecutor) GetDistro() (*Distro, error) {
 	if e.cachedDistro != nil {
 		return e.cachedDistro, nil
 	}
-
-	// Read /etc/os-release from the container
-	stdout, stderr, err := e.ExecuteWithTimeout("cat /etc/os-release", 10*time.Second)
+	distro, err := DetectDistro(e)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read /etc/os-release: %w, stderr: %s", err, stderr)
+		return nil, err
 	}
-
-	// Parse the os-release content
-	distro, err := ParseOSRelease(stdout)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse os-release: %w", err)
-	}
-
-	// Detect architecture
-	arch, err := e.GetArchitecture()
-	if err != nil {
-		return nil, fmt.Errorf("failed to detect architecture: %w", err)
-	}
-	distro.Architecture = arch
-
 	e.cachedDistro = distro
 	return distro, nil
 }
 
 // GetArchitecture returns the architecture of the container
 func (e *DockerExecutor) GetArchitecture() (Architecture, error) {
-	stdout, _, err := e.ExecuteWithTimeout("uname -m", 10*time.Second)
-	if err != nil {
-		return "", fmt.Errorf("failed to get architecture: %w", err)
-	}
-
-	arch := strings.TrimSpace(stdout)
-	switch arch {
-	case "x86_64":
-		return X86_64, nil
-	case "aarch64":
-		return AARCH64, nil
-	default:
-		return Architecture(arch), nil
-	}
+	return DetectArchitecture(e)
 }
 
 // String returns a description of this executor
