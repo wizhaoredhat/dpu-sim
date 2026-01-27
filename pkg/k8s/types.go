@@ -2,8 +2,6 @@ package k8s
 
 import (
 	"github.com/wizhao/dpu-sim/pkg/config"
-	"github.com/wizhao/dpu-sim/pkg/platform"
-	"github.com/wizhao/dpu-sim/pkg/ssh"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -20,9 +18,7 @@ type K8sClient struct {
 
 // K8sMachineManager manages Kubernetes cluster operations
 type K8sMachineManager struct {
-	config      *config.Config
-	sshClient   *ssh.SSHClient
-	linuxDistro *platform.Distro
+	config *config.Config
 }
 
 // ClusterStatus represents the status of a Kubernetes cluster
@@ -59,8 +55,6 @@ type ControlPlaneInfo struct {
 // NewK8sMachineManager creates a new Kubernetes manager
 func NewK8sMachineManager(cfg *config.Config) *K8sMachineManager {
 	return &K8sMachineManager{
-		config:      cfg,
-		sshClient:   ssh.NewSSHClient(&cfg.SSH),
-		linuxDistro: nil,
+		config: cfg,
 	}
 }

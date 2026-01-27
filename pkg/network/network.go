@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wizhao/dpu-sim/pkg/ssh"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // InterfaceInfo represents detailed information about a network interface
@@ -58,29 +58,26 @@ func (i *InterfaceInfo) String() string {
 	return sb.String()
 }
 
-// GetInterfaceByIP retrieves interface information for the interface that has the specified IP address.
-// It SSHs into the machine at targetMachineIP and finds the interface with searchIP.
-func GetInterfaceByIP(sshClient *ssh.SSHClient, targetMachineIP, searchIP string) (*InterfaceInfo, error) {
-	return GetInterfaceByIPWithTimeout(sshClient, targetMachineIP, searchIP, 30*time.Second)
+// GetInterfaceByIP retrieves interface information for the interface that has the specified IP address
+// using a CommandExecutor.
+func GetInterfaceByIP(exec platform.CommandExecutor, searchIP string) (*InterfaceInfo, error) {
+	return getInterfaceByIPWithTimeout(exec, searchIP, 30*time.Second)
 }
 
-// GetInterfaceByIPWithTimeout retrieves interface information with a custom timeout.
-func GetInterfaceByIPWithTimeout(sshClient *ssh.SSHClient, targetMachineIP, searchIP string, timeout time.Duration) (*InterfaceInfo, error) {
-	// Use 'ip -j addr show' to get JSON output of all interfaces
+// getInterfaceByIPWithTimeout retrieves interface information with a custom timeout using an executor.
+func getInterfaceByIPWithTimeout(exec platform.CommandExecutor, searchIP string, timeout time.Duration) (*InterfaceInfo, error) {
 	cmd := "ip -j addr show"
 
-	stdout, stderr, err := sshClient.ExecuteWithTimeout(targetMachineIP, cmd, timeout)
+	stdout, stderr, err := exec.ExecuteWithTimeout(cmd, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute ip command: %w, stderr: %s", err, stderr)
 	}
 
-	// Parse JSON output
 	var interfaces []InterfaceInfo
 	if err := json.Unmarshal([]byte(stdout), &interfaces); err != nil {
 		return nil, fmt.Errorf("failed to parse ip command output: %w", err)
 	}
 
-	// Find the interface with the matching IP address
 	for _, iface := range interfaces {
 		for _, addr := range iface.Addresses {
 			if addr.Local == searchIP {
@@ -94,15 +91,15 @@ func GetInterfaceByIPWithTimeout(sshClient *ssh.SSHClient, targetMachineIP, sear
 }
 
 // GetAllInterfaces retrieves information about all network interfaces on a remote machine.
-func GetAllInterfaces(sshClient *ssh.SSHClient, targetMachineIP string) ([]InterfaceInfo, error) {
-	return GetAllInterfacesWithTimeout(sshClient, targetMachineIP, 30*time.Second)
+func GetAllInterfaces(exec platform.CommandExecutor) ([]InterfaceInfo, error) {
+	return getAllInterfacesWithTimeout(exec, 30*time.Second)
 }
 
-// GetAllInterfacesWithTimeout retrieves all interface information with a custom timeout.
-func GetAllInterfacesWithTimeout(sshClient *ssh.SSHClient, targetMachineIP string, timeout time.Duration) ([]InterfaceInfo, error) {
+// getAllInterfacesWithTimeout retrieves all interface information with a custom timeout.
+func getAllInterfacesWithTimeout(exec platform.CommandExecutor, timeout time.Duration) ([]InterfaceInfo, error) {
 	cmd := "ip -j addr show"
 
-	stdout, stderr, err := sshClient.ExecuteWithTimeout(targetMachineIP, cmd, timeout)
+	stdout, stderr, err := exec.ExecuteWithTimeout(cmd, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute ip command: %w, stderr: %s", err, stderr)
 	}
@@ -116,15 +113,15 @@ func GetAllInterfacesWithTimeout(sshClient *ssh.SSHClient, targetMachineIP strin
 }
 
 // GetInterfaceByName retrieves interface information by name from a remote machine.
-func GetInterfaceByName(sshClient *ssh.SSHClient, targetMachineIP, ifaceName string) (*InterfaceInfo, error) {
-	return GetInterfaceByNameWithTimeout(sshClient, targetMachineIP, ifaceName, 30*time.Second)
+func GetInterfaceByName(exec platform.CommandExecutor, ifaceName string) (*InterfaceInfo, error) {
+	return getInterfaceByNameWithTimeout(exec, ifaceName, 30*time.Second)
 }
 
-// GetInterfaceByNameWithTimeout retrieves interface information by name with a custom timeout.
-func GetInterfaceByNameWithTimeout(sshClient *ssh.SSHClient, targetMachineIP, ifaceName string, timeout time.Duration) (*InterfaceInfo, error) {
+// getInterfaceByNameWithTimeout retrieves interface information by name with a custom timeout.
+func getInterfaceByNameWithTimeout(exec platform.CommandExecutor, ifaceName string, timeout time.Duration) (*InterfaceInfo, error) {
 	cmd := fmt.Sprintf("ip -j addr show dev %s", ifaceName)
 
-	stdout, stderr, err := sshClient.ExecuteWithTimeout(targetMachineIP, cmd, timeout)
+	stdout, stderr, err := exec.ExecuteWithTimeout(cmd, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute ip command: %w, stderr: %s", err, stderr)
 	}

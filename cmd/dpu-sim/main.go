@@ -10,8 +10,8 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/kind"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 	"github.com/wizhao/dpu-sim/pkg/requirements"
-	"github.com/wizhao/dpu-sim/pkg/ssh"
 	"github.com/wizhao/dpu-sim/pkg/vm"
 )
 
@@ -232,8 +232,6 @@ func doVMDeploy(cfg *config.Config, vmMgr *vm.VMManager) error {
 
 	// Wait for VMs to get IP addresses
 	fmt.Println("\n=== Waiting for VMs to boot and get IPs ===")
-	sshClient := ssh.NewSSHClient(&cfg.SSH)
-
 	for _, vmCfg := range cfg.VMs {
 		fmt.Printf("Waiting for %s to get an IP address...\n", vmCfg.Name)
 		ip, err := vmMgr.WaitForVMIP(vmCfg.Name, config.MgmtNetworkName, 5*time.Minute)
@@ -242,10 +240,10 @@ func doVMDeploy(cfg *config.Config, vmMgr *vm.VMManager) error {
 		}
 		fmt.Printf("✓ %s IP: %s\n", vmCfg.Name, ip)
 
-		// Wait for SSH to be ready
+		exec := platform.NewSSHExecutor(&cfg.SSH, ip)
 		fmt.Printf("Waiting for SSH on %s...\n", vmCfg.Name)
-		if err := sshClient.WaitForSSH(ip, 5*time.Minute); err != nil {
-			return fmt.Errorf("failed to connect to SSH on %s: %w", vmCfg.Name, err)
+		if err := exec.WaitUntilReady(5 * time.Minute); err != nil {
+			return fmt.Errorf("failed to wait for SSH on %s: %w", vmCfg.Name, err)
 		}
 		fmt.Printf("✓ SSH ready on %s\n", vmCfg.Name)
 	}

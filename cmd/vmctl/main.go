@@ -5,10 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 	"github.com/wizhao/dpu-sim/pkg/ssh"
 	"github.com/wizhao/dpu-sim/pkg/vm"
 )
@@ -177,8 +179,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	// Execute command via SSH
-	sshClient := ssh.NewSSHClient(&cfg.SSH)
-	stdout, stderr, err := sshClient.Execute(ip, command)
+	exec := platform.NewSSHExecutor(&cfg.SSH, ip)
+	if err := exec.WaitUntilReady(10 * time.Second); err != nil {
+		return fmt.Errorf("failed to wait for SSH on %s: %w", vmName, err)
+	}
+	stdout, stderr, err := exec.Execute(command)
 
 	// Print output
 	if stdout != "" {

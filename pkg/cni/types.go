@@ -5,7 +5,6 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
-	"github.com/wizhao/dpu-sim/pkg/ssh"
 )
 
 // CNIType represents the type of CNI
@@ -19,8 +18,7 @@ const (
 
 // CNIManager manages CNI installations
 type CNIManager struct {
-	config    *config.Config
-	sshClient *ssh.SSHClient
+	config *config.Config
 	// k8sClient is an optional Kubernetes client for direct API access
 	k8sClient *k8s.K8sClient
 }
@@ -42,7 +40,6 @@ func NewCNIManagerWithKubeconfig(cfg *config.Config, kubeconfigContent string) (
 
 	return &CNIManager{
 		config:    cfg,
-		sshClient: ssh.NewSSHClient(&cfg.SSH),
 		k8sClient: k8sClient,
 	}, nil
 }
@@ -60,7 +57,6 @@ func NewCNIManagerWithKubeconfigFile(cfg *config.Config, kubeconfigPath string) 
 
 	return &CNIManager{
 		config:    cfg,
-		sshClient: ssh.NewSSHClient(&cfg.SSH),
 		k8sClient: k8sClient,
 	}, nil
 }

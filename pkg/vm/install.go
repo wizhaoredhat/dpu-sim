@@ -2,10 +2,12 @@ package vm
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // InstallKubernetes installs the software components on a VM
@@ -22,12 +24,12 @@ func (m *VMManager) InstallKubernetes(vmName string) error {
 		}
 
 		// Get VM IP
-		ip, err := m.GetVMMgmtIP(vmCfg.Name)
+		mgmtIP, err := m.GetVMMgmtIP(vmCfg.Name)
 		if err != nil {
 			return fmt.Errorf("failed to get IP for %s: %w", vmCfg.Name, err)
 		}
 
-		fmt.Printf("\n--- Installing on %s (%s) ---\n", vmCfg.Name, ip)
+		fmt.Printf("\n--- Installing on %s (%s) ---\n", vmCfg.Name, mgmtIP)
 
 		// Get Kubernetes version from config
 		k8sVersion := m.config.Kubernetes.Version
@@ -35,8 +37,13 @@ func (m *VMManager) InstallKubernetes(vmName string) error {
 			return fmt.Errorf("Kubernetes version is not set")
 		}
 
+		exec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
+		if err := exec.WaitUntilReady(5 * time.Minute); err != nil {
+			return fmt.Errorf("failed to wait for SSH on %s: %w", vmCfg.Name, err)
+		}
+
 		// Install Kubernetes
-		if err := k8sMgr.InstallKubernetes(ip, vmCfg.Name, k8sVersion); err != nil {
+		if err := k8sMgr.InstallKubernetes(exec, vmCfg.Name, k8sVersion); err != nil {
 			return fmt.Errorf("failed to install Kubernetes on %s: %w", vmCfg.Name, err)
 		}
 	}
@@ -60,11 +67,12 @@ func (m *VMManager) setupOVNBrExForCluster(clusterRoleMapping config.ClusterRole
 			fmt.Printf("Setting up OVN br-ex on %s (%s) - Mgmt IP: %s, K8s IP: %s\n",
 				vmCfg.Name, role, vmMgmtIP, vmK8sIP)
 
-			if err := k8sMgr.SetupOVNBrEx(vmMgmtIP, vmMgmtIP, vmK8sIP); err != nil {
+			exec := platform.NewSSHExecutor(&m.config.SSH, vmMgmtIP)
+			if err := k8sMgr.SetupOVNBrEx(exec, vmMgmtIP, vmK8sIP); err != nil {
 				return fmt.Errorf("failed to setup OVN br-ex on %s: %w", vmCfg.Name, err)
 			}
 
-			k8sMgr.PrintOVNBrExStatus(vmMgmtIP)
+			k8sMgr.PrintOVNBrExStatus(exec)
 		}
 	}
 	return nil
@@ -110,8 +118,10 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("failed to get K8s IP for %s: %w", firstMaster.Name, err)
 	}
 
+	firstMasterExec := platform.NewSSHExecutor(&m.config.SSH, firstMasterMgmtIP)
+
 	fmt.Printf("=== Initializing first control plane node: %s ===\n", firstMaster.Name)
-	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMaster.Name, firstMasterMgmtIP, firstMasterK8sIP, podCIDR, serviceCIDR)
+	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMasterExec, firstMaster.Name, firstMasterK8sIP, podCIDR, serviceCIDR)
 	if err != nil {
 		return fmt.Errorf("failed to initialize control plane on %s: %w", firstMaster.Name, err)
 	}
@@ -138,7 +148,8 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 				return fmt.Errorf("failed to get mgmt IP for %s: %w", masterVM.Name, err)
 			}
 
-			if err := k8sMgr.JoinControlPlane(masterVM.Name, masterMgmtIP, clusterInfo); err != nil {
+			masterExec := platform.NewSSHExecutor(&m.config.SSH, masterMgmtIP)
+			if err := k8sMgr.JoinControlPlane(masterExec, masterVM.Name, clusterInfo); err != nil {
 				return fmt.Errorf("failed to join control plane on %s: %w", masterVM.Name, err)
 			}
 		}
@@ -153,7 +164,9 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 			if err != nil {
 				return fmt.Errorf("failed to get mgmt IP for %s: %w", workerVM.Name, err)
 			}
-			if err := k8sMgr.JoinWorker(workerVM.Name, workerMgmtIP, clusterInfo); err != nil {
+
+			workerExec := platform.NewSSHExecutor(&m.config.SSH, workerMgmtIP)
+			if err := k8sMgr.JoinWorker(workerExec, workerVM.Name, clusterInfo); err != nil {
 				return fmt.Errorf("failed to join worker node %s: %w", workerVM.Name, err)
 			}
 		}
