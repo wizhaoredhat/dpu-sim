@@ -2,10 +2,14 @@ package vm
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // CreateVM creates a complete VM including disk, cloud-init ISO, and domain
@@ -32,8 +36,23 @@ func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
 		return fmt.Errorf("failed to create cloud-init ISO: %w", err)
 	}
 
+	spec, err := hostArchSpec(m.hostDistro.Architecture)
+	if err != nil {
+		return fmt.Errorf("failed to create libvirt arch spec: %w", err)
+	}
+	var nvramPath string
+	if m.hostDistro.Architecture == platform.AARCH64 && (spec.uefiLoader == "" || spec.uefiVarsTemplate == "") {
+		return fmt.Errorf("missing aarch64 UEFI firmware: install edk2/aavmf and ensure QEMU_EFI-pflash and vars template are available")
+	}
+	if spec.uefiLoader != "" && spec.uefiVarsTemplate != "" {
+		nvramPath, err = ensureUEFINvram(vmCfg.Name, spec.uefiVarsTemplate)
+		if err != nil {
+			return fmt.Errorf("failed to prepare UEFI NVRAM: %w", err)
+		}
+	}
+
 	// Generate libvirt domain XML
-	xml := m.GenerateVMXML(vmCfg, diskPath, cloudInitPath)
+	xml := m.GenerateVMXML(vmCfg, diskPath, cloudInitPath, spec, nvramPath)
 
 	domain, err := m.conn.DomainDefineXML(xml)
 	if err != nil {
@@ -77,8 +96,134 @@ func (m *VMManager) generateNetworkInterfaces(vmCfg config.VMConfig) string {
 	return sb.String()
 }
 
+type archSpec struct {
+	libvirtArch      string
+	machine          string
+	cpuMode          string
+	emulator         string
+	uefiLoader       string
+	uefiVarsTemplate string
+	enableIOMMU      bool
+	enableAPIC       bool
+	enableACPI       bool
+}
+
+func hostArchSpec(hostArch platform.Architecture) (archSpec, error) {
+	switch hostArch {
+	case platform.AARCH64:
+		loader, varsTemplate := findAarch64UEFIFirmware()
+		return archSpec{
+			libvirtArch:      "aarch64",
+			machine:          "virt",
+			cpuMode:          "host-passthrough",
+			emulator:         "/usr/bin/qemu-system-aarch64",
+			uefiLoader:       loader,
+			uefiVarsTemplate: varsTemplate,
+			enableIOMMU:      false,
+			enableAPIC:       false,
+			enableACPI:       loader != "",
+		}, nil
+
+	case platform.X86_64:
+		return archSpec{
+			libvirtArch: "x86_64",
+			machine:     "q35",
+			cpuMode:     "host-passthrough",
+			emulator:    "/usr/libexec/qemu-kvm",
+			enableIOMMU: true,
+			enableAPIC:  true,
+			enableACPI:  true,
+		}, nil
+	default:
+		return archSpec{}, fmt.Errorf("unsupported Architecure: %v", hostArch)
+	}
+}
+
+type firmwareCandidate struct {
+	loader string
+	vars   string
+}
+
+func findAarch64UEFIFirmware() (string, string) {
+	// Common Fedora/edk2 locations
+	candidates := []firmwareCandidate{
+		{"/usr/share/AAVMF/AAVMF_CODE.fd", "/usr/share/AAVMF/AAVMF_VARS.fd"},
+		{"/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw", "/usr/share/edk2/aarch64/vars-template-pflash.raw"},
+		{"/usr/share/edk2/aarch64/QEMU_EFI-qemuvars-pflash.raw", "/usr/share/edk2/aarch64/vars-template-pflash.raw"},
+		{"/usr/share/edk2/aarch64/QEMU_EFI-pflash.qcow2", "/usr/share/edk2/aarch64/vars-template-pflash.qcow2"},
+		{"/usr/share/edk2/aarch64/QEMU_EFI-qemuvars-pflash.qcow2", "/usr/share/edk2/aarch64/vars-template-pflash.qcow2"},
+		{"/usr/share/edk2/aarch64/QEMU_EFI.fd", "/usr/share/edk2/aarch64/QEMU_VARS.fd"},
+		{"/usr/share/edk2/aarch64/edk2-aarch64-code.fd", "/usr/share/edk2/aarch64/edk2-aarch64-vars.fd"},
+		{"/usr/share/edk2/aarch64/edk2-arm-code.fd", "/usr/share/edk2/aarch64/edk2-arm-vars.fd"},
+	}
+	return findAarch64UEFIFirmwareWithStat(candidates, os.Stat)
+}
+
+func findAarch64UEFIFirmwareWithStat(candidates []firmwareCandidate, statFn func(string) (os.FileInfo, error)) (string, string) {
+	const minPflashSize = 64 * 1024 * 1024
+	for _, c := range candidates {
+		loaderInfo, err := statFn(c.loader)
+		if err != nil || loaderInfo.IsDir() {
+			continue
+		}
+		varsInfo, err := statFn(c.vars)
+		if err != nil || varsInfo.IsDir() {
+			continue
+		}
+		if loaderInfo.Size() >= minPflashSize && varsInfo.Size() >= minPflashSize {
+			return c.loader, c.vars
+		}
+	}
+	return "", ""
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func nvramPathForTemplate(vmName, templatePath string) string {
+	ext := filepath.Ext(templatePath)
+	if ext == "" {
+		ext = ".fd"
+	}
+	return filepath.Join("/var/lib/libvirt/qemu/nvram", fmt.Sprintf("%s_VARS%s", vmName, ext))
+}
+
+func ensureUEFINvram(vmName, templatePath string) (string, error) {
+	nvramPath := nvramPathForTemplate(vmName, templatePath)
+	if fileExists(nvramPath) {
+		return nvramPath, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(nvramPath), 0o755); err != nil {
+		return "", err
+	}
+	src, err := os.Open(templatePath)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(nvramPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
+	if err != nil {
+		return "", err
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, src); err != nil {
+		return "", err
+	}
+	return nvramPath, nil
+}
+
 // GenerateVMXML generates libvirt domain XML for a VM
-func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath string) string {
+func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath string, spec archSpec, nvramPath string) string {
 	var sb strings.Builder
 
 	sb.WriteString("<domain type='kvm'>\n")
@@ -87,21 +232,35 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 	sb.WriteString(fmt.Sprintf("  <vcpu>%d</vcpu>\n", vmCfg.VCPUs))
 
 	sb.WriteString("  <os>\n")
-	sb.WriteString("    <type arch='x86_64' machine='q35'>hvm</type>\n")
+	sb.WriteString(fmt.Sprintf("    <type arch='%s' machine='%s'>hvm</type>\n", spec.libvirtArch, spec.machine))
+	if spec.uefiLoader != "" {
+		sb.WriteString(fmt.Sprintf("    <loader readonly='yes' type='pflash'>%s</loader>\n", spec.uefiLoader))
+		if nvramPath != "" {
+			sb.WriteString(fmt.Sprintf("    <nvram>%s</nvram>\n", nvramPath))
+		}
+	}
 	sb.WriteString("    <boot dev='hd'/>\n")
 	sb.WriteString("  </os>\n")
 
 	sb.WriteString("  <features>\n")
-	sb.WriteString("    <acpi/>\n")
-	sb.WriteString("    <apic/>\n")
-	sb.WriteString("    <ioapic driver='qemu'/>\n")
+	if spec.enableACPI {
+		sb.WriteString("    <acpi/>\n")
+	}
+	if spec.enableAPIC {
+		sb.WriteString("    <apic/>\n")
+		sb.WriteString("    <ioapic driver='qemu'/>\n")
+	}
 	sb.WriteString("  </features>\n")
 
-	sb.WriteString("  <cpu mode='host-passthrough'/>\n")
+	if spec.cpuMode != "" {
+		sb.WriteString(fmt.Sprintf("  <cpu mode='%s'/>\n", spec.cpuMode))
+	}
 
-	sb.WriteString("  <iommu model='intel'>\n")
-	sb.WriteString("    <driver intremap='on' caching_mode='on' iotlb='on'/>\n")
-	sb.WriteString("  </iommu>\n")
+	if spec.enableIOMMU {
+		sb.WriteString("  <iommu model='intel'>\n")
+		sb.WriteString("    <driver intremap='on' caching_mode='on' iotlb='on'/>\n")
+		sb.WriteString("  </iommu>\n")
+	}
 
 	sb.WriteString("  <clock offset='utc'/>\n")
 
@@ -110,7 +269,7 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 	sb.WriteString("  <on_crash>destroy</on_crash>\n")
 
 	sb.WriteString("  <devices>\n")
-	sb.WriteString("    <emulator>/usr/libexec/qemu-kvm</emulator>\n")
+	sb.WriteString(fmt.Sprintf("    <emulator>%s</emulator>\n", spec.emulator))
 
 	sb.WriteString("    <disk type='file' device='disk'>\n")
 	sb.WriteString("      <driver name='qemu' type='qcow2'/>\n")

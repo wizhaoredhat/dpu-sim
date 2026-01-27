@@ -1,0 +1,123 @@
+networks:
+  - name: "mgmt-network"
+    type: "mgmt"
+    bridge_name: "virbr-mgmt"
+    gateway: "192.168.120.1"
+    subnet_mask: "255.255.255.0"
+    dhcp_start: "192.168.120.10"
+    dhcp_end: "192.168.120.100"
+    mode: "nat"
+    nic_model: "virtio" # virtio for management network
+    attach_to: "any" # Attach to all VMs: "dpu", "host", or "any"
+
+  - name: "ovn-network"
+    type: "k8s"
+    bridge_name: "ovn"
+    gateway: "192.168.123.1"
+    subnet_mask: "255.255.255.0"
+    dhcp_start: "192.168.123.50"
+    dhcp_end: "192.168.123.100"
+    mode: "nat"
+    nic_model: "igb" # Intel 82576 emulated NIC
+    use_ovs: false
+    attach_to: "any"
+
+  - name: "data-l2-network"
+    type: "layer2"
+    bridge_name: "ovs-data"
+    mode: "l2-bridge"
+    nic_model: "igb" # Intel 82576 emulated NIC
+    use_ovs: true
+    attach_to: "dpu"
+
+vms:
+  - name: "master-1"
+    type: "host"
+    k8s_cluster: "cluster-1"
+    k8s_role: "master"
+    k8s_node_mac: "52:54:00:00:01:11"
+    k8s_node_ip: "192.168.123.11"
+    memory: 4096 # MB
+    vcpus: 2
+    disk_size: 20 # GB
+
+  - name: "master-2"
+    type: "host"
+    k8s_cluster: "cluster-2"
+    k8s_role: "master"
+    k8s_node_mac: "52:54:00:00:02:11"
+    k8s_node_ip: "192.168.123.21"
+    memory: 4096 # MB
+    vcpus: 2
+    disk_size: 20 # GB
+
+  - name: "host-1-1"
+    type: "host"
+    k8s_cluster: "cluster-1"
+    k8s_role: "worker"
+    k8s_node_mac: "52:54:00:00:01:12"
+    k8s_node_ip: "192.168.123.12"
+    memory: 2048 # MB
+    vcpus: 2
+    disk_size: 20 # GB
+
+  - name: "dpu-1-1"
+    type: "dpu"
+    k8s_cluster: "cluster-2"
+    k8s_role: "worker"
+    k8s_node_mac: "52:54:00:00:02:12"
+    k8s_node_ip: "192.168.123.22"
+    host: "host-1-1"
+    memory: 2048 # MB
+    vcpus: 2
+    disk_size: 20 # GB
+
+  - name: "host-2-1"
+    type: "host"
+    k8s_cluster: "cluster-1"
+    k8s_role: "worker"
+    k8s_node_mac: "52:54:00:00:01:13"
+    k8s_node_ip: "192.168.123.13"
+    memory: 2048 # MB
+    vcpus: 2
+    disk_size: 20 # GB
+
+  - name: "dpu-2-1"
+    type: "dpu"
+    k8s_cluster: "cluster-2"
+    k8s_role: "worker"
+    k8s_node_mac: "52:54:00:00:02:13"
+    k8s_node_ip: "192.168.123.23"
+    host: "host-2-1"
+    memory: 2048 # MB
+    vcpus: 2
+    disk_size: 20 # GB
+
+operating_system:
+  # Download from https://download.fedoraproject.org/pub/fedora/linux/releases/
+  image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2
+  image_name: "Fedora-aarch64.qcow2"
+
+ssh:
+  user: "root"
+  key_path: "~/.ssh/id_rsa"
+  password: "redhat"
+
+kubernetes:
+  version: "1.33"
+  kubeconfig_dir: "kubeconfig"
+  clusters:
+    - name: "cluster-1"
+      pod_cidr: "10.244.0.0/16"
+      service_cidr: "10.245.0.0/16"
+      cni: "ovn-kubernetes"
+    - name: "cluster-2"
+      pod_cidr: "10.246.0.0/16"
+      service_cidr: "10.247.0.0/16"
+      cni: "ovn-kubernetes"
+
+registry:
+  containers:
+    - name: "ovn-kube"
+      cni: "ovn-kubernetes"
+      tag: "ovn-kube:dpu-sim"

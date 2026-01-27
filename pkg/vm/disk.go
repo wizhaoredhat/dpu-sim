@@ -213,6 +213,28 @@ func DeleteCloudInitISO(vmName string) error {
 	return nil
 }
 
+// DeleteUEFINvram deletes any per-VM UEFI NVRAM files.
+func DeleteUEFINvram(vmName string) error {
+	pattern := filepath.Join("/var/lib/libvirt/qemu/nvram", fmt.Sprintf("%s_VARS*", vmName))
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("failed to glob UEFI NVRAM files for %s: %w", vmName, err)
+	}
+	if len(matches) == 0 {
+		fmt.Printf("✓ UEFI NVRAM for %s does not exist, skipping deletion\n", vmName)
+		return nil
+	}
+
+	for _, path := range matches {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to delete UEFI NVRAM %s: %w", path, err)
+		}
+		fmt.Printf("✓ Deleted UEFI NVRAM: %s\n", path)
+	}
+
+	return nil
+}
+
 // GetImagePath returns the path where an OS image should be stored
 func GetImagePath(osConfig config.OSConfig) string {
 	filename := filepath.Base(osConfig.ImageName)

@@ -105,6 +105,12 @@ func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) 
 			CheckCmd:    []string{"genisoimage", "-version"},
 			InstallFunc: linux.InstallGenericPackage,
 		})
+		deps = append(deps, platform.Dependency{
+			Name:        "aarch64-uefi-firmware",
+			Reason:      "Required to boot aarch64 VMs with UEFI firmware",
+			CheckFunc:   linux.CheckAarch64UEFIFirmware,
+			InstallFunc: linux.InstallAarch64UEFIFirmware,
+		})
 	case config.KindDeploymentMode:
 		deps = append(deps, platform.Dependency{
 			Name:        "kubectl",
