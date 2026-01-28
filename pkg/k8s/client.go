@@ -10,6 +10,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/wizhao/dpu-sim/pkg/log"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -186,13 +188,13 @@ func (c *K8sClient) applyResource(ctx context.Context, obj *unstructured.Unstruc
 			if err != nil {
 				return fmt.Errorf("failed to update: %w", err)
 			}
-			fmt.Printf("    Updated %s/%s in namespace %s\n", gvk.Kind, obj.GetName(), namespace)
+			log.Debug("Updated %s/%s in namespace %s", gvk.Kind, obj.GetName(), namespace)
 		} else {
 			_, err = resourceClient.Namespace(namespace).Create(ctx, obj, metav1.CreateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to create: %w", err)
 			}
-			fmt.Printf("    Created %s/%s in namespace %s\n", gvk.Kind, obj.GetName(), namespace)
+			log.Debug("Created %s/%s in namespace %s", gvk.Kind, obj.GetName(), namespace)
 		}
 	} else {
 		// Cluster-scoped resource
@@ -203,13 +205,13 @@ func (c *K8sClient) applyResource(ctx context.Context, obj *unstructured.Unstruc
 			if err != nil {
 				return fmt.Errorf("failed to update: %w", err)
 			}
-			fmt.Printf("    Updated %s/%s\n", gvk.Kind, obj.GetName())
+			log.Debug("Updated %s/%s", gvk.Kind, obj.GetName())
 		} else {
 			_, err = resourceClient.Create(ctx, obj, metav1.CreateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to create: %w", err)
 			}
-			fmt.Printf("    Created %s/%s\n", gvk.Kind, obj.GetName())
+			log.Debug("Created %s/%s", gvk.Kind, obj.GetName())
 		}
 	}
 
@@ -298,23 +300,39 @@ func (c *K8sClient) WaitForPodsReady(namespace, labelSelector string, timeout ti
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	fmt.Printf("Waiting for pods in namespace: %s label: %s to be ready...\n", namespace, labelSelector)
+	if labelSelector != "" {
+		log.Info("Waiting for pods in namespace: %s label: %s to be ready...", namespace, labelSelector)
+	} else {
+		log.Info("Waiting for all pods in namespace: %s to be ready...", namespace)
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for pods in namespace: %s label: %s", namespace, labelSelector)
+			if labelSelector != "" {
+				return fmt.Errorf("timeout waiting for pods in namespace: %s label: %s", namespace, labelSelector)
+			} else {
+				return fmt.Errorf("timeout waiting for all pods in namespace: %s", namespace)
+			}
 		case <-ticker.C:
 			pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 				LabelSelector: labelSelector,
 			})
 			if err != nil {
-				fmt.Printf("Warning: failed to list pods in namespace: %s label: %s: %v\n", namespace, labelSelector, err)
+				if labelSelector != "" {
+					log.Warn("Warning: failed to list pods in namespace: %s label: %s: %v", namespace, labelSelector, err)
+				} else {
+					log.Warn("Warning: failed to list all pods in namespace: %s: %v", namespace, err)
+				}
 				continue
 			}
 
 			if len(pods.Items) == 0 {
-				fmt.Printf("No pods found in namespace: %s label: %s\n", namespace, labelSelector)
+				if labelSelector != "" {
+					log.Debug("No pods found in namespace: %s label: %s", namespace, labelSelector)
+				} else {
+					log.Debug("No pods found in namespace: %s", namespace)
+				}
 				continue
 			}
 
@@ -328,9 +346,18 @@ func (c *K8sClient) WaitForPodsReady(namespace, labelSelector string, timeout ti
 				}
 			}
 
-			fmt.Printf("✓ Pods in namespace: %s label: %s ready: %d/%d\n", namespace, labelSelector, readyCount, len(pods.Items))
+			if labelSelector != "" {
+				log.Debug("✓ Pods in namespace: %s label: %s ready: %d/%d", namespace, labelSelector, readyCount, len(pods.Items))
+			} else {
+				log.Debug("✓ All Pods in namespace: %s ready: %d/%d", namespace, readyCount, len(pods.Items))
+			}
 
 			if allReady {
+				if labelSelector != "" {
+					log.Info("✓ Pods in namespace: %s label: %s are ready", namespace, labelSelector)
+				} else {
+					log.Info("✓ All Pods in namespace: %s are ready", namespace)
+				}
 				return nil
 			}
 		}
@@ -579,6 +606,6 @@ func (c *K8sClient) RolloutRestartDaemonSet(namespace, name string) error {
 		return fmt.Errorf("failed to update daemonset %s/%s: %w", namespace, name, err)
 	}
 
-	fmt.Printf("✓ Triggered rollout restart for daemonset %s/%s\n", namespace, name)
+	log.Info("✓ Triggered rollout restart for daemonset %s/%s", namespace, name)
 	return nil
 }

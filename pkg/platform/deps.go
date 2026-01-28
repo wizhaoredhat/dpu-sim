@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/log"
 )
 
 // getProjectRoot returns the root directory of the dpu-sim project
@@ -89,13 +90,13 @@ func installDependency(cmdExec CommandExecutor, dep Dependency, distro *Distro, 
 		return fmt.Errorf("no install function defined for %s", dep.Name)
 	}
 
-	fmt.Printf("Installing %s for %s on %s...\n", dep.Name, distro.ID, cmdExec.String())
+	log.Info("Installing %s for %s on %s...", dep.Name, distro.ID, cmdExec.String())
 
 	if err := dep.InstallFunc(cmdExec, distro, cfg, &dep); err != nil {
 		return fmt.Errorf("failed to install %s: %w. Needed for %s", dep.Name, err, dep.Reason)
 	}
 
-	fmt.Printf("✓ %s installed\n", dep.Name)
+	log.Info("✓ %s installed", dep.Name)
 	return nil
 }
 
@@ -105,7 +106,7 @@ func installDependency(cmdExec CommandExecutor, dep Dependency, distro *Distro, 
 // cfg provides configuration including version information for dependencies
 // Returns an error if any dependency cannot be installed
 func EnsureDependenciesWithExecutor(cmdExec CommandExecutor, deps []Dependency, cfg *config.Config) error {
-	fmt.Printf("Checking dependencies on %s...\n", cmdExec.String())
+	log.Debug("Checking dependencies on %s...", cmdExec.String())
 
 	// Ensure ~/.local/bin is in PATH for pip user installs (only affects local executor)
 	ensureLocalBinInPath()
@@ -115,15 +116,15 @@ func EnsureDependenciesWithExecutor(cmdExec CommandExecutor, deps []Dependency, 
 	if err != nil {
 		return fmt.Errorf("failed to detect distribution on %s: %w", cmdExec.String(), err)
 	}
-	fmt.Printf("✓ Detected Linux distribution: %s %s (package manager: %s, architecture: %s)\n", distro.ID, distro.VersionID, distro.PackageManager, distro.Architecture)
+	log.Info("✓ Detected Linux distribution: %s %s (package manager: %s, architecture: %s)", distro.ID, distro.VersionID, distro.PackageManager, distro.Architecture)
 
 	var missing []Dependency
 	for _, dep := range deps {
 		result := checkDependency(cmdExec, dep, distro, cfg)
 		if result.Installed {
-			fmt.Printf("✓ %s is installed\n", dep.Name)
+			log.Info("✓ %s is installed", dep.Name)
 		} else {
-			fmt.Printf("✗ %s is not installed\n", dep.Name)
+			log.Debug("✗ %s is not installed", dep.Name)
 			missing = append(missing, dep)
 		}
 	}
@@ -133,7 +134,7 @@ func EnsureDependenciesWithExecutor(cmdExec CommandExecutor, deps []Dependency, 
 		for _, dep := range missing {
 			names = append(names, dep.Name)
 		}
-		fmt.Printf("Installing missing dependencies: %s\n", strings.Join(names, ", "))
+		log.Info("Installing missing dependencies: %s", strings.Join(names, ", "))
 		for _, dep := range missing {
 			if err := installDependency(cmdExec, dep, distro, cfg); err != nil {
 				return fmt.Errorf("failed to install dependency %s: %w", dep.Name, err)
@@ -146,7 +147,7 @@ func EnsureDependenciesWithExecutor(cmdExec CommandExecutor, deps []Dependency, 
 		}
 	}
 
-	fmt.Println("✓ All dependencies are available")
+	log.Info("✓ All dependencies are available")
 	return nil
 }
 
@@ -172,7 +173,7 @@ func isOVNKubernetesPopulated(ovnPath string) bool {
 
 // initOVNKubernetesSubmodule initializes and updates the ovn-kubernetes git submodule
 func initOVNKubernetesSubmodule(projectRoot string) error {
-	fmt.Println("Initializing ovn-kubernetes git submodule...")
+	log.Debug("Initializing ovn-kubernetes git submodule...")
 
 	initCmd := exec.Command("git", "submodule", "init", "ovn-kubernetes")
 	initCmd.Dir = projectRoot
@@ -190,7 +191,7 @@ func initOVNKubernetesSubmodule(projectRoot string) error {
 		return fmt.Errorf("failed to update submodule: %w", err)
 	}
 
-	fmt.Println("✓ ovn-kubernetes submodule initialized")
+	log.Info("✓ ovn-kubernetes submodule is initialized")
 	return nil
 }
 
@@ -211,15 +212,15 @@ func EnsureOVNKubernetesSource() (string, error) {
 	// Check if directory exists and is populated
 	if _, err := os.Stat(ovnPath); err == nil {
 		if isOVNKubernetesPopulated(ovnPath) {
-			fmt.Printf("OVN-Kubernetes source found at %s\n", ovnPath)
+			log.Debug("OVN-Kubernetes source found at %s", ovnPath)
 			return ovnPath, nil
 		}
 
 		// Directory exists but is empty (uninitialized submodule)
-		fmt.Println("OVN-Kubernetes directory exists but appears empty (uninitialized submodule)")
+		log.Info("OVN-Kubernetes directory exists but appears empty (uninitialized submodule)")
 		if err := initOVNKubernetesSubmodule(projectRoot); err != nil {
-			fmt.Printf("Warning: Failed to initialize submodule: %v\n", err)
-			fmt.Println("Attempting to clone repository directly...")
+			log.Warn("Warning: Failed to initialize submodule: %v", err)
+			log.Info("Attempting to clone repository directly...")
 
 			// Remove the empty directory and clone fresh
 			if err := os.RemoveAll(ovnPath); err != nil {
@@ -243,10 +244,10 @@ func EnsureOVNKubernetesSource() (string, error) {
 				return ovnPath, nil
 			}
 		}
-		fmt.Println("Submodule initialization failed, falling back to clone...")
+		log.Info("Submodule initialization failed, falling back to clone...")
 	}
 
-	fmt.Printf("OVN-Kubernetes not found, cloning from %s:master...\n", DefaultOVNRepoURL)
+	log.Info("OVN-Kubernetes not found, cloning from %s:master...", DefaultOVNRepoURL)
 	cmd := exec.Command("git", "clone", "--branch", "master", DefaultOVNRepoURL, ovnPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -254,6 +255,6 @@ func EnsureOVNKubernetesSource() (string, error) {
 		return "", fmt.Errorf("failed to clone OVN-Kubernetes repository: %w", err)
 	}
 
-	fmt.Printf("✓ OVN-Kubernetes cloned to %s\n", ovnPath)
+	log.Info("✓ OVN-Kubernetes is cloned to %s", ovnPath)
 	return ovnPath, nil
 }

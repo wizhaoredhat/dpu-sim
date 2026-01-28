@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/network"
 )
 
@@ -22,7 +23,7 @@ func (m *VMManager) NetworkExists(networkName string) bool {
 // CreateNetwork creates a libvirt network based on the configuration
 func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
 	if m.NetworkExists(netCfg.Name) {
-		fmt.Printf("Network %s already exists, skipping creation\n", netCfg.Name)
+		log.Info("Network %s already exists, skipping creation", netCfg.Name)
 		return nil
 	}
 
@@ -60,7 +61,7 @@ func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
 		return fmt.Errorf("failed to start network %s: %w", netCfg.Name, err)
 	}
 
-	fmt.Printf("✓ Created network: %s\n", netCfg.Name)
+	log.Info("✓ Created network: %s", netCfg.Name)
 	return nil
 }
 
@@ -128,7 +129,7 @@ func generateOVSNetworkXML(networkName, bridgeName string) string {
 func CreateOVSBridge(bridgeName string) error {
 	checkCmd := exec.Command("ovs-vsctl", "br-exists", bridgeName)
 	if err := checkCmd.Run(); err == nil {
-		fmt.Printf("OVS bridge %s already exists, skipping creation\n", bridgeName)
+		log.Info("OVS bridge %s already exists, skipping creation", bridgeName)
 		return nil
 	}
 
@@ -142,7 +143,7 @@ func CreateOVSBridge(bridgeName string) error {
 		return fmt.Errorf("failed to bring up OVS bridge %s: %w, output: %s", bridgeName, err, string(output))
 	}
 
-	fmt.Printf("✓ Created OVS bridge: %s\n", bridgeName)
+	log.Info("✓ Created OVS bridge: %s", bridgeName)
 	return nil
 }
 
@@ -150,7 +151,7 @@ func CreateOVSBridge(bridgeName string) error {
 func DeleteOVSBridge(bridgeName string) error {
 	checkCmd := exec.Command("ovs-vsctl", "br-exists", bridgeName)
 	if err := checkCmd.Run(); err != nil {
-		fmt.Printf("OVS bridge %s doesn't exist, skipping deletion\n", bridgeName)
+		log.Info("OVS bridge %s doesn't exist, skipping deletion", bridgeName)
 		return nil
 	}
 
@@ -192,14 +193,14 @@ func (m *VMManager) CreateHostToDPUNetwork(hostName, dpuName string) error {
 		return fmt.Errorf("failed to start network %s: %w", networkName, err)
 	}
 
-	fmt.Printf("✓ Created host-to-DPU network: %s (bridge: %s)\n", networkName, bridgeName)
+	log.Info("✓ Created host-to-DPU network: %s (bridge: %s)", networkName, bridgeName)
 	return nil
 }
 
 // CreateAllNetworks creates all networks defined in the configuration and
 // implicit host to DPU networks.
 func (m *VMManager) CreateAllNetworks() error {
-	fmt.Println("=== Creating Networks ===")
+	log.Info("=== Creating Networks ===")
 
 	// Create configured networks
 	for _, netCfg := range m.config.Networks {
@@ -219,7 +220,7 @@ func (m *VMManager) CreateAllNetworks() error {
 		}
 	}
 
-	fmt.Println("✓ All networks created successfully")
+	log.Info("✓ All networks created successfully")
 	return nil
 }
 
@@ -252,31 +253,31 @@ func (m *VMManager) DeleteNetwork(networkName string) error {
 
 // CleanupNetworks removes all networks defined in the configuration
 func (m *VMManager) CleanupNetworks() error {
-	fmt.Println("=== Cleaning up Networks ===")
+	log.Info("=== Cleaning up Networks ===")
 
 	errors := make([]string, 0)
 
 	// Cleanup configured networks
 	for _, netCfg := range m.config.Networks {
 		netName := netCfg.Name
-		fmt.Printf("Cleaning up network: %s... ", netName)
+		log.Debug("Cleaning up network: %s...", netName)
 
 		if err := m.DeleteNetwork(netName); err != nil {
-			fmt.Printf("✗ Failed to remove network %s: %v\n", netName, err)
+			log.Error("✗ Failed to remove network %s: %v", netName, err)
 			errors = append(errors, fmt.Sprintf("failed to remove network %s: %v", netName, err))
 			continue
 		}
 
 		if netCfg.UseOVS {
-			fmt.Printf("Cleaning up OVS bridge: %s... ", netCfg.BridgeName)
+			log.Debug("Cleaning up OVS bridge: %s...", netCfg.BridgeName)
 			if err := DeleteOVSBridge(netCfg.BridgeName); err != nil {
-				fmt.Printf("✗ Failed to remove OVS bridge %s: %v\n", netCfg.BridgeName, err)
+				log.Error("✗ Failed to remove OVS bridge %s: %v", netCfg.BridgeName, err)
 				errors = append(errors, fmt.Sprintf("failed to remove OVS bridge %s: %v", netCfg.BridgeName, err))
 				continue
 			}
 		}
 
-		fmt.Printf("✓ Removed network %s\n", netName)
+		log.Info("✓ Removed network %s", netName)
 	}
 
 	// Cleanup implicit host-to-DPU networks
@@ -285,22 +286,22 @@ func (m *VMManager) CleanupNetworks() error {
 		for _, dpuConn := range mapping.Connections {
 			netName := dpuConn.Link.NetworkName
 			bridgeName := network.GenerateBridgeName(mapping.Host.Name, dpuConn.DPU.Name)
-			fmt.Printf("Cleaning up host-to-DPU network: %s... ", netName)
+			log.Debug("Cleaning up host-to-DPU network: %s...", netName)
 
 			if err := m.DeleteNetwork(netName); err != nil {
-				fmt.Printf("✗ Failed to remove network %s: %v\n", netName, err)
+				log.Error("✗ Failed to remove network %s: %v", netName, err)
 				errors = append(errors, fmt.Sprintf("failed to remove network %s: %v", netName, err))
 				continue
 			}
 
-			fmt.Printf("Cleaning up host-to-DPU OVS bridge: %s... ", bridgeName)
+			log.Debug("Cleaning up host-to-DPU OVS bridge: %s...", bridgeName)
 			if err := DeleteOVSBridge(bridgeName); err != nil {
-				fmt.Printf("✗ Failed to remove OVS bridge %s: %v\n", bridgeName, err)
+				log.Error("✗ Failed to remove OVS bridge %s: %v", bridgeName, err)
 				errors = append(errors, fmt.Sprintf("failed to remove OVS bridge %s: %v", bridgeName, err))
 				continue
 			}
 
-			fmt.Printf("✓ Removed host-to-DPU network %s (bridge: %s)\n", netName, bridgeName)
+			log.Info("✓ Removed host-to-DPU network %s (bridge: %s)", netName, bridgeName)
 		}
 	}
 

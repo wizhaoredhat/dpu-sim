@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/k8s"
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"go.yaml.in/yaml/v2"
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 	"sigs.k8s.io/kind/pkg/cluster"
@@ -37,11 +38,11 @@ func (m *KindManager) DeployAllClusters() error {
 func (m *KindManager) createCluster(name string, cfg *v1alpha4.Cluster) error {
 	// Check if cluster already exists
 	if m.ClusterExists(name) {
-		fmt.Printf("Kind cluster %s already exists, skipping creation\n", name)
+		log.Info("Kind cluster %s already exists, skipping creation", name)
 		return nil
 	}
 
-	fmt.Printf("Creating Kind cluster: %s\n", name)
+	log.Info("Creating Kind cluster: %s", name)
 
 	var opts []cluster.CreateOption
 	if cfg != nil {
@@ -50,8 +51,8 @@ func (m *KindManager) createCluster(name string, cfg *v1alpha4.Cluster) error {
 			return fmt.Errorf("failed to marshal Kind config: %w", err)
 		}
 
-		fmt.Println("Generated Kind config:")
-		fmt.Println(string(data))
+		log.Debug("Generated Kind config:")
+		log.Debug("%s", string(data))
 
 		opts = append(opts, cluster.CreateWithV1Alpha4Config(cfg))
 	}
@@ -60,24 +61,24 @@ func (m *KindManager) createCluster(name string, cfg *v1alpha4.Cluster) error {
 		return fmt.Errorf("failed to create Kind cluster %s: %w", name, err)
 	}
 
-	fmt.Printf("✓ Created Kind cluster: %s\n", name)
+	log.Info("✓ Created Kind cluster: %s", name)
 	return nil
 }
 
 // DeleteCluster deletes a Kind cluster
 func (m *KindManager) DeleteCluster(name string) error {
 	if !m.ClusterExists(name) {
-		fmt.Printf("Kind cluster %s does not exist, skipping deletion\n", name)
+		log.Info("Kind cluster %s does not exist, skipping deletion", name)
 		return nil
 	}
 
-	fmt.Printf("Deleting Kind cluster: %s\n", name)
+	log.Info("Deleting Kind cluster: %s", name)
 
 	if err := m.provider.Delete(name, ""); err != nil {
 		return fmt.Errorf("failed to delete Kind cluster %s: %w", name, err)
 	}
 
-	fmt.Printf("✓ Deleted Kind cluster: %s\n", name)
+	log.Info("✓ Deleted Kind cluster: %s", name)
 	return nil
 }
 
@@ -169,7 +170,7 @@ func (m *KindManager) GetKubeconfig(name string, kubeconfigPath string) error {
 		return fmt.Errorf("failed to write kubeconfig to %s: %w", kubeconfigPath, err)
 	}
 
-	fmt.Printf("✓ Kubeconfig saved to: %s\n", kubeconfigPath)
+	log.Info("✓ Kubeconfig saved to: %s", kubeconfigPath)
 	return nil
 }
 
@@ -179,7 +180,7 @@ func (m *KindManager) LoadImage(clusterName, imageName string) error {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
-	fmt.Printf("Loading image %s into cluster %s...\n", imageName, clusterName)
+	log.Info("Loading image %s into cluster %s...", imageName, clusterName)
 
 	// Get the nodes for this cluster
 	nodes, err := m.provider.ListNodes(clusterName)
@@ -203,7 +204,7 @@ func (m *KindManager) LoadImage(clusterName, imageName string) error {
 		return fmt.Errorf("failed to load image %s: %w", imageName, err)
 	}
 
-	fmt.Printf("✓ Loaded image: %s\n", imageName)
+	log.Info("✓ Loaded image: %s", imageName)
 	return nil
 }
 
@@ -217,12 +218,12 @@ func (m *KindManager) ExportLogs(clusterName, outputDir string) error {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	fmt.Printf("Exporting logs from cluster %s to %s...\n", clusterName, outputDir)
+	log.Info("Exporting logs from cluster %s to %s...", clusterName, outputDir)
 
 	if err := m.provider.CollectLogs(clusterName, outputDir); err != nil {
 		return fmt.Errorf("failed to export logs: %w", err)
 	}
 
-	fmt.Printf("✓ Logs exported to: %s\n", outputDir)
+	log.Info("✓ Logs exported to: %s", outputDir)
 	return nil
 }

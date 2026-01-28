@@ -10,12 +10,16 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 	"github.com/wizhao/dpu-sim/pkg/ssh"
 	"github.com/wizhao/dpu-sim/pkg/vm"
 )
 
-var configPath string
+var (
+	configPath string
+	logLevel   string
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "vmctl",
@@ -74,6 +78,13 @@ var execCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "Path to configuration file")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info",
+		fmt.Sprintf("Log level (%s)", strings.Join(log.ValidLevels(), ", ")))
+
+	// Initialize log level in PersistentPreRun
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		log.SetLevel(log.ParseLevel(logLevel))
+	}
 
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(sshCmd)
@@ -96,8 +107,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	defer vmMgr.Close()
 
-	fmt.Printf("%-20s %-15s %-15s %-8s %-10s\n", "VM Name", "State", "IP Address", "vCPUs", "Memory")
-	fmt.Println("--------------------------------------------------------------------------------")
+	log.Info("%-20s %-15s %-15s %-8s %-10s", "VM Name", "State", "IP Address", "vCPUs", "Memory")
+	log.Info("--------------------------------------------------------------------------------")
 
 	for _, vmCfg := range cfg.VMs {
 		vmName := vmCfg.Name
@@ -105,7 +116,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		info, err := vmMgr.GetVMInfo(vmName, config.MgmtNetworkName)
 		if err != nil {
 			// VM doesn't exist
-			fmt.Printf("%-20s %-15s %-15s %-8s %-10s\n", vmName, "Not Found", "N/A", "N/A", "N/A")
+			log.Info("%-20s %-15s %-15s %-8s %-10s", vmName, "Not Found", "N/A", "N/A", "N/A")
 			continue
 		}
 
@@ -114,7 +125,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			ipAddr = "N/A"
 		}
 
-		fmt.Printf("%-20s %-15s %-15s %-8d %dMB\n",
+		log.Info("%-20s %-15s %-15s %-8d %dMB",
 			info.Name, info.State, ipAddr, info.VCPUs, info.MemoryMB)
 	}
 
@@ -143,7 +154,7 @@ func runSSH(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get IP for VM %s: %w", vmName, err)
 	}
 
-	fmt.Printf("Connecting to %s (%s) as %s...\n", vmName, ip, cfg.SSH.User)
+	log.Info("Connecting to %s (%s) as %s...", vmName, ip, cfg.SSH.User)
 
 	// Build SSH command and execute
 	sshCmd := ssh.BuildSSHCommand(&cfg.SSH, ip, "")
@@ -213,7 +224,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("✓ Started VM '%s'\n", vmName)
+	log.Info("✓ Started VM '%s'", vmName)
 	return nil
 }
 
@@ -230,7 +241,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("✓ Shutting down VM '%s'...\n", vmName)
+	log.Info("✓ Shutting down VM '%s'...", vmName)
 	return nil
 }
 
@@ -247,7 +258,7 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("✓ Force stopped VM '%s'\n", vmName)
+	log.Info("✓ Force stopped VM '%s'", vmName)
 	return nil
 }
 
@@ -264,7 +275,7 @@ func runReboot(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("✓ Rebooting VM '%s'...\n", vmName)
+	log.Info("✓ Rebooting VM '%s'...", vmName)
 	return nil
 }
 

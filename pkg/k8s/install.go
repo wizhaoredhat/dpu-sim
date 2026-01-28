@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/linux"
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/network"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
@@ -16,7 +17,7 @@ import (
 // InstallKubernetes installs Kubernetes on a machine (baremetal or VM)
 // The executor should already be ready (WaitUntilReady called by the caller if needed)
 func (m *K8sMachineManager) InstallKubernetes(cmdExec platform.CommandExecutor, machineName, k8sVersion string) error {
-	fmt.Printf("Installing Kubernetes on %s (%s)...\n", machineName, cmdExec.String())
+	log.Info("Installing Kubernetes on %s (%s)...", machineName, cmdExec.String())
 
 	if err := linux.SetHostname(cmdExec, machineName); err != nil {
 		return fmt.Errorf("failed to set hostname for Kubernetes: %w", err)
@@ -71,24 +72,24 @@ func (m *K8sMachineManager) InstallKubernetes(cmdExec platform.CommandExecutor, 
 		return fmt.Errorf("failed to ensure dependencies: %w", err)
 	}
 
-	fmt.Printf("✓ Kubernetes %s installed on %s\n", k8sVersion, machineName)
+	log.Info("✓ Kubernetes %s installed on %s", k8sVersion, machineName)
 	return nil
 }
 
 func (m *K8sMachineManager) SetupOVNBrEx(cmdExec platform.CommandExecutor, mgmtIP string, k8sIP string) error {
-	fmt.Printf("Setting up OVN br-ex on %s (%s)...\n", mgmtIP, cmdExec.String())
+	log.Info("Setting up OVN br-ex on %s (%s)...", mgmtIP, cmdExec.String())
 
 	mgmtInterfaceInfo, err := network.GetInterfaceByIP(cmdExec, mgmtIP)
 	if err != nil {
 		return fmt.Errorf("failed to get interface information: %w", err)
 	}
-	fmt.Printf("Mgmt Interface information: %s\n", mgmtInterfaceInfo.String())
+	log.Info("Mgmt Interface information: %s", mgmtInterfaceInfo.String())
 
 	k8sInterfaceInfo, err := network.GetInterfaceByIP(cmdExec, k8sIP)
 	if err != nil {
 		return fmt.Errorf("failed to get interface information: %w", err)
 	}
-	fmt.Printf("K8s Interface information: %s\n", k8sInterfaceInfo.String())
+	log.Info("K8s Interface information: %s", k8sInterfaceInfo.String())
 
 	sb := strings.Builder{}
 	sb.WriteString("set -e\n")
@@ -157,84 +158,83 @@ func (m *K8sMachineManager) SetupOVNBrEx(cmdExec platform.CommandExecutor, mgmtI
 // PrintOVNBrExStatus prints the status of the OVN br-ex bridge
 // Does not return an error, just prints the status.
 func (m *K8sMachineManager) PrintOVNBrExStatus(cmdExec platform.CommandExecutor) {
-	fmt.Printf("\n========== OVN/OVS Status on %s ==========\n\n", cmdExec)
-
-	fmt.Println("--- OVS Bridges ---")
+	log.Debug("\n========== OVN/OVS Status on %s ==========", cmdExec)
+	log.Debug("--- OVS Bridges ---")
 	stdout, stderr, err := cmdExec.ExecuteWithTimeout("sudo ovs-vsctl list-br", 30*time.Second)
 	if err != nil {
-		fmt.Printf("Error listing bridges: %s\n", stderr)
+		log.Error("Error listing bridges: %s", stderr)
 	} else {
-		fmt.Println(strings.TrimSpace(stdout))
+		log.Debug("%s", strings.TrimSpace(stdout))
 	}
 
-	fmt.Println("--- br-ex Ports ---")
+	log.Debug("--- br-ex Ports ---")
 	stdout, stderr, err = cmdExec.ExecuteWithTimeout("sudo ovs-vsctl list-ports br-ex 2>/dev/null || echo 'br-ex not found'", 30*time.Second)
 	if err != nil {
-		fmt.Printf("Error: %s\n", stderr)
+		log.Error("Error: %s", stderr)
 	} else {
-		fmt.Println(strings.TrimSpace(stdout))
+		log.Debug("%s", strings.TrimSpace(stdout))
 	}
 
-	fmt.Println("--- OVS Show (Full Config) ---")
+	log.Debug("--- OVS Show (Full Config) ---")
 	stdout, stderr, err = cmdExec.ExecuteWithTimeout("sudo ovs-vsctl show", 30*time.Second)
 	if err != nil {
-		fmt.Printf("Error: %s\n", stderr)
+		log.Error("Error: %s", stderr)
 	} else {
-		fmt.Println(strings.TrimSpace(stdout))
+		log.Debug("%s", strings.TrimSpace(stdout))
 	}
 
 	stdout, stderr, err = cmdExec.ExecuteWithTimeout("ip route show", 30*time.Second)
 	if err != nil {
-		fmt.Printf("Error: %s\n", stderr)
+		log.Error("Error: %s", stderr)
 	} else {
-		fmt.Println(strings.TrimSpace(stdout))
+		log.Debug("%s", strings.TrimSpace(stdout))
 	}
 
-	fmt.Println("--- br-ex Linux Interface ---")
+	log.Debug("--- br-ex Linux Interface ---")
 	stdout, stderr, err = cmdExec.ExecuteWithTimeout("ip addr show br-ex 2>/dev/null || echo 'br-ex interface not found'", 30*time.Second)
 	if err != nil {
-		fmt.Printf("Error: %s\n", stderr)
+		log.Error("Error: %s", stderr)
 	} else {
-		fmt.Println(strings.TrimSpace(stdout))
+		log.Debug("%s", strings.TrimSpace(stdout))
 	}
 
-	fmt.Println("--- NetworkManager Connections ---")
+	log.Debug("--- NetworkManager Connections ---")
 	stdout, stderr, err = cmdExec.ExecuteWithTimeout("nmcli connection show 2>/dev/null || echo 'nmcli not available'", 30*time.Second)
 	if err != nil {
-		fmt.Printf("Error: %s\n", stderr)
+		log.Error("Error: %s", stderr)
 	} else {
-		fmt.Println(strings.TrimSpace(stdout))
+		log.Debug("%s", strings.TrimSpace(stdout))
 	}
 
-	fmt.Println("--- OVS External IDs (Open_vSwitch) ---")
+	log.Debug("--- OVS External IDs (Open_vSwitch) ---")
 	stdout, stderr, err = cmdExec.ExecuteWithTimeout("sudo ovs-vsctl get Open_vSwitch . external_ids", 30*time.Second)
 	if err != nil {
-		fmt.Printf("Error: %s\n", stderr)
+		log.Error("Error: %s", stderr)
 	} else {
-		fmt.Println(strings.TrimSpace(stdout))
+		log.Debug("%s", strings.TrimSpace(stdout))
 	}
 
-	fmt.Println("--- br-ex External IDs ---")
+	log.Debug("--- br-ex External IDs ---")
 	stdout, stderr, err = cmdExec.ExecuteWithTimeout("sudo ovs-vsctl get Bridge br-ex external_ids 2>/dev/null || echo 'br-ex not found'", 30*time.Second)
 	if err != nil {
-		fmt.Printf("Error: %s\n", stderr)
+		log.Error("Error: %s", stderr)
 	} else {
-		fmt.Println(strings.TrimSpace(stdout))
+		log.Debug("%s", strings.TrimSpace(stdout))
 	}
 
-	fmt.Println("--- br-int External IDs ---")
+	log.Debug("--- br-int External IDs ---")
 	stdout, stderr, err = cmdExec.ExecuteWithTimeout("sudo ovs-vsctl get Bridge br-int external_ids 2>/dev/null || echo 'br-int not found'", 30*time.Second)
 	if err != nil {
-		fmt.Printf("Error: %s\n", stderr)
+		log.Error("Error: %s", stderr)
 	} else {
-		fmt.Println(strings.TrimSpace(stdout))
+		log.Debug("%s", strings.TrimSpace(stdout))
 	}
 
-	fmt.Println("==========================================")
+	log.Debug("==========================================")
 }
 
 func (m *K8sMachineManager) SetupKubectlForRootUser(cmdExec platform.CommandExecutor, machineName string) error {
-	fmt.Printf("Setting up kubectl on %s (%s)...\n", machineName, cmdExec.String())
+	log.Info("Setting up kubectl on %s (%s)...", machineName, cmdExec.String())
 
 	sb := strings.Builder{}
 	sb.WriteString("set -e\n")
@@ -282,8 +282,8 @@ func (m *K8sMachineManager) GenerateCertificateKey(cmdExec platform.CommandExecu
 // InitializeControlPlane initializes a Kubernetes control plane node
 // Returns ControlPlaneInfo with all information needed to join additional nodes
 func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecutor, machineName, k8sIP, podCIDR, serviceCIDR string) (*ControlPlaneInfo, error) {
-	fmt.Printf("Initializing control plane on %s (%s)...\n", machineName, cmdExec.String())
-	fmt.Printf("K8s IP: %s Pod CIDR: %s, Service CIDR: %s\n", k8sIP, podCIDR, serviceCIDR)
+	log.Info("Initializing control plane on %s (%s)...", machineName, cmdExec.String())
+	log.Info("K8s IP: %s Pod CIDR: %s, Service CIDR: %s", k8sIP, podCIDR, serviceCIDR)
 
 	sb := strings.Builder{}
 	sb.WriteString("set -e\n")
@@ -295,7 +295,7 @@ func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecu
 		return nil, fmt.Errorf("control plane initialization failed: %w, stderr: %s", err, stderr)
 	}
 
-	fmt.Printf("Control plane initialization output: %s\n", stdout)
+	log.Debug("Control plane initialization output: %s", stdout)
 
 	if err := m.SetupKubectlForRootUser(cmdExec, machineName); err != nil {
 		return nil, fmt.Errorf("failed to setup kubectl for root user: %w", err)
@@ -330,16 +330,16 @@ func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecu
 		Kubeconfig:              kubeconfig,
 	}
 
-	fmt.Printf("✓ Control plane initialized on %s\n", machineName)
-	fmt.Printf("Worker join command: %s\n", workerJoinCommand)
-	fmt.Printf("Control plane join command: %s\n", controlPlaneJoinCommand)
-	fmt.Printf("API server endpoint: %s\n", apiServerEndpoint)
+	log.Info("✓ Control plane initialized on %s", machineName)
+	log.Debug("Worker join command: %s", workerJoinCommand)
+	log.Debug("Control plane join command: %s", controlPlaneJoinCommand)
+	log.Info("API server endpoint: %s", apiServerEndpoint)
 	return joinInfo, nil
 }
 
 // JoinControlPlane joins an additional control plane node to a Kubernetes cluster
 func (m *K8sMachineManager) JoinControlPlane(cmdExec platform.CommandExecutor, machineName string, joinInfo *ControlPlaneInfo) error {
-	fmt.Printf("Joining control plane node %s to Kubernetes cluster...\n", machineName)
+	log.Debug("Joining control plane node %s to Kubernetes cluster...", machineName)
 
 	sb := strings.Builder{}
 	sb.WriteString("set -e\n")
@@ -354,14 +354,14 @@ func (m *K8sMachineManager) JoinControlPlane(cmdExec platform.CommandExecutor, m
 		return fmt.Errorf("failed to setup kubectl for root user: %w", err)
 	}
 
-	fmt.Printf("✓ Control plane node joined to Kubernetes cluster: %s\n", machineName)
-	fmt.Printf("Join command output: %s\n", stdout)
+	log.Info("✓ Control plane node joined to Kubernetes cluster: %s", machineName)
+	log.Debug("Join command output: %s", stdout)
 	return nil
 }
 
 // JoinWorker joins a worker node to a Kubernetes cluster
 func (m *K8sMachineManager) JoinWorker(cmdExec platform.CommandExecutor, machineName string, joinInfo *ControlPlaneInfo) error {
-	fmt.Printf("Joining worker node %s to Kubernetes cluster...\n", machineName)
+	log.Debug("Joining worker node %s to Kubernetes cluster...", machineName)
 
 	sb := strings.Builder{}
 	sb.WriteString("set -e\n")
@@ -372,8 +372,8 @@ func (m *K8sMachineManager) JoinWorker(cmdExec platform.CommandExecutor, machine
 		return fmt.Errorf("failed to join worker node: %w, stderr: %s", err, stderr)
 	}
 
-	fmt.Printf("✓ Worker node joined to Kubernetes cluster: %s\n", machineName)
-	fmt.Printf("Join command output: %s\n", stdout)
+	log.Info("✓ Worker node joined to Kubernetes cluster: %s", machineName)
+	log.Debug("Join command output: %s", stdout)
 	return nil
 }
 
@@ -401,7 +401,7 @@ func (m *K8sMachineManager) GetKubeconfig(cmdExec platform.CommandExecutor, outp
 		return fmt.Errorf("failed to write kubeconfig: %w", err)
 	}
 
-	fmt.Printf("✓ Kubeconfig saved to: %s\n", outputPath)
+	log.Info("✓ Kubeconfig saved to: %s", outputPath)
 	return nil
 }
 
@@ -421,7 +421,7 @@ func SaveKubeconfigToFile(kubeconfigContent, clusterName, kubeconfigDir string) 
 		return fmt.Errorf("failed to write kubeconfig file: %w", err)
 	}
 
-	fmt.Printf("✓ Kubeconfig saved to: %s\n", filepath)
+	log.Info("✓ Kubeconfig saved to: %s", filepath)
 	return nil
 }
 
@@ -474,7 +474,7 @@ func CleanupKubeconfig(kubeconfigDir string) error {
 		if err := os.Remove(file); err != nil {
 			return fmt.Errorf("failed to remove kubeconfig file %s: %w", file, err)
 		}
-		fmt.Printf("✓ Kubeconfig file removed: %s\n", file)
+		log.Info("✓ Kubeconfig file removed: %s", file)
 	}
 
 	return nil

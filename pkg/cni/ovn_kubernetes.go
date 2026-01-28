@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
@@ -86,7 +87,7 @@ func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, ser
 		"--enable-observ=false",
 	}
 
-	fmt.Printf("Running daemonset.sh to generate manifests...\n")
+	log.Info("Running daemonset.sh to generate manifests...")
 	cmd := exec.Command(daemonsetScript, args...)
 	cmd.Dir = filepath.Dir(daemonsetScript)
 
@@ -95,7 +96,7 @@ func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, ser
 		return fmt.Errorf("daemonset.sh failed stdout: %s, stderr: %s", output, err)
 	}
 
-	fmt.Printf("✓ daemonset.sh completed successfully, Output: %s\n", output)
+	log.Info("✓ daemonset.sh completed successfully, Output: %s", output)
 	return nil
 }
 
@@ -149,7 +150,7 @@ func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string) error {
 		"ovnkube-node.yaml",
 	}
 
-	fmt.Printf("Applying OVN-Kubernetes CRD manifests...\n")
+	log.Info("Applying OVN-Kubernetes CRD manifests...")
 	for _, manifest := range crdManifests {
 		manifestPath := filepath.Join(yamlDir, manifest)
 		content, err := os.ReadFile(manifestPath)
@@ -159,10 +160,10 @@ func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string) error {
 		if err := m.k8sClient.ApplyManifest(content); err != nil {
 			return fmt.Errorf("failed to apply manifest %s: %w", manifest, err)
 		}
-		fmt.Printf("✓ Applied CRD manifest %s\n", manifest)
+		log.Debug("✓ Applied CRD manifest %s", manifest)
 	}
 
-	fmt.Printf("Applying external CRD manifests...\n")
+	log.Info("Applying external CRD manifests...")
 	for _, url := range externalCRDs {
 		if err := m.k8sClient.ApplyManifestFromURL(url); err != nil {
 			return fmt.Errorf("failed to apply external CRD from %s: %w", url, err)
@@ -172,7 +173,7 @@ func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string) error {
 	// Invalidate discovery cache after applying CRDs so the client can discover new resource types
 	m.k8sClient.InvalidateDiscoveryCache()
 
-	fmt.Printf("Applying OVN-Kubernetes setup manifests...\n")
+	log.Info("Applying OVN-Kubernetes setup manifests...")
 	for _, manifest := range setupManifests {
 		manifestPath := filepath.Join(yamlDir, manifest)
 		content, err := os.ReadFile(manifestPath)
@@ -182,7 +183,7 @@ func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string) error {
 		if err := m.k8sClient.ApplyManifest(content); err != nil {
 			return fmt.Errorf("failed to apply manifest %s: %w", manifest, err)
 		}
-		fmt.Printf("✓ Applied setup manifest %s\n", manifest)
+		log.Info("✓ Applied setup manifest %s", manifest)
 	}
 
 	// Label master nodes for OVN HA
@@ -190,7 +191,7 @@ func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string) error {
 		return fmt.Errorf("failed to label master nodes: %w", err)
 	}
 
-	fmt.Printf("Applying OVN-Kubernetes deployment manifests...\n")
+	log.Info("Applying OVN-Kubernetes deployment manifests...")
 	for _, manifest := range deploymentManifests {
 		manifestPath := filepath.Join(yamlDir, manifest)
 		content, err := os.ReadFile(manifestPath)
@@ -200,13 +201,7 @@ func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string) error {
 		if err := m.k8sClient.ApplyManifest(content); err != nil {
 			return fmt.Errorf("failed to apply manifest %s: %w", manifest, err)
 		}
-		fmt.Printf("✓ Applied deployment manifest %s\n", manifest)
-	}
-
-	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
-		fmt.Printf("Warning: OVN-Kubernetes pods may not be ready: %v\n", err)
-	} else {
-		fmt.Printf("✓ OVN-Kubernetes pods are ready\n")
+		log.Info("✓ Applied deployment manifest %s", manifest)
 	}
 
 	return nil
@@ -214,7 +209,7 @@ func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string) error {
 
 // labelOVNMasterNodes labels master nodes for OVN HA deployment
 func (m *CNIManager) labelOVNMasterNodes() error {
-	fmt.Printf("Labeling master nodes for OVN-Kubernetes HA...\n")
+	log.Debug("Labeling master nodes for OVN-Kubernetes HA...")
 
 	nodes, err := m.k8sClient.GetNodes()
 	if err != nil {
@@ -229,14 +224,14 @@ func (m *CNIManager) labelOVNMasterNodes() error {
 		if err := m.k8sClient.LabelNode(node.Name, labels); err != nil {
 			return fmt.Errorf("failed to label node %s: %w", node.Name, err)
 		}
-		fmt.Printf("✓ Labeled node %s\n", node.Name)
+		log.Debug("✓ Labeled node %s", node.Name)
 
 		m.k8sClient.RemoveNodeTaint(node.Name, "node-role.kubernetes.io/master", corev1.TaintEffectNoSchedule)
 		m.k8sClient.RemoveNodeTaint(node.Name, "node-role.kubernetes.io/control-plane", corev1.TaintEffectNoSchedule)
-		fmt.Printf("✓ Removed taints from node %s\n", node.Name)
+		log.Debug("✓ Removed taints from node %s", node.Name)
 	}
 
-	fmt.Printf("✓ Master nodes labeled for OVN-Kubernetes HA\n")
+	log.Info("✓ Master nodes labeled for OVN-Kubernetes HA")
 	return nil
 }
 
@@ -250,7 +245,7 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) erro
 	serviceCIDR := clusterCfg.ServiceCIDR
 	apiServerURL := "https://" + k8sIP + ":6443"
 
-	fmt.Printf("For OVN-Kubernetes installation, using Pod CIDR: %s, Service CIDR: %s, API Server URL: %s\n", podCIDR, serviceCIDR, apiServerURL)
+	log.Info("For OVN-Kubernetes installation, using Pod CIDR: %s, Service CIDR: %s, API Server URL: %s", podCIDR, serviceCIDR, apiServerURL)
 
 	ovnKPath, err := platform.EnsureOVNKubernetesSource()
 	if err != nil {
@@ -266,9 +261,9 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) erro
 	}
 
 	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
-		fmt.Printf("Warning: OVN-Kubernetes pods may not be ready: %v\n", err)
+		log.Warn("Warning: OVN-Kubernetes pods may not be ready: %v", err)
 	} else {
-		fmt.Printf("✓ OVN-Kubernetes pods are ready, installed successfully!\n")
+		log.Info("✓ OVN-Kubernetes pods are ready, installed successfully!")
 	}
 
 	return nil

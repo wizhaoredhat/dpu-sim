@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/log"
 )
 
 const (
@@ -19,7 +20,7 @@ const (
 func DownloadCloudImage(url, destPath string) error {
 	// Check if file already exists
 	if _, err := os.Stat(destPath); err == nil {
-		fmt.Printf("✓ Image already exists at %s, skipping download\n", destPath)
+		log.Info("✓ Image already exists at %s, skipping download", destPath)
 		return nil
 	}
 
@@ -29,14 +30,14 @@ func DownloadCloudImage(url, destPath string) error {
 		return fmt.Errorf("failed to create directory %s: %w", destDir, err)
 	}
 
-	fmt.Printf("Downloading cloud image from %s to %s...\n", url, destPath)
+	log.Info("Downloading cloud image from %s to %s...", url, destPath)
 	cmd := exec.Command("wget", "-O", destPath, url)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to download image: %w, output: %s", err, string(output))
 	}
 
-	fmt.Printf("✓ Downloaded image to %s\n", destPath)
+	log.Info("✓ Downloaded image to %s", destPath)
 	return nil
 }
 
@@ -46,7 +47,7 @@ func CreateVMDisk(vmName string, sizeGB int, baseImage string) (string, error) {
 
 	// Check if disk already exists
 	if _, err := os.Stat(diskPath); err == nil {
-		fmt.Printf("✓ Disk for VM %s already exists at %s\n", vmName, diskPath)
+		log.Info("✓ Disk for VM %s already exists at %s", vmName, diskPath)
 		return diskPath, nil
 	}
 
@@ -55,7 +56,7 @@ func CreateVMDisk(vmName string, sizeGB int, baseImage string) (string, error) {
 		return "", fmt.Errorf("failed to create image directory: %w", err)
 	}
 
-	fmt.Printf("Creating disk for %s based on %s...\n", vmName, baseImage)
+	log.Debug("Creating disk for %s based on %s...", vmName, baseImage)
 	cmd := exec.Command("qemu-img", "create", "-f", "qcow2",
 		"-F", "qcow2", "-b", baseImage, diskPath, fmt.Sprintf("%dG", sizeGB))
 	output, err := cmd.CombinedOutput()
@@ -63,7 +64,7 @@ func CreateVMDisk(vmName string, sizeGB int, baseImage string) (string, error) {
 		return "", fmt.Errorf("failed to create disk: %w, output: %s", err, string(output))
 	}
 
-	fmt.Printf("✓ Created disk for %s: %s\n", vmName, diskPath)
+	log.Info("✓ Created disk for %s: %s", vmName, diskPath)
 	return diskPath, nil
 }
 
@@ -73,7 +74,7 @@ func CreateCloudInitISO(vmName string, sshConfig config.SSHConfig, vmConfig conf
 	isoPath := filepath.Join(DefaultImageDir, fmt.Sprintf("%s-cloud-init.iso", vmName))
 
 	if _, err := os.Stat(isoPath); err == nil {
-		fmt.Printf("✓ Cloud-init ISO for %s already exists at %s\n", vmName, isoPath)
+		log.Info("✓ Cloud-init ISO for %s already exists at %s", vmName, isoPath)
 		return isoPath, nil
 	}
 
@@ -116,7 +117,7 @@ func CreateCloudInitISO(vmName string, sshConfig config.SSHConfig, vmConfig conf
 		return "", fmt.Errorf("failed to create cloud-init ISO: %w, output: %s", err, string(output))
 	}
 
-	fmt.Printf("✓ Created cloud-init ISO: %s\n", isoPath)
+	log.Info("✓ Created cloud-init ISO: %s", isoPath)
 	return isoPath, nil
 }
 
@@ -183,7 +184,7 @@ func DeleteVMDisk(vmName string) error {
 	diskPath := filepath.Join(DefaultImageDir, fmt.Sprintf("%s.qcow2", vmName))
 
 	if _, err := os.Stat(diskPath); os.IsNotExist(err) {
-		fmt.Printf("✓ Disk for %s does not exist, skipping deletion\n", vmName)
+		log.Info("✓ Disk for %s does not exist, skipping deletion", vmName)
 		return nil
 	}
 
@@ -191,7 +192,7 @@ func DeleteVMDisk(vmName string) error {
 		return fmt.Errorf("failed to delete disk %s: %w", diskPath, err)
 	}
 
-	fmt.Printf("✓ Deleted disk: %s\n", diskPath)
+	log.Info("✓ Deleted disk: %s", diskPath)
 	return nil
 }
 
@@ -200,7 +201,7 @@ func DeleteCloudInitISO(vmName string) error {
 	isoPath := filepath.Join(DefaultImageDir, fmt.Sprintf("%s-cloud-init.iso", vmName))
 
 	if _, err := os.Stat(isoPath); os.IsNotExist(err) {
-		fmt.Printf("✓ Cloud-init ISO for %s does not exist, skipping deletion\n", vmName)
+		log.Info("✓ Cloud-init ISO for %s does not exist, skipping deletion", vmName)
 		return nil
 	}
 
@@ -208,7 +209,7 @@ func DeleteCloudInitISO(vmName string) error {
 		return fmt.Errorf("failed to delete cloud-init ISO %s: %w", isoPath, err)
 	}
 
-	fmt.Printf("✓ Deleted cloud-init ISO: %s\n", isoPath)
+	log.Info("✓ Deleted cloud-init ISO: %s", isoPath)
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"libvirt.org/go/libvirt"
 )
 
@@ -141,20 +142,20 @@ func (m *VMManager) DeleteVM(vmName string) error {
 
 // CleanupVMs removes all VMs defined in the configuration
 func (m *VMManager) CleanupVMs() error {
-	fmt.Println("=== Cleaning up VMs ===")
+	log.Info("=== Cleaning up VMs ===")
 
 	errors := make([]string, 0)
 	for _, vmCfg := range m.config.VMs {
 		vmName := vmCfg.Name
-		fmt.Printf("Cleaning up VM: %s... ", vmName)
+		log.Debug("Cleaning up VM: %s...", vmName)
 
 		if err := m.DeleteVM(vmName); err != nil {
-			fmt.Printf("✗ Failed to remove VM %s: %v\n", vmName, err)
+			log.Error("✗ Failed to remove VM %s: %v", vmName, err)
 			errors = append(errors, fmt.Sprintf("failed to remove VM %s: %v", vmName, err))
 			continue
 		}
 
-		fmt.Printf("✓ Cleaned up VM: %s\n", vmName)
+		log.Info("✓ Cleaned up VM: %s", vmName)
 	}
 
 	if len(errors) > 0 {

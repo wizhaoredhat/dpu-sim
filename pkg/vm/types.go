@@ -6,6 +6,7 @@ import (
 	"libvirt.org/go/libvirt"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/log"
 )
 
 // VMManager manages libvirt virtual machines and networks
@@ -27,7 +28,7 @@ func NewVMManager(cfg *config.Config) (*VMManager, error) {
 		conn.Close()
 		return nil, fmt.Errorf("failed to get hostname: %w", err)
 	}
-	fmt.Printf("✓ Connected to libvirt: %s\n", hostname)
+	log.Debug("✓ Connected to libvirt: %s", hostname)
 
 	if cfg == nil {
 		return nil, fmt.Errorf("config is nil")

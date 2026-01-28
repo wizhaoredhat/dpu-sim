@@ -3,6 +3,8 @@ package cni
 import (
 	"fmt"
 	"time"
+
+	"github.com/wizhao/dpu-sim/pkg/log"
 )
 
 // FlannelManifestURL is the URL for the Flannel CNI manifest
@@ -10,7 +12,7 @@ const FlannelManifestURL = "https://github.com/flannel-io/flannel/releases/lates
 
 // installFlannel installs Flannel CNI using the Kubernetes API
 func (m *CNIManager) installFlannel(clusterName string) error {
-	fmt.Println("  Installing Flannel CNI...")
+	log.Debug("Installing Flannel CNI on cluster %s...", clusterName)
 
 	if err := m.k8sClient.ApplyManifestFromURL(FlannelManifestURL); err != nil {
 		return fmt.Errorf("failed to install Flannel: %w", err)
@@ -26,19 +28,19 @@ func (m *CNIManager) installFlannel(clusterName string) error {
 
 	// Patch the kube-flannel-cfg ConfigMap with the correct pod CIDR
 	if err := m.patchFlannelConfig(podCIDR); err != nil {
-		fmt.Printf("Warning: failed to patch Flannel config: %v\n", err)
+		log.Warn("Warning: failed to patch Flannel config: %v", err)
 	}
 
 	// Restart Flannel DaemonSet to pick up the new configuration
 	if err := m.k8sClient.RolloutRestartDaemonSet("kube-flannel", "kube-flannel-ds"); err != nil {
-		fmt.Printf("Warning: failed to restart Flannel daemonset: %v\n", err)
+		log.Warn("Warning: failed to restart Flannel daemonset: %v", err)
 	}
 
-	fmt.Println("✓ Flannel installed")
+	log.Info("✓ Flannel is installed on cluster %s", clusterName)
 
 	// Wait for Flannel pods to be ready
 	if err := m.k8sClient.WaitForPodsReady("kube-flannel", "", 3*time.Minute); err != nil {
-		fmt.Printf("Warning: Flannel pods may not be ready: %v\n", err)
+		log.Warn("Warning: Flannel pods may not be ready: %v", err)
 	}
 
 	return nil
@@ -60,6 +62,6 @@ func (m *CNIManager) patchFlannelConfig(podCIDR string) error {
 		return fmt.Errorf("failed to update Flannel configmap: %w", err)
 	}
 
-	fmt.Printf("✓ Flannel config updated with pod CIDR: %s\n", podCIDR)
+	log.Debug("✓ Flannel config is updated with pod CIDR: %s", podCIDR)
 	return nil
 }

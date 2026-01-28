@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -10,6 +11,7 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/kind"
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 	"github.com/wizhao/dpu-sim/pkg/requirements"
 	"github.com/wizhao/dpu-sim/pkg/vm"
@@ -18,6 +20,7 @@ import (
 var (
 	// Global flags
 	configPath string
+	logLevel   string
 
 	// Root command flags
 	skipDeps    bool
@@ -45,6 +48,8 @@ This is the main orchestrator that runs the complete deployment workflow:
 func init() {
 	// Global persistent flag
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "config.yaml", "Path to configuration file")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info",
+		fmt.Sprintf("Log level (%s)", strings.Join(log.ValidLevels(), ", ")))
 
 	// Root command flags
 	rootCmd.Flags().BoolVar(&cleanupOnly, "cleanup", false, "Only cleanup existing resources, do not deploy")
@@ -59,38 +64,40 @@ func init() {
 // =============================================================================
 
 func runDeploy(cmd *cobra.Command, args []string) error {
-	fmt.Println("╔═══════════════════════════════════════════════╗")
-	fmt.Println("║               DPU Simulator                   ║")
-	fmt.Println("╚═══════════════════════════════════════════════╝")
-	fmt.Printf("\nConfiguration: %s\n", configPath)
+	// Configure log level
+	log.SetLevel(log.ParseLevel(logLevel))
+
+	log.Info("╔═══════════════════════════════════════════════╗")
+	log.Info("║               DPU Simulator                   ║")
+	log.Info("╚═══════════════════════════════════════════════╝")
+	log.Info("Configuration: %s", configPath)
 
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
-
-	if !skipDeps {
-		fmt.Println("\n=== Checking Dependencies ===")
-		if err := requirements.EnsureDependencies(cfg); err != nil {
-			return fmt.Errorf("dependency check failed: %w", err)
-		}
-	} else {
-		fmt.Println("\nSkipping dependency check")
-	}
-
 	deployMode, err := cfg.GetDeploymentMode()
 	if err != nil {
 		return fmt.Errorf("failed to determine deployment mode: %w", err)
 	}
-	fmt.Printf("Deployment mode: %s\n", deployMode)
+	log.Info("Deployment mode: %s", deployMode)
 
-	if !skipCleanup || cleanupOnly {
-		fmt.Println("\n=== Cleaning up K8s ===")
-		if err := k8s.CleanupAll(cfg); err != nil {
-			fmt.Printf("Warning: Kubernetes cleanup failed: %v\n", err)
+	if !skipDeps {
+		log.Info("\n=== Checking Dependencies ===")
+		if err := requirements.EnsureDependencies(cfg); err != nil {
+			return fmt.Errorf("dependency check failed: %w", err)
 		}
 	} else {
-		fmt.Println("\nSkipping Kubernetes cleanup")
+		log.Info("\nSkipping dependency check")
+	}
+
+	if !skipCleanup || cleanupOnly {
+		log.Info("\n=== Cleaning up K8s ===")
+		if err := k8s.CleanupAll(cfg); err != nil {
+			log.Warn("Warning: Kubernetes cleanup failed: %v", err)
+		}
+	} else {
+		log.Info("\nSkipping Kubernetes cleanup")
 	}
 
 	switch deployMode {
@@ -104,10 +111,10 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 }
 
 func runVMDeploymentWorkflow(cfg *config.Config) error {
-	fmt.Println("")
-	fmt.Println("╔═══════════════════════════════════════════════╗")
-	fmt.Println("║       VM-Based Deployment Workflow            ║")
-	fmt.Println("╚═══════════════════════════════════════════════╝")
+	log.Info("")
+	log.Info("╔═══════════════════════════════════════════════╗")
+	log.Info("║       VM-Based Deployment Workflow            ║")
+	log.Info("╚═══════════════════════════════════════════════╝")
 
 	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
@@ -116,32 +123,31 @@ func runVMDeploymentWorkflow(cfg *config.Config) error {
 	defer vmMgr.Close()
 
 	if !skipCleanup || cleanupOnly {
-		fmt.Println("\n=== Cleaning up VMs and networks ===")
 		if err := vmMgr.CleanupAll(); err != nil {
-			fmt.Printf("Warning: cleanup failed: %v\n", err)
+			log.Warn("Warning: cleanup failed: %v", err)
 		}
 		if cleanupOnly {
-			fmt.Println("\n✓ Cleanup complete. No deployment performed.")
+			log.Info("\n✓ Cleanup complete. No deployment performed.")
 			return nil
 		}
 	}
 
 	if !skipDeploy {
-		fmt.Println("\n=== Deploying VMs ===")
+		log.Info("\n=== Deploying VMs ===")
 		if err := doVMDeploy(cfg, vmMgr); err != nil {
 			return fmt.Errorf("VM deployment failed: %w", err)
 		}
 	} else {
-		fmt.Println("\nSkipping VM deployment")
+		log.Info("\nSkipping VM deployment")
 	}
 
 	if !skipK8s {
-		fmt.Println("\n=== Installing Kubernetes and CNI ===")
+		log.Info("\n=== Installing Kubernetes and CNI ===")
 		if err := doVMInstallK8s(vmMgr); err != nil {
 			return fmt.Errorf("Kubernetes installation failed: %w", err)
 		}
 	} else {
-		fmt.Println("\nSkipping Kubernetes installation")
+		log.Info("\nSkipping Kubernetes installation")
 	}
 
 	printSuccessMessage(cfg, "VM")
@@ -149,40 +155,40 @@ func runVMDeploymentWorkflow(cfg *config.Config) error {
 }
 
 func runKindDeploymentWorkflow(cfg *config.Config) error {
-	fmt.Println("")
-	fmt.Println("╔═══════════════════════════════════════════════╗")
-	fmt.Println("║      Kind-Based Deployment Workflow           ║")
-	fmt.Println("╚═══════════════════════════════════════════════╝")
+	log.Info("")
+	log.Info("╔═══════════════════════════════════════════════╗")
+	log.Info("║      Kind-Based Deployment Workflow           ║")
+	log.Info("╚═══════════════════════════════════════════════╝")
 
 	kindMgr := kind.NewKindManager(cfg)
 
 	if !skipCleanup || cleanupOnly {
-		fmt.Println("\n=== Cleaning up existing kind clusters ===")
+		log.Info("\n=== Cleaning up existing kind clusters ===")
 		if err := kindMgr.CleanupAll(cfg); err != nil {
 			return fmt.Errorf("failed to cleanup Kind clusters: %w", err)
 		}
 		if cleanupOnly {
-			fmt.Println("✓ Cleanup complete")
+			log.Info("✓ Cleanup complete")
 			return nil
 		}
 	}
 
 	if !skipDeploy {
-		fmt.Println("\n=== Deploying Kind clusters ===")
+		log.Info("\n=== Deploying Kind clusters ===")
 		if err := doKindDeploy(cfg, kindMgr); err != nil {
 			return fmt.Errorf("Kind deployment failed: %w", err)
 		}
 	} else {
-		fmt.Println("\nSkipping Kind deployment")
+		log.Info("\nSkipping Kind deployment")
 	}
 
 	if !skipK8s {
-		fmt.Println("\n=== Installing CNI ===")
+		log.Info("\n=== Installing CNI ===")
 		if err := doKindInstallCNI(cfg); err != nil {
 			return fmt.Errorf("CNI installation failed: %w", err)
 		}
 	} else {
-		fmt.Println("\nSkipping CNI installation")
+		log.Info("\nSkipping CNI installation")
 	}
 
 	printSuccessMessage(cfg, "Kind")
@@ -190,33 +196,33 @@ func runKindDeploymentWorkflow(cfg *config.Config) error {
 }
 
 func printSuccessMessage(cfg *config.Config, deployType string) {
-	fmt.Println("")
-	fmt.Println("╔═══════════════════════════════════════════════╗")
-	fmt.Println("║         Deployment Completed Successfully!    ║")
-	fmt.Println("╚═══════════════════════════════════════════════╝")
+	log.Info("")
+	log.Info("╔═══════════════════════════════════════════════╗")
+	log.Info("║         Deployment Completed Successfully!    ║")
+	log.Info("╚═══════════════════════════════════════════════╝")
 
 	if deployType == "VM" {
-		fmt.Println("\n✓ VM deployment complete!")
-		fmt.Println("\nYour DPU simulation environment is ready:")
-		fmt.Println("  • VMs are running and accessible")
-		fmt.Println("  • Kubernetes is installed and configured")
-		fmt.Println("  • CNI is deployed and ready")
-		fmt.Println("\nUseful commands:")
-		fmt.Println("  vmctl list                    # List all VMs")
-		fmt.Println("  vmctl ssh <vm-name>           # SSH into a VM")
-		fmt.Printf("  kubectl --kubeconfig %s/<cluster>.kubeconfig get nodes\n", cfg.Kubernetes.GetKubeconfigDir())
+		log.Info("\n✓ VM deployment complete!")
+		log.Info("\nYour DPU simulation environment is ready:")
+		log.Info("  • VMs are running and accessible")
+		log.Info("  • Kubernetes is installed and configured")
+		log.Info("  • CNI is deployed and ready")
+		log.Info("\nUseful commands:")
+		log.Info("  vmctl list                    # List all VMs")
+		log.Info("  vmctl ssh <vm-name>           # SSH into a VM")
+		log.Info("  kubectl --kubeconfig %s/<cluster>.kubeconfig get nodes", cfg.Kubernetes.GetKubeconfigDir())
 	} else {
-		fmt.Println("\n✓ Kind deployment complete!")
-		fmt.Println("\nYour DPU simulation environment is ready:")
-		fmt.Println("  • Kind clusters are running")
-		fmt.Println("  • CNI is deployed and ready")
-		fmt.Println("\nUseful commands:")
-		fmt.Println("  kind get clusters             # List all clusters")
-		fmt.Printf("  kubectl --kubeconfig %s/<cluster>.kubeconfig get nodes\n", cfg.Kubernetes.GetKubeconfigDir())
+		log.Info("\n✓ Kind deployment complete!")
+		log.Info("\nYour DPU simulation environment is ready:")
+		log.Info("  • Kind clusters are running")
+		log.Info("  • CNI is deployed and ready")
+		log.Info("\nUseful commands:")
+		log.Info("  kind get clusters             # List all clusters")
+		log.Info("  kubectl --kubeconfig %s/<cluster>.kubeconfig get nodes", cfg.Kubernetes.GetKubeconfigDir())
 	}
 
-	fmt.Printf("\nKubeconfig files: %s\n", cfg.Kubernetes.GetKubeconfigDir())
-	fmt.Println("\nFor more information, see README.md")
+	log.Info("\nKubeconfig files: %s", cfg.Kubernetes.GetKubeconfigDir())
+	log.Info("For more information, see README.md")
 }
 
 func doVMDeploy(cfg *config.Config, vmMgr *vm.VMManager) error {
@@ -231,21 +237,21 @@ func doVMDeploy(cfg *config.Config, vmMgr *vm.VMManager) error {
 	}
 
 	// Wait for VMs to get IP addresses
-	fmt.Println("\n=== Waiting for VMs to boot and get IPs ===")
+	log.Info("\n=== Waiting for VMs to boot and get IPs ===")
 	for _, vmCfg := range cfg.VMs {
-		fmt.Printf("Waiting for %s to get an IP address...\n", vmCfg.Name)
+		log.Info("Waiting for %s to get an IP address...", vmCfg.Name)
 		ip, err := vmMgr.WaitForVMIP(vmCfg.Name, config.MgmtNetworkName, 5*time.Minute)
 		if err != nil {
 			return fmt.Errorf("failed to get IP for %s: %w", vmCfg.Name, err)
 		}
-		fmt.Printf("✓ %s IP: %s\n", vmCfg.Name, ip)
+		log.Info("✓ %s IP: %s", vmCfg.Name, ip)
 
 		cmdExec := platform.NewSSHExecutor(&cfg.SSH, ip)
-		fmt.Printf("Waiting for SSH on %s...\n", vmCfg.Name)
+		log.Info("Waiting for SSH on %s...", vmCfg.Name)
 		if err := cmdExec.WaitUntilReady(5 * time.Minute); err != nil {
 			return fmt.Errorf("failed to wait for SSH on %s: %w", vmCfg.Name, err)
 		}
-		fmt.Printf("✓ SSH ready on %s\n", vmCfg.Name)
+		log.Info("✓ SSH ready on %s", vmCfg.Name)
 	}
 
 	return nil
@@ -264,24 +270,24 @@ func doVMInstallK8s(vmMgr *vm.VMManager) error {
 }
 
 func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager) error {
-	fmt.Println("\n=== Creating Kind Clusters ===")
+	log.Info("\n=== Creating Kind Clusters ===")
 	if err := kindMgr.DeployAllClusters(); err != nil {
 		return fmt.Errorf("failed to deploy Kind clusters: %w", err)
 	}
 
-	fmt.Println("\n=== Cluster Information ===")
+	log.Info("\n=== Cluster Information ===")
 	for _, cluster := range cfg.Kubernetes.Clusters {
 		info, err := kindMgr.GetClusterInfo(cluster.Name)
 		if err != nil {
-			fmt.Printf("Warning: failed to get info for %s: %v\n", cluster.Name, err)
+			log.Warn("Warning: failed to get info for %s: %v", cluster.Name, err)
 			continue
 		}
 
-		fmt.Printf("\nCluster: %s\n", info.Name)
-		fmt.Printf("  Status: %s\n", info.Status)
-		fmt.Printf("  Nodes:\n")
+		log.Info("\nCluster: %s", info.Name)
+		log.Info("  Status: %s", info.Status)
+		log.Info("  Nodes:")
 		for _, node := range info.Nodes {
-			fmt.Printf("    - %s (%s) [%s]\n", node.Name, node.Role, node.Status)
+			log.Info("    - %s (%s) [%s]", node.Name, node.Role, node.Status)
 		}
 	}
 
@@ -289,10 +295,10 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager) error {
 }
 
 func doKindInstallCNI(cfg *config.Config) error {
-	fmt.Println("\n=== Installing CNI on Kind clusters ===")
+	log.Info("\n=== Installing CNI on Kind clusters ===")
 
 	for _, cluster := range cfg.Kubernetes.Clusters {
-		fmt.Printf("\n--- Installing CNI on cluster %s ---\n", cluster.Name)
+		log.Info("\n--- Installing CNI on cluster %s ---", cluster.Name)
 		kubeconfigPath := k8s.GetKubeconfigPath(cluster.Name, cfg.Kubernetes.GetKubeconfigDir())
 		cniType := cni.CNIType(cluster.CNI)
 		cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(cfg, kubeconfigPath)
@@ -305,7 +311,7 @@ func doKindInstallCNI(cfg *config.Config) error {
 		}
 	}
 
-	fmt.Println("\n✓ CNI installation complete on Kind clusters")
+	log.Info("\n✓ CNI installation complete on Kind clusters")
 	return nil
 }
 

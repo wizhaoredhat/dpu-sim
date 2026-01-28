@@ -5,11 +5,12 @@ import (
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/log"
 )
 
 // CreateVM creates a complete VM including disk, cloud-init ISO, and domain
 func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
-	fmt.Printf("=== Creating VM: %s ===\n", vmCfg.Name)
+	log.Info("=== Creating VM: %s ===", vmCfg.Name)
 
 	if m.VMExists(vmCfg.Name) {
 		return fmt.Errorf("VM %s already exists", vmCfg.Name)
@@ -48,7 +49,7 @@ func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
 		return fmt.Errorf("failed to start VM: %w", err)
 	}
 
-	fmt.Printf("✓ Created and started VM: %s\n", vmCfg.Name)
+	log.Info("✓ Created and started VM: %s", vmCfg.Name)
 	return nil
 }
 
@@ -178,7 +179,7 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 
 // CreateAllVMs creates all VMs defined in the configuration
 func (m *VMManager) CreateAllVMs() error {
-	fmt.Println("=== Creating All VMs ===")
+	log.Info("=== Creating All VMs ===")
 
 	for _, vmCfg := range m.config.VMs {
 		if err := m.CreateVM(vmCfg); err != nil {
@@ -186,6 +187,6 @@ func (m *VMManager) CreateAllVMs() error {
 		}
 	}
 
-	fmt.Println("✓ All VMs created successfully")
+	log.Info("✓ All VMs created successfully")
 	return nil
 }

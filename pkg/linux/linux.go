@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // Sets the hostname on the target machine
 func SetHostname(cmdExec platform.CommandExecutor, hostname string) error {
-	fmt.Printf("Setting hostname to %s on %s...\n", hostname, cmdExec.String())
+	log.Debug("Setting hostname to %s on %s...", hostname, cmdExec.String())
 
 	script := fmt.Sprintf("sudo hostnamectl set-hostname %s", hostname)
 
@@ -20,7 +21,7 @@ func SetHostname(cmdExec platform.CommandExecutor, hostname string) error {
 		return fmt.Errorf("failed to set hostname: %w, stdout: %s, stderr: %s", err, stdout, stderr)
 	}
 
-	fmt.Printf("✓ Hostname set to %s\n", hostname)
+	log.Info("✓ Hostname set to %s", hostname)
 	return nil
 }
 
@@ -270,8 +271,6 @@ func InstallKubelet(cmdExec platform.CommandExecutor, distro *platform.Distro, c
 
 // Disable firewall on the targetmachine
 func DisableFirewall(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
-	fmt.Printf("Disabling firewall on %s...\n", cmdExec.String())
-
 	sb := strings.Builder{}
 	sb.WriteString("set -e\n")
 	switch distro.PackageManager {

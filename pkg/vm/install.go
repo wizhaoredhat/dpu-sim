@@ -7,12 +7,13 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // InstallKubernetes installs the software components on a VM
 func (m *VMManager) InstallKubernetes(vmName string) error {
-	fmt.Println("\n=== Installing Kubernetes on VM-based deployment ===")
+	log.Info("\n=== Installing Kubernetes on VM-based deployment ===")
 
 	k8sMgr := k8s.NewK8sMachineManager(m.config)
 
@@ -29,7 +30,7 @@ func (m *VMManager) InstallKubernetes(vmName string) error {
 			return fmt.Errorf("failed to get IP for %s: %w", vmCfg.Name, err)
 		}
 
-		fmt.Printf("\n--- Installing on %s (%s) ---\n", vmCfg.Name, mgmtIP)
+		log.Info("\n--- Installing on %s (%s) ---", vmCfg.Name, mgmtIP)
 
 		// Get Kubernetes version from config
 		k8sVersion := m.config.Kubernetes.Version
@@ -64,7 +65,7 @@ func (m *VMManager) setupOVNBrExForCluster(clusterRoleMapping config.ClusterRole
 				return fmt.Errorf("failed to get K8s IP for %s: %w", vmCfg.Name, err)
 			}
 
-			fmt.Printf("Setting up OVN br-ex on %s (%s) - Mgmt IP: %s, K8s IP: %s\n",
+			log.Debug("Setting up OVN br-ex on %s (%s) - Mgmt IP: %s, K8s IP: %s",
 				vmCfg.Name, role, vmMgmtIP, vmK8sIP)
 
 			exec := platform.NewSSHExecutor(&m.config.SSH, vmMgmtIP)
@@ -120,7 +121,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 
 	firstMasterExec := platform.NewSSHExecutor(&m.config.SSH, firstMasterMgmtIP)
 
-	fmt.Printf("=== Initializing first control plane node: %s ===\n", firstMaster.Name)
+	log.Info("=== Initializing first control plane node: %s ===", firstMaster.Name)
 	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMasterExec, firstMaster.Name, firstMasterK8sIP, podCIDR, serviceCIDR)
 	if err != nil {
 		return fmt.Errorf("failed to initialize control plane on %s: %w", firstMaster.Name, err)
@@ -141,7 +142,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 
 	// Join additional master nodes to the control plane
 	if len(masterVMs) > 1 {
-		fmt.Printf("=== Joining additional control plane nodes ===\n")
+		log.Info("=== Joining additional control plane nodes ===")
 		for _, masterVM := range masterVMs[1:] {
 			masterMgmtIP, err := m.GetVMMgmtIP(masterVM.Name)
 			if err != nil {
@@ -158,7 +159,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	// Join worker nodes to the cluster
 	workerVMs := clusterRoleMapping[config.ClusterRoleWorker]
 	if len(workerVMs) > 0 {
-		fmt.Printf("=== Joining worker nodes ===\n")
+		log.Info("=== Joining worker nodes ===")
 		for _, workerVM := range workerVMs {
 			workerMgmtIP, err := m.GetVMMgmtIP(workerVM.Name)
 			if err != nil {
@@ -172,7 +173,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		}
 	}
 
-	fmt.Printf("✓ Kubernetes cluster %s setup complete\n", clusterName)
+	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)
 	return nil
 }
 
@@ -180,7 +181,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 func (m *VMManager) SetupAllK8sClusters() error {
 	clusterRoleMapping := m.config.GetClusterRoleMapping()
 	for _, clusterName := range m.config.GetClusterNames() {
-		fmt.Printf("=== Setting up Kubernetes cluster %s ===\n", clusterName)
+		log.Info("=== Setting up Kubernetes cluster %s ===", clusterName)
 		if err := m.setupK8sCluster(clusterName, clusterRoleMapping[clusterName]); err != nil {
 			return fmt.Errorf("failed to setup Kubernetes cluster %s: %w", clusterName, err)
 		}
