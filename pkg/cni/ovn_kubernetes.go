@@ -96,7 +96,8 @@ func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, ser
 		return fmt.Errorf("daemonset.sh failed stdout: %s, stderr: %s", output, err)
 	}
 
-	log.Info("✓ daemonset.sh completed successfully, Output: %s", output)
+	log.Info("✓ daemonset.sh completed successfully")
+	log.Debug("daemonset.sh output: %s", output)
 	return nil
 }
 

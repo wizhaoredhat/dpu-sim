@@ -77,7 +77,7 @@ func (m *K8sMachineManager) InstallKubernetes(cmdExec platform.CommandExecutor, 
 }
 
 func (m *K8sMachineManager) SetupOVNBrEx(cmdExec platform.CommandExecutor, mgmtIP string, k8sIP string) error {
-	log.Info("Setting up OVN br-ex on %s (%s)...", mgmtIP, cmdExec.String())
+	log.Info("--- Setting up OVN br-ex on %s (%s) ---", mgmtIP, cmdExec.String())
 
 	mgmtInterfaceInfo, err := network.GetInterfaceByIP(cmdExec, mgmtIP)
 	if err != nil {
@@ -331,8 +331,8 @@ func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecu
 	}
 
 	log.Info("✓ Control plane initialized on %s", machineName)
-	log.Debug("Worker join command: %s", workerJoinCommand)
-	log.Debug("Control plane join command: %s", controlPlaneJoinCommand)
+	log.Info("Worker join command: %s", workerJoinCommand)
+	log.Info("Control plane join command: %s", controlPlaneJoinCommand)
 	log.Info("API server endpoint: %s", apiServerEndpoint)
 	return joinInfo, nil
 }

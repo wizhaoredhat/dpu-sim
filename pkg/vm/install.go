@@ -30,7 +30,7 @@ func (m *VMManager) InstallKubernetes(vmName string) error {
 			return fmt.Errorf("failed to get IP for %s: %w", vmCfg.Name, err)
 		}
 
-		log.Info("\n--- Installing on %s (%s) ---", vmCfg.Name, mgmtIP)
+		log.Info("--- Installing Kubernetes on %s (%s) ---", vmCfg.Name, mgmtIP)
 
 		// Get Kubernetes version from config
 		k8sVersion := m.config.Kubernetes.Version
@@ -121,7 +121,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 
 	firstMasterExec := platform.NewSSHExecutor(&m.config.SSH, firstMasterMgmtIP)
 
-	log.Info("=== Initializing first control plane node: %s ===", firstMaster.Name)
+	log.Info("\n=== Initializing first control plane node: %s ===", firstMaster.Name)
 	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMasterExec, firstMaster.Name, firstMasterK8sIP, podCIDR, serviceCIDR)
 	if err != nil {
 		return fmt.Errorf("failed to initialize control plane on %s: %w", firstMaster.Name, err)
@@ -181,7 +181,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 func (m *VMManager) SetupAllK8sClusters() error {
 	clusterRoleMapping := m.config.GetClusterRoleMapping()
 	for _, clusterName := range m.config.GetClusterNames() {
-		log.Info("=== Setting up Kubernetes cluster %s ===", clusterName)
+		log.Info("\n=== Setting up Kubernetes cluster %s ===", clusterName)
 		if err := m.setupK8sCluster(clusterName, clusterRoleMapping[clusterName]); err != nil {
 			return fmt.Errorf("failed to setup Kubernetes cluster %s: %w", clusterName, err)
 		}

@@ -9,7 +9,7 @@ import (
 // InstallCNI installs the specified CNI on a cluster using the Kubernetes API
 // If kubeconfigPath is provided, it will configure the client from that file
 func (m *CNIManager) InstallCNI(cniType CNIType, clusterName string, k8sIP string) error {
-	log.Info("Installing %s CNI on cluster %s...", cniType, clusterName)
+	log.Info("\n=== Installing %s CNI on cluster %s ===", cniType, clusterName)
 
 	switch cniType {
 	case CNIFlannel:
