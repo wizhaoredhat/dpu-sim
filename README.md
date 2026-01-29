@@ -12,10 +12,14 @@ These are the list of DPUs that this simulation will try to emulate:
 
 All these DPUs have common simularities, some we can emulate better than others. As this DPU simulation project grows there would a increased interest and need to simulate the hardware closely (e.g. eSwitch) in QEMU drivers.
 
+## Status: 🚧 Active Development
+ - `dpu-sim` is functional for VM mode. Kind mode is not fully
+ - `vmctl` is functional for managing VMs created by dpu-sim
+
 ## Features
 
 ### Core Features
-- 🚀 **Two deployment modes**: VMs (libvirt) or Containers (Kind)
+- 🚀 **Multiple deployment modes**: VMs (libvirt) or Containers (Kind)
 - ☸️ Kubernetes (kubeadm, kubelet, kubectl) pre-installed
 - 🔀 OVN-Kubernetes or Flannel CNI support
 - 🌐 Multiple network support (NAT, Layer 2 Bridge)
@@ -36,87 +40,40 @@ All these DPUs have common simularities, some we can emulate better than others.
 - 💾 Lower resource usage than VMs
 - 🔄 Easy cluster recreation for testing
 
-## Quick Start
-
-### Python Dependencies
-
-```bash
-dnf -y install python3 python3-devel
-
-python3 -m venv dpu-sim-venv
-
-source dpu-sim-venv/bin/activate
-
-pip3 install -r requirements.txt
-```
-
-### Kind Mode
-
-```bash
-# Enable k8s repo
-sudo tee /etc/yum.repos.d/kubernetes.repo > /dev/null <<EOF
-[kubernetes]
-name=Kubernetes
-baseurl=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/
-enabled=1
-gpgcheck=1
-gpgkey=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/repodata/repomd.xml.key
-EOF
-
-# Install prerequisites
-sudo dnf install -y podman kubectl
-curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
-chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
-
-# Start Docker
-sudo systemctl enable podman
-sudo systemctl start podman
-
-# Deploy Kind cluster with OVN-Kubernetes
-python3 dpu-sim.py --config config-kind.yaml
-```
-
-### VM Mode
-
-```bash
-# Run quickstart script
-./quickstart.sh
-
-# Deploy VMs and install Kubernetes
-python3 dpu-sim.py
-```
-
 ## Prerequisites
 
 ### System Requirements
 - Fedora/RHEL/CentOS Linux
 - **For VM Mode**: KVM/QEMU virtualization support, at least 12GB RAM, 100GB disk
-- **For Kind Mode**: Docker installed and running, at least 8GB RAM
+- **For Kind Mode**: Container support, at least 8GB RAM
+
+### Dependencies
+Runtime dependencies are automatically installed by dpu-sim. For example the dpu-sim binary will output the following if all depencies are meet on the system:
+```bash
+=== Checking Dependencies ===
+✓ Detected Linux distribution: rhel 9.6 (package manager: dnf, architecture: x86_64)
+✓ wget is installed
+✓ pip3 is installed
+✓ jinjanator is installed
+✓ git is installed
+✓ openvswitch is installed
+✓ libvirt is installed
+✓ qemu-kvm is installed
+✓ qemu-img is installed
+✓ libvirt-devel is installed
+✓ virt-install is installed
+✓ genisoimage is installed
+✓ All dependencies are available
+```
+Seperate dependencies are checked whether the provided configuration file is deploying VM vs. Kind modes.
 
 ### Required Packages
 
-```bash
+The dpu-sim should install all dependecies by detecting the system's Linux distribution. However some distributions require enabling subscriptions to allow the installation of some packages. This is outside the scope of dpu-sim; however depending on the distribution, dpu-sim will try to enable repositories.
 
-subscription-manager repos --enable=codeready-builder-for-rhel-9-$(arch)-rpms
-subscription-manager repos --enable=fast-datapath-for-rhel-9-$(arch)-rpms
-subscription-manager repos --enable=openstack-17-for-rhel-9-$(arch)-rpms
+### Required Services
 
-# Install required system packages
-sudo dnf install -y \
-    gcc \
-    qemu-kvm \
-    qemu-img \
-    python3.12 \
-    python3.12-devel \
-    libvirt \
-    libvirt-devel \
-    virt-install \
-    genisoimage \
-    openvswitch \
-    wget
-```
-
-Start required services:
+Although dpu-sim tries to install dependencies, the user may be required to start required services. This can potentially go away once the handles these required servers in its entirety.
 
 ```bash
 # Start and enable libvirt sockets
@@ -137,12 +94,42 @@ sudo usermod -a -G libvirt $USER
 newgrp libvirt
 ```
 
-### SSH Key Setup
+### Required SSH Key Setup
 
 Generate SSH keys if you don't have them:
 
 ```bash
 ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa
+```
+
+### Compiling Binaries
+
+In order to use the dpu-sim binary, the binaries must be built. To compile the GO binaries, golang compilers must be installed.
+
+```bash
+$ go version
+go version go1.25.3 (Red Hat 1.25.3-1.el9_7) linux/amd64
+$ make build
+Building binaries...
+  Building dpu-sim...
+  Building vmctl...
+Build complete! Binaries are in bin/
+```
+### Makefile Commands
+
+```bash
+make                # Show help
+make build          # Build all binaries
+make test           # Run tests
+make test-coverage  # Run tests with HTML coverage report
+make clean          # Clean build artifacts
+make install        # Install binaries to $GOPATH/bin
+make fmt            # Format code
+make vet            # Run go vet
+make lint           # Run golangci-lint
+make check          # Run fmt, vet, and test
+make build-all      # Cross-compile for multiple platforms
+make deps           # Download dependencies
 ```
 
 ## Configuration
@@ -155,7 +142,6 @@ The simulator supports two deployment modes, configured via different sections i
 ### Kind Mode Configuration (config-kind.yaml)
 
 ```yaml
-# Kind cluster configuration
 kind:
   nodes:
     - role: control-plane
@@ -167,8 +153,8 @@ kubernetes:
   clusters:
     - name: "dpu-sim-kind"
       pod_cidr: "10.244.0.0/16"
-      service_cidr: "10.96.0.0/16"
-      cni: "ovn-kubernetes"  # or 'kindnet' (default)
+      service_cidr: "10.245.0.0/16"
+      cni: "ovn-kubernetes"
 ```
 
 ### VM Mode Configuration (config.yaml)
@@ -181,13 +167,25 @@ networks:
   - name: "mgmt-network"
     type: "mgmt"
     bridge_name: "virbr-mgmt"
-    gateway: "192.168.100.1"
+    gateway: "192.168.120.1"
     subnet_mask: "255.255.255.0"
-    dhcp_start: "192.168.100.10"
-    dhcp_end: "192.168.100.100"
+    dhcp_start: "192.168.120.10"
+    dhcp_end: "192.168.120.100"
     mode: "nat"
     nic_model: "virtio"  # virtio for management network
     attach_to: "any"  # Attach to all VMs: "dpu", "host", or "any"
+
+  - name: "ovn-network"
+    type: "k8s"
+    bridge_name: "ovn"
+    gateway: "192.168.123.1"
+    subnet_mask: "255.255.255.0"
+    dhcp_start: "192.168.123.50"
+    dhcp_end: "192.168.123.100"
+    mode: "nat"
+    nic_model: "igb"  # Intel 82576 emulated NIC
+    use_ovs: false
+    attach_to: "any"
 
   # Pure Layer 2 data network with OVS (no IP/DHCP)
   - name: "data-l2-network"
@@ -201,31 +199,34 @@ networks:
 vms:
   - name: "master-1"
     type: "host"
-    k8s_cluster: "cluster-1" # Cluster assignment
-    k8s_role: "master"       # Control plane node
-    memory: 2048
+    k8s_cluster: "cluster-1"
+    k8s_role: "master"
+    k8s_node_mac: "52:54:00:00:01:11"
+    k8s_node_ip: "192.168.123.11"
+    memory: 4096  # MB
     vcpus: 2
-    disk_size: 20
-    ip: "192.168.100.12"
+    disk_size: 20  # GB
 
   - name: "host-1"
     type: "host"
     k8s_cluster: "cluster-1"
-    k8s_role: "worker"       # Worker node
-    memory: 2048
+    k8s_role: "worker"
+    k8s_node_mac: "52:54:00:00:01:12"
+    k8s_node_ip: "192.168.123.12"
+    memory: 2048  # MB
     vcpus: 2
-    disk_size: 20
-    ip: "192.168.100.13"
+    disk_size: 20  # GB
 
   - name: "dpu-1"
     type: "dpu"
     k8s_cluster: "cluster-1"
     k8s_role: "worker"
+    k8s_node_mac: "52:54:00:00:01:13"
+    k8s_node_ip: "192.168.123.13"
     host: "host-1"
-    memory: 2048
+    memory: 2048  # MB
     vcpus: 2
-    disk_size: 20
-    ip: "192.168.100.14"
+    disk_size: 20  # GB
 
 operating_system:
   # Download from https://download.fedoraproject.org/pub/fedora/linux/releases/
@@ -239,10 +240,21 @@ ssh:
 
 kubernetes:
   version: "1.33"
+  kubeconfig_dir: "kubeconfig"
   clusters:
     - name: "cluster-1"
       pod_cidr: "10.244.0.0/16"
+      service_cidr: "10.245.0.0/16"
+      cni: "ovn-kubernetes"
 ```
+
+### Network Types
+
+Network types change the behaviour of dpu-sim on how they treat the network. For example "k8s" network shouldn't be used to access machines, rather the "mgmt" network should be used (more stable/non-changing)
+
+- **`mgmt`**: A non-changing network to provide SSH access to the machine
+- **`k8s`**: A network that the CNI would have access to. For example OVN-Kubernetes would have control of this network and it's interfaces.
+- **`layer2`**: A network that is layer 2 connection between 2 machines. Currently dpu-sim does not modify this network beyond configuring it.
 
 ### Network Modes
 
@@ -283,9 +295,9 @@ This makes the VMs suitable for:
 
 ### Kubernetes
 
-Kubernetes is the choice for orchestrating DPU deployment. Hence kubernetes installation and usage is assumed. Although you might choose to simulate DPUs without Kubernetes, which currently means to run the `deploy.py` script only.
+Kubernetes is the choice for orchestrating DPU deployment. Hence kubernetes installation and usage is assumed. Although you might choose to simulate DPUs without Kubernetes, which currently means to pass the `--skip-k8s` flag to dpu-sim.
 
-If Kubernetes is needed then the `install_software.py` script would need to be run or `dpu-sim.py` which calls both `deploy.py` and `install_software.py`.
+If Kubernetes is needed then by default dpu-sim will perform those operations automatically.
 
 Each VM must specify which cluster it belongs to using the `k8s_cluster` field, which references a cluster name defined in the `kubernetes.clusters` section.
 
@@ -293,19 +305,26 @@ Each VM in `config.yaml` must have a `k8s_role` field with two supported values:
 - **master**: Kubernetes control plane node
 - **worker**: Kubernetes worker node
 
-Everything Kubernetes related is in the `kubernetes` section. By default version 1.33 Kubernetes version is used however this can be overwritten in the `kubernetes.version` field. Each cluster definition includes:
+Everything Kubernetes related is in the `kubernetes` section. By default version `1.33 Kubernetes` is used however this can be overwritten in the `kubernetes.version` field. The resulting config files are generated and written into the kubeconfig directory by default, but this can be overwritten with `kubeconfig_dir`. Each cluster definition includes:
 - **name**: Unique identifier for the cluster
-- **pod_cidr**: Custom pod network CIDR
+- **pod_cidr**: Default is 10.244.0.0/16. This is the custom pod network CIDR
+- **service_cidr**: Default is 10.245.0.0/16. This is the custom service CIDR.
+- **cni**: Selects which CNI should be used in the cluster such as ovn-kubernetes
 
 Multiple cluster configuration example:
 ```yaml
 kubernetes:
   version: "1.33"
+  kubeconfig_dir: "kubeconfig"
   clusters:
     - name: "cluster-1"
-      pod_cidr: "10.244.0.0/16"  # First cluster pod network
+      pod_cidr: "10.244.0.0/16" # First cluster pod network
+      service_cidr: "10.245.0.0/16"
+      cni: "ovn-kubernetes"
     - name: "cluster-2"
-      pod_cidr: "10.245.0.0/16"  # Second cluster pod network
+      pod_cidr: "10.246.0.0/16" # Second cluster pod network
+      service_cidr: "10.247.0.0/16"
+      cni: "ovn-kubernetes"
 
 vms:
   - name: "master-1"
@@ -337,120 +356,118 @@ For Fedora visit the downloads website https://download.fedoraproject.org/pub/fe
 
 ```yaml
 operating_system:
+  # Download from https://download.fedoraproject.org/pub/fedora/linux/releases/
   image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
   image_name: "Fedora-x86_64.qcow2"
 ```
 
 ## Usage
 
-The `dpu-sim.py` script automatically detects whether to use VM or Kind mode based on your config file.
+The `dpu-sim` executable automatically detects whether to use VM or Kind mode based on your config file.
 
 ### Deployment Options
 
 ```bash
-# Auto-detect mode from config (default: config.yaml = VM mode)
-python3 dpu-sim.py
+# Auto-detect mode from default config (default: config.yaml = VM mode)
+$ ./bin/dpu-sim
 
 # Use Kind mode explicitly
-python3 dpu-sim.py --config config-kind.yaml
-
-# Force a specific mode
-python3 dpu-sim.py --mode kind
-python3 dpu-sim.py --mode vm
+$ ./bin/dpu-sim --config config-kind.yaml
 
 # Skip cleanup (for incremental changes)
-python3 dpu-sim.py --no-cleanup
-
-# Parallel installation (VM mode only)
-python3 dpu-sim.py --parallel
-```
-
-### Kind Mode Usage
-
-```bash
-# Deploy Kind cluster
-python3 kind_deploy.py --config config-kind.yaml
+$ ./bin/dpu-sim --skip-cleanup
 
 # Cleanup only
-python3 kind_deploy.py --cleanup-only
+$ ./bin/dpu-sim --cleanup
+
+# Review all avaialable options
+$ ./bin/dpu-sim --help
+DPU Simulator automates deployment of DPU simulation environments
+using either VMs (libvirt) or containers (Kind), pre-configured with
+Kubernetes and CNI for container networking experiments.
+
+This is the main orchestrator that runs the complete deployment workflow:
+  1. Install dependencies
+  2. Clean up existing resources (Idempotent deployment - can be run multiple times safely)
+  3. Deploy infrastructure (VMs or Kind clusters)
+  4. Install Kubernetes and CNI components
+
+Usage:
+  dpu-sim [flags]
+
+Flags:
+      --cleanup            Only cleanup existing resources, do not deploy
+      --config string      Path to configuration file (default "config.yaml")
+  -h, --help               help for dpu-sim
+      --log-level string   Log level (error, warn, info, debug) (default "info")
+      --skip-cleanup       Skip cleanup of existing resources
+      --skip-deploy        Skip VM/Kind deployment
+      --skip-deps          Skip dependency checks
+      --skip-k8s           Skip Kubernetes (VM only) and CNI installation
 
 # After deployment, use the cluster
-export KUBECONFIG=kubeconfig/dpu-sim-kind.yaml
-kubectl get nodes
-kubectl get pods -A
+$ export KUBECONFIG=kubeconfig/cluster-1.kubeconfig
+$ kubectl get nodes
+$ kubectl get pods -A
 ```
 
-### VM Mode Usage
+### VM/Kind Mode Usage
 
-#### Step 0: Choosing the right script
+#### Step 1: Ensuring dpu-sim is compiled
 
-You can choose to deploy just the VMs with `deploy.py` or deploy the software installation with `install_software.py`. The `dpu-sim.py` script will run both for your convenience.
+Binaries are located by default in `bin`. Make sure dpu-sim compiles sucessfully with the go compiler.
 
-#### Step 1: Deploy VMs
+#### Step 2a: Deploy (VM)
 
 Deploy all Host and DPU VMs and the network:
 
 ```bash
-python3 deploy.py
+$ ./bin/dpu-sim
 ```
 
 This will:
 1. **Clean up any existing VMs and networks** (idempotent deployment - can be run multiple times safely)
 2. Download Cloud Base image (if not present) - We recommend to download from Fedora.
-3. Create custom libvirt networks. All Host and DPUs, the
+3. Create custom libvirt networks. All Host and DPUs will have a dedicated connection between them to simulate a DPU's general design.
 4. Create and start all Host and DPU VMs with cloud-init configuration
 5. Wait for VMs to boot and get IP addresses
+6. Kubernetes gets installed on all VMs.
+  a. Disable swap (required for Kubernetes)
+  b. Configure kernel modules (overlay, br_netfilter)
+  c. Install and configure CRI-O
+  d. Install Open vSwitch
+  e. Installs Kubernetes components (`kubeadm`, `kubelet`, `kubectl`)
+  f. Disable the firewall
+7. One master is chosen to bootstrap the cluster with `kubeadm`
+  a. Additional masters also join the cluster
+8. All workers join the cluster with `kubeadm`
+7. CNI gets installed on the cluster.
+9. Workload pods can now be deployed on the cluster once `dpu-sim` runs to completion sucessfully.
 
-**Note:** The deploy script is idempotent by default - it automatically cleans up existing resources before deploying. You can run it multiple times safely. If you want to skip cleanup for some reason, use `python3 deploy.py --no-cleanup`
+**Note:** The `dpu-sim` application is idempotent by default - it automatically cleans up existing resources before deploying. You can run it multiple times safely. If you want to skip cleanup for some reason, use `dpu-sim --skip-cleanup`
 
-### Step 2: Install Software
+#### Step 2b: Deploy (Kind)
 
-The project supports **fully automated Kubernetes cluster setup** with support for **multiple independent clusters**, each with custom pod network CIDRs. The `install_software.py` script handles all aspects of software installation, cluster initialization, CNI installation, and node joining automatically.
+Deploy all Host and DPU Containers and the network:
 
 ```bash
-python3 install_software.py
+$ ./bin/dpu-sim
 ```
+
+This is currently work in progress.
 
 #### Key Features
 
 - **Automatic Cluster Initialization**: No manual `kubeadm` commands needed
 - **Multiple Cluster Support**: Deploy multiple independent K8s clusters in one configuration
-- **Custom Pod Network CIDRs**: Each cluster can have its own pod network CIDR(default: `10.244.0.0/16`)
+- **Custom Pod Network CIDRs**: Each cluster can have its own pod and/or service network CIDR
 - **Automatic CNI Installation**: Flannel or OVN-Kubernetes is automatically installed and configured
-- **Role-Based Assignment**: VMs are assigned as `master` or `worker` nodes
+- **Role-Based Assignment**: VMs/Kind containers are assigned as `master` or `worker` nodes
 - **Network Isolation**: Different clusters use different overlay networks
-
-#### Automated Setup
-
-The `install_software.py` script automatically SSH into each VM to install components:
-
-For Software Installation on all VMs
-1. Disable swap (required for Kubernetes)
-2. Configure kernel modules (overlay, br_netfilter)
-3. Install and configure CRI-O
-4. Install Open vSwitch
-5. Add the upstream Kubernetes repo
-6. Installs Kubernetes components (kubeadm, kubelet, kubectl)
-7. Disable the firewall
-For Kubernetes Install on selected or all VMs
-1. First the script groups VMs by cluster assignment
-3. Initializes each cluster on its master node with the custom (or default) pod CIDR
-4. Installs and configures a Flannel or OVN-Kubernetes CNI deployment for each cluster
-5. Joins all worker nodes to their respective clusters
-
-Simply run:
-
-```bash
-# Sequential installation (recommended for debugging)
-python3 install_software.py
-
-# Parallel installation (faster)
-python3 install_software.py --parallel
-```
 
 After Installation finished, you should expect these software packages to be running:
 - CRI-O container runtime
-- kubelet (Kubernetes node agent)
+- `kubelet` (Kubernetes node agent)
 - Flannel and other containers are running, for example:
 ```bash
 [root@master-1 ~]# kubectl get pods -A -o wide
@@ -512,21 +529,22 @@ After installation completes, verify your cluster(s):
 
 ```bash
 # Check node status
-python3 vmctl.py exec master-1 'kubectl get nodes'
+$ export KUBECONFIG=./kubeconfig/cluster-1.kubeconfig
+$ kubectl get nodes
 NAME       STATUS   ROLES           AGE   VERSION
 dpu-1      Ready    <none>          13m   v1.33.6
 host-1     Ready    <none>          13m   v1.33.6
 master-1   Ready    control-plane   13m   v1.33.6
 
 # Check all pods
-python3 vmctl.py exec master-1 'kubectl get pods -A'
+$ kubectl get pods -A
 ...
 
 # Check Flannel CNI
-python3 vmctl.py exec master-1 'kubectl get pods -n kube-flannel'
+$ kubectl get pods -n kube-flannel
 
 # Or check OVN-Kubernetes CNI
-python3 vmctl.py exec master-1 'kubectl get pods -n ovn-kubernetes'
+$ kubectl get pods -n ovn-kubernetes
 
 ...
 ```
@@ -535,46 +553,96 @@ python3 vmctl.py exec master-1 'kubectl get pods -n ovn-kubernetes'
 
 ```bash
 # Check cluster-1
-python3 vmctl.py exec master-1 'kubectl get nodes'
+$ export KUBECONFIG=./kubeconfig/cluster-1.kubeconfig
+$ kubectl get nodes
 
 # Check cluster-2
-python3 vmctl.py exec master-2 'kubectl get nodes'
+$ export KUBECONFIG=./kubeconfig/cluster-2.kubeconfig
+$ kubectl get nodes
 
 # Verify different pod CIDRs
-python3 vmctl.py exec master-1 'kubectl get nodes -o jsonpath="{.items[0].spec.podCIDR}"'
+$ export KUBECONFIG=./kubeconfig/cluster-1.kubeconfig
+$ kubectl get nodes -o jsonpath="{.items[0].spec.podCIDR}"
 
-python3 vmctl.py exec master-2 'kubectl get nodes -o jsonpath="{.items[0].spec.podCIDR}"'
+$ export KUBECONFIG=./kubeconfig/cluster-1.kubeconfig
+$ kubectl get nodes -o jsonpath="{.items[0].spec.podCIDR}"
 ```
 
 ### Manage VMs
 
 List all VMs:
 ```bash
-python3 vmctl.py list
+$ ./bin/vmctl list
+VM Name              State           IP Address      vCPUs    Memory
+--------------------------------------------------------------------------------
+master-1             Running         192.168.120.74  2        4096MB
+host-1               Running         192.168.120.66  2        2048MB
+dpu-1                Running         192.168.120.69  2        2048MB
+
 ```
 
 SSH into a VM:
 ```bash
-python3 vmctl.py ssh host-1
-python3 vmctl.py ssh dpu-1
-```
-
-Access serial console:
-```bash
-python3 vmctl.py console host-1
+$ ./bin/vmctl ssh host-1
+Connecting to host-1 (192.168.120.66) as root...
+[systemd]
+Failed Units: 3
+  cloud-final.service
+  cloud-init-main.service
+  NetworkManager-wait-online.service
+[root@host-1 ~]#
 ```
 
 Start/Stop VMs:
 ```bash
-python3 vmctl.py start host-1
-python3 vmctl.py stop host-1
-python3 vmctl.py reboot host-1
+$ ./bin/vmctl list
+VM Name              State           IP Address      vCPUs    Memory
+--------------------------------------------------------------------------------
+master-1             Running         192.168.120.74  2        4096MB
+host-1               Running         192.168.120.66  2        2048MB
+dpu-1                Running         192.168.120.69  2        2048MB
+$ oc get nodes
+NAME       STATUS   ROLES           AGE     VERSION
+dpu-1      Ready    <none>          5h49m   v1.33.7
+host-1     Ready    <none>          5h49m   v1.33.7
+master-1   Ready    control-plane   5h51m   v1.33.7
+$ ./bin/vmctl stop dpu-1
+✓ Shutting down VM 'dpu-1'...
+$ oc get nodes
+NAME       STATUS     ROLES           AGE     VERSION
+dpu-1      NotReady   <none>          5h49m   v1.33.7
+host-1     Ready      <none>          5h49m   v1.33.7
+master-1   Ready      control-plane   5h51m   v1.33.7
+$ ./bin/vmctl list
+VM Name              State           IP Address      vCPUs    Memory
+--------------------------------------------------------------------------------
+master-1             Running         192.168.120.74  2        4096MB
+host-1               Running         192.168.120.66  2        2048MB
+dpu-1                Shut off        N/A             2        2048MB
+$ ./bin/vmctl start dpu-1
+✓ Started VM 'dpu-1'
+$ oc get nodes
+NAME       STATUS   ROLES           AGE     VERSION
+dpu-1      Ready    <none>          5h50m   v1.33.7
+host-1     Ready    <none>          5h50m   v1.33.7
+master-1   Ready    control-plane   5h52m   v1.33.7
+$ ./bin/vmctl list
+VM Name              State           IP Address      vCPUs    Memory
+--------------------------------------------------------------------------------
+master-1             Running         192.168.120.74  2        4096MB
+host-1               Running         192.168.120.66  2        2048MB
+dpu-1                Running         192.168.120.69  2        2048MB
+
 ```
 
 Execute commands remotely:
 ```bash
-python3 vmctl.py exec host-1 "uname -a"
-python3 vmctl.py exec dpu-1 "ip addr show"
+$ ./bin/vmctl exec dpu-1 "uname -a"
+Linux dpu-1 6.17.1-300.fc43.x86_64 #1 SMP PREEMPT_DYNAMIC Mon Oct  6 15:37:21 UTC 2025 x86_64 GNU/Linux
+$ ./bin/vmctl exec dpu-1 "ip link show br-ex"
+9: br-ex: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/ether 52:54:00:00:01:13 brd ff:ff:ff:ff:ff:ff
+
 ```
 
 ### Cleanup
@@ -582,12 +650,55 @@ python3 vmctl.py exec dpu-1 "ip addr show"
 Remove all VMs and networks:
 
 ```bash
-python3 cleanup.py
+$ ./bin/dpu-sim --cleanup
+╔═══════════════════════════════════════════════╗
+║               DPU Simulator                   ║
+╚═══════════════════════════════════════════════╝
+Configuration: config.yaml
+Deployment mode: vm
+
+=== Checking Dependencies ===
+✓ Detected Linux distribution: rhel 9.6 (package manager: dnf, architecture: x86_64)
+✓ wget is installed
+✓ pip3 is installed
+✓ jinjanator is installed
+✓ git is installed
+✓ openvswitch is installed
+✓ libvirt is installed
+✓ qemu-kvm is installed
+✓ qemu-img is installed
+✓ libvirt-devel is installed
+✓ virt-install is installed
+✓ genisoimage is installed
+✓ All dependencies are available
+
+=== Cleaning up K8s ===
+✓ Kubeconfig file removed: kubeconfig/cluster-1.kubeconfig
+
+╔═══════════════════════════════════════════════╗
+║       VM-Based Deployment Workflow            ║
+╚═══════════════════════════════════════════════╝
+=== Cleaning up VMs ===
+✓ Deleted disk: /var/lib/libvirt/images/master-1.qcow2
+✓ Deleted cloud-init ISO: /var/lib/libvirt/images/master-1-cloud-init.iso
+✓ Cleaned up VM: master-1
+✓ Deleted disk: /var/lib/libvirt/images/host-1.qcow2
+✓ Deleted cloud-init ISO: /var/lib/libvirt/images/host-1-cloud-init.iso
+✓ Cleaned up VM: host-1
+✓ Deleted disk: /var/lib/libvirt/images/dpu-1.qcow2
+✓ Deleted cloud-init ISO: /var/lib/libvirt/images/dpu-1-cloud-init.iso
+✓ Cleaned up VM: dpu-1
+=== Cleaning up Networks ===
+✓ Removed network mgmt-network
+✓ Removed network ovn-network
+✓ Removed host-to-DPU network h2d-host-1-dpu-1 (bridge: h2d-83d76b0d2f2)
+
+✓ Cleanup complete. No deployment performed.
 ```
 
 **Warning:** This will permanently delete all VMs and their disks.
 
-**Note:** The deploy script automatically cleans up before deploying, so you typically don't need to run cleanup manually unless you just want to remove everything without redeploying.
+**Note:** The `dpu-sim` application automatically cleans up before deploying, so you typically don't need to run cleanup manually unless you just want to remove everything without redeploying.
 
 ## VM Access Details
 
@@ -604,23 +715,58 @@ python3 cleanup.py
 ## Project File Structure
 
 ```
-├── bridge_utils.py       # Bridge and networking naming utilities
-├── cfg_utils.py          # Configuration utilities
-├── cleanup.py            # For removing VMs, networks, and resources
-├── config-2-cluster.yaml # Configuration for 2-cluster deployment
-├── config-kind.yaml      # Configuration for Kind (container) mode
-├── config.yaml           # Default configuration (VM mode)
-├── deploy.py             # VM and networking deployment script
-├── dpu-sim.py            # Main entry point (supports both modes)
-├── install_software.py   # K8s and OVS installation for VMs
-├── kind_deploy.py        # Kind cluster deployment script
-├── kind_utils.py         # Kind-specific utilities
-├── quickstart.sh         # Quick setup of dependencies
-├── README.md             # This file
-├── requirements.txt      # Python dependencies
-├── ssh_utils.py          # SSH utilities for VMs
-├── vm_utils.py           # VM (libvirt) utilities
-└── vmctl.py              # VM management utility
+├── cmd/dpu-sim
+│   ├── main.go           # The main application execution for deploying the simulation
+├── cmd/vmctl
+│   ├── main.go           # The helper application to manage virtual machines
+├── pkg/cni
+│   ├── flannel.go        # Functions to install Flannel CNI
+│   ├── install.go        # Delagates CNI installation
+│   ├── multus.go         # Functions to install Multus CNI
+│   ├── ovn_kubernetes.go # Functions to install OVN-Kubernetes CNI
+│   ├── types.go          # Types related to CNI
+├── pkg/config
+│   ├── config.go         # Functions to manage configuration files
+│   ├── config_test.go    # Unit tests for configuration files
+│   ├── types.go          # Types related to Config
+├── pkg/k8s
+│   ├── cleanup.go
+│   ├── client.go
+│   ├── install.go
+│   ├── types.go
+├── pkg/kind
+│   ├── cleanup.go
+│   ├── cluster.go
+│   ├── config.go
+│   ├── types.go
+├── pkg/linux
+│   ├── linux.go
+├── pkg/log
+│   ├── log.go
+├── pkg/network
+│   ├── network.go
+│   ├── network_test.go
+├── pkg/platform
+│   ├── deps.go
+│   ├── distro.go
+│   ├── distro_test.go
+│   ├── executor.go
+│   ├── executor_test.go
+│   ├── types.go
+├── pkg/requirements
+│   ├── requirements.go
+├── pkg/ssh
+│   ├── ssh.go
+│   ├── ssh_test.go
+├── pkg/vm
+│   ├── cleanup.go
+│   ├──  create.go
+│   ├── disk.go
+│   ├──  info.go
+│   ├── install.go
+│   ├── lifecycle.go
+│   ├──  network.go
+│   ├──  types.go
 ```
 
 ## Troubleshooting
@@ -629,14 +775,19 @@ python3 cleanup.py
 
 Wait 1-2 minutes for VMs to boot. Check VM status:
 ```bash
-python3 vmctl.py list
+$ ./bin/vmctl list
+VM Name              State           IP Address      vCPUs    Memory
+--------------------------------------------------------------------------------
+master-1             Running         192.168.120.74  2        4096MB
+host-1               Running         192.168.120.66  2        2048MB
+dpu-1                Running         192.168.120.69  2        2048MB
 ```
 
 ### Cannot connect via SSH
 
-1. Verify VM is running: `python3 vmctl.py list`
+1. Verify VM is running: `./bin/vmctl list`
 2. Check VM has IP address
-3. Try console access: `python3 vmctl.py console host-1`
+3. Try SSH access: `./bin/vmctl ssh host-1`
 4. Verify SSH key exists: `ls -la ~/.ssh/id_rsa*`
 
 ### Permission denied errors
@@ -658,47 +809,21 @@ The download may take time depending on your connection. If it fails:
 2. Verify the image URL in `config.yaml` is correct
 3. Manually download to `/var/lib/libvirt/images/`
 
-### Check Cluster Status
-
-```bash
-# View detailed node information
-python3 vmctl.py exec master-1 'kubectl get nodes -o wide'
-
-# Check system pod status
-python3 vmctl.py exec master-1 'kubectl get pods -A'
-```
-
 ### View Cluster Logs
 
 ```bash
 # Check kubelet logs on any node
-python3 vmctl.py exec <vm-name> 'sudo journalctl -u kubelet -n 50'
+./bin/vmctl exec <vm-name> 'sudo journalctl -u kubelet -n 50'
 
 # Check kubeadm init logs on master
-python3 vmctl.py exec master-1 'cat /tmp/kubeadm-init.log'
-```
-
-### Reset and Reinitialize the Cluster
-
-If you need to reset a cluster:
-
-```bash
-# On master node
-python3 vmctl.py exec master-1 'sudo kubeadm reset -f'
-
-# On worker nodes
-python3 vmctl.py exec host-1 'sudo kubeadm reset -f'
-python3 vmctl.py exec dpu-1 'sudo kubeadm reset -f'
-
-# Re-run installation
-python3 install_software.py
+./bin/vmctl exec <vm-master-name> 'cat /tmp/kubeadm-init.log'
 ```
 
 ## Open vSwitch Usage
 
-### OVS Data Bridge (on Host)
+### OVS Data Bridge (on Host system)
 
-If you configured a network with `use_ovs: true`, an OVS bridge is created on the host that connects all VMs:
+If you configured a network with `use_ovs: true`, an OVS bridge is created on the host system that connects all VMs:
 
 ```bash
 # Check OVS bridge status on host
@@ -732,7 +857,7 @@ Each VM also has OVS installed for custom networking inside the VM:
 
 ```bash
 # SSH into any VM
-python3 vmctl.py ssh host-1
+./bin/vmctl ssh host-1
 
 # Check OVS status
 sudo ovs-vsctl show
