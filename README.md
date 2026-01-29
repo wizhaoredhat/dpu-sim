@@ -726,7 +726,7 @@ Deployment mode: vm
 │   ├── ovn_kubernetes.go # Functions to install OVN-Kubernetes CNI
 │   ├── types.go          # Types related to CNI
 ├── pkg/config
-│   ├── config.go         # Functions to manage configuration files
+│   ├── config.go         # Functions to manage configuration YAML files
 │   ├── config_test.go    # Unit tests for configuration files
 │   ├── types.go          # Types related to Config
 ├── pkg/k8s
@@ -744,7 +744,7 @@ Deployment mode: vm
 ├── pkg/log
 │   ├── log.go
 ├── pkg/network
-│   ├── network.go
+│   ├── network.go       # Bridge name generation & Networking helper functions
 │   ├── network_test.go
 ├── pkg/platform
 │   ├── deps.go
@@ -756,7 +756,7 @@ Deployment mode: vm
 ├── pkg/requirements
 │   ├── requirements.go
 ├── pkg/ssh
-│   ├── ssh.go
+│   ├── ssh.go           # Execute commands on remote hosts
 │   ├── ssh_test.go
 ├── pkg/vm
 │   ├── cleanup.go
@@ -767,6 +767,23 @@ Deployment mode: vm
 │   ├── lifecycle.go
 │   ├──  network.go
 │   ├──  types.go
+```
+
+## Testing
+
+### Unit Tests
+
+Each package has unit tests:
+
+```bash
+# Run all tests
+make test
+
+# Run specific package
+go test ./pkg/config/
+
+# Run with coverage
+go test -cover ./pkg/config/
 ```
 
 ## Troubleshooting
