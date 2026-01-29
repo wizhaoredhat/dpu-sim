@@ -44,8 +44,8 @@ func TestGetHostToDPUNetworkName(t *testing.T) {
 		dpuName  string
 		expected string
 	}{
-		{"host-1", "dpu-1", "host-1-to-dpu-1"},
-		{"master", "worker", "master-to-worker"},
+		{"host-1", "dpu-1", "h2d-host-1-dpu-1"},
+		{"master", "worker", "h2d-master-worker"},
 	}
 
 	for _, tt := range tests {
