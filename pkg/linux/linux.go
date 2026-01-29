@@ -409,3 +409,35 @@ func InstallKind(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 	}
 	return nil
 }
+
+func ConfigureIpv6(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	switch distro.PackageManager {
+	case platform.DNF:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "sysctl", "-w", "net.ipv6.conf.all.disable_ipv6=0"); err != nil {
+			return fmt.Errorf("failed to configure ipv6: %w", err)
+		}
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "sysctl", "-w", "net.ipv6.conf.all.forwarding=1"); err != nil {
+			return fmt.Errorf("failed to configure ipv6: %w", err)
+		}
+	default:
+		return platform.UnsupportedPackageManager(distro)
+	}
+	return nil
+}
+
+func CheckIpv6(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	switch distro.PackageManager {
+	case platform.DNF:
+		stdout, stderr, err := cmdExec.Execute("sysctl net.ipv6.conf.all.disable_ipv6")
+		if strings.TrimSpace(stdout) != "0" {
+			return fmt.Errorf("ipv6 is not disabled: stdout: %s, stderr: %s, err: %w", stdout, stderr, err)
+		}
+		stdout, stderr, err = cmdExec.Execute("sysctl net.ipv6.conf.all.forwarding")
+		if strings.TrimSpace(stdout) != "1" {
+			return fmt.Errorf("ipv6 forwarding is not enabled: stdout: %s, stderr: %s, err: %w", stdout, stderr, err)
+		}
+	default:
+		return platform.UnsupportedPackageManager(distro)
+	}
+	return nil
+}

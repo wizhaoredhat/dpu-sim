@@ -275,7 +275,6 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager) error {
 		return fmt.Errorf("failed to deploy Kind clusters: %w", err)
 	}
 
-	log.Info("\n=== Cluster Information ===")
 	for _, cluster := range cfg.Kubernetes.Clusters {
 		info, err := kindMgr.GetClusterInfo(cluster.Name)
 		if err != nil {
@@ -289,6 +288,14 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager) error {
 		for _, node := range info.Nodes {
 			log.Info("    - %s (%s) [%s]", node.Name, node.Role, node.Status)
 		}
+
+		for _, node := range info.Nodes {
+			dockerExec := platform.NewDockerExecutor(node.Name)
+			if err := kindMgr.InstallDependencies(dockerExec); err != nil {
+				return fmt.Errorf("failed to install Kind dependencies on %s: %w", node.Name, err)
+			}
+		}
+
 	}
 
 	return nil

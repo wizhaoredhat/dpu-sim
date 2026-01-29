@@ -7,11 +7,25 @@ import (
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/k8s"
+	"github.com/wizhao/dpu-sim/pkg/linux"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 	"go.yaml.in/yaml/v2"
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 	"sigs.k8s.io/kind/pkg/cluster"
 )
+
+func (m *KindManager) InstallDependencies(cmdExec platform.CommandExecutor) error {
+	deps := []platform.Dependency{
+		{
+			Name:        "IPv6",
+			Reason:      "Required for Kind clusters",
+			CheckFunc:   linux.CheckIpv6,
+			InstallFunc: linux.ConfigureIpv6,
+		},
+	}
+	return platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config)
+}
 
 // DeployAllClusters deploys all Kind clusters defined in the config
 func (m *KindManager) DeployAllClusters() error {
