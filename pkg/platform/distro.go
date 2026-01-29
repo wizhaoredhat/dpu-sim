@@ -16,6 +16,11 @@ func (d *Distro) IsFedoraLike() bool {
 	return strings.Contains(d.IDLike, "fedora") || strings.Contains(d.IDLike, "rhel")
 }
 
+// IsRHEL returns true if the distro is RHEL
+func (d *Distro) IsRHEL() bool {
+	return d.ID == "rhel"
+}
+
 // IsDebianLike returns true if the distro is Debian-based (Debian, Ubuntu, etc.)
 func (d *Distro) IsDebianLike() bool {
 	switch d.ID {

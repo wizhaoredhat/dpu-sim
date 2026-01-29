@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wizhao/dpu-sim/pkg/log"
 )
 
 func TestLocalExecutor_Execute(t *testing.T) {
@@ -80,21 +82,30 @@ func TestLocalExecutor_RunCmd(t *testing.T) {
 	cmdExec := NewLocalExecutor()
 
 	t.Run("successful command", func(t *testing.T) {
-		err := cmdExec.RunCmd("true")
+		err := cmdExec.RunCmd(log.LevelInfo, "true")
 		if err != nil {
 			t.Errorf("RunCmd() unexpected error: %v", err)
 		}
 	})
 
 	t.Run("failing command", func(t *testing.T) {
-		err := cmdExec.RunCmd("false")
+		err := cmdExec.RunCmd(log.LevelInfo, "false")
 		if err == nil {
 			t.Error("RunCmd() expected error, got nil")
 		}
 	})
 
 	t.Run("command with arguments", func(t *testing.T) {
-		err := cmdExec.RunCmd("test", "-d", "/tmp")
+		err := cmdExec.RunCmd(log.LevelInfo, "test", "-d", "/tmp")
+		if err != nil {
+			t.Errorf("RunCmd() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("debug level command silent at info level", func(t *testing.T) {
+		// Ensure log level is Info (default)
+		log.SetLevel(log.LevelInfo)
+		err := cmdExec.RunCmd(log.LevelDebug, "echo", "this should be silent")
 		if err != nil {
 			t.Errorf("RunCmd() unexpected error: %v", err)
 		}
@@ -242,7 +253,7 @@ func (e *MockExecutor) ExecuteWithTimeout(command string, timeout time.Duration)
 	return "mock output", "", nil
 }
 
-func (e *MockExecutor) RunCmd(name string, args ...string) error {
+func (e *MockExecutor) RunCmd(level log.Level, name string, args ...string) error {
 	cmd := name
 	for _, arg := range args {
 		cmd += " " + arg
@@ -294,7 +305,7 @@ func TestMockExecutor_BasicOperations(t *testing.T) {
 	})
 
 	t.Run("run cmd records commands", func(t *testing.T) {
-		err := cmdExec.RunCmd("sudo", "dnf", "install", "-y", "package")
+		err := cmdExec.RunCmd(log.LevelInfo, "sudo", "dnf", "install", "-y", "package")
 		if err != nil {
 			t.Errorf("RunCmd() unexpected error: %v", err)
 		}
@@ -349,7 +360,7 @@ func TestMockExecutor_FailureScenarios(t *testing.T) {
 	})
 
 	t.Run("run cmd fails when ShouldFail is true", func(t *testing.T) {
-		err := cmdExec.RunCmd("test")
+		err := cmdExec.RunCmd(log.LevelInfo, "test")
 		if err == nil {
 			t.Error("RunCmd() expected error, got nil")
 		}

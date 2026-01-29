@@ -13,7 +13,7 @@ import (
 
 // InstallKubernetes installs the software components on a VM
 func (m *VMManager) InstallKubernetes(vmName string) error {
-	log.Info("\n=== Installing Kubernetes on VM-based deployment ===")
+	log.Info("=== Installing Kubernetes on VM-based deployment ===")
 
 	k8sMgr := k8s.NewK8sMachineManager(m.config)
 

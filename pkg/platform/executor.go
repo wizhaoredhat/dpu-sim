@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/ssh"
 )
 
@@ -30,9 +31,11 @@ type CommandExecutor interface {
 	// ExecuteWithTimeout runs a command with a specific timeout
 	ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error)
 
-	// RunCmd executes a command with arguments, streaming output to stdout/stderr
-	// This is suitable for interactive commands or commands that need visible output
-	RunCmd(name string, args ...string) error
+	// RunCmd executes a command with arguments
+	// The level parameter controls output visibility:
+	// - If level <= global log level: output streams to stdout/stderr
+	// - If level > global log level: output is captured silently (included in error on failure)
+	RunCmd(level log.Level, name string, args ...string) error
 
 	// WriteFile writes content to a file on the target system
 	WriteFile(path string, content []byte, mode os.FileMode) error
@@ -81,12 +84,27 @@ func (e *LocalExecutor) ExecuteWithTimeout(command string, timeout time.Duration
 	return stdoutBuf.String(), stderrBuf.String(), err
 }
 
-// RunCmd executes a command with arguments, streaming output to stdout/stderr
-func (e *LocalExecutor) RunCmd(name string, args ...string) error {
+// RunCmd executes a command with arguments
+func (e *LocalExecutor) RunCmd(level log.Level, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	// If the requested level is visible, stream to stdout/stderr
+	if level <= log.GetLevel() {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	// Otherwise capture output silently
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdoutBuf.String(), stderrBuf.String())
+	}
+	return nil
 }
 
 // WriteFile writes content to a file on the local system
@@ -149,8 +167,8 @@ func (e *SSHExecutor) ExecuteWithTimeout(command string, timeout time.Duration) 
 	return e.client.ExecuteWithTimeout(e.ip, command, timeout)
 }
 
-// RunCmd executes a command with arguments, streaming output to stdout/stderr
-func (e *SSHExecutor) RunCmd(name string, args ...string) error {
+// RunCmd executes a command with arguments
+func (e *SSHExecutor) RunCmd(level log.Level, name string, args ...string) error {
 	// Build the command string
 	command := name
 	for _, arg := range args {
@@ -160,13 +178,23 @@ func (e *SSHExecutor) RunCmd(name string, args ...string) error {
 	}
 
 	stdout, stderr, err := e.ExecuteWithTimeout(command, 5*time.Minute)
-	if stdout != "" {
-		fmt.Print(stdout)
+
+	// If the requested level is visible, print output
+	if level <= log.GetLevel() {
+		if stdout != "" {
+			fmt.Print(stdout)
+		}
+		if stderr != "" {
+			fmt.Fprint(os.Stderr, stderr)
+		}
+		return err
 	}
-	if stderr != "" {
-		fmt.Fprint(os.Stderr, stderr)
+
+	// Otherwise only include output in error
+	if err != nil {
+		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	return err
+	return nil
 }
 
 // WriteFile writes content to a file on the remote system
@@ -245,15 +273,30 @@ func (e *DockerExecutor) ExecuteWithTimeout(command string, timeout time.Duratio
 	return stdoutBuf.String(), stderrBuf.String(), err
 }
 
-// RunCmd executes a command with arguments inside the container, streaming output
-func (e *DockerExecutor) RunCmd(name string, args ...string) error {
+// RunCmd executes a command with arguments inside the container
+func (e *DockerExecutor) RunCmd(level log.Level, name string, args ...string) error {
 	dockerArgs := []string{"exec", e.containerID, name}
 	dockerArgs = append(dockerArgs, args...)
 
 	cmd := exec.Command("docker", dockerArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	// If the requested level is visible, stream to stdout/stderr
+	if level <= log.GetLevel() {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	// Otherwise capture output silently
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdoutBuf.String(), stderrBuf.String())
+	}
+	return nil
 }
 
 // WriteFile writes content to a file inside the container

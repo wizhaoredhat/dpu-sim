@@ -29,11 +29,11 @@ func SetHostname(cmdExec platform.CommandExecutor, hostname string) error {
 func InstallGenericPackage(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	switch distro.PackageManager {
 	case platform.DNF:
-		if err := cmdExec.RunCmd("sudo", platform.DNF, "install", "-y", dep.Name); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", dep.Name); err != nil {
 			return fmt.Errorf("failed to install %s: %w", dep.Name, err)
 		}
 	case platform.APT:
-		if err := cmdExec.RunCmd("sudo", platform.APT, "install", "-y", dep.Name); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.APT, "install", "-y", dep.Name); err != nil {
 			return fmt.Errorf("failed to install %s: %w", dep.Name, err)
 		}
 	default:
@@ -46,11 +46,11 @@ func InstallGenericPackage(cmdExec platform.CommandExecutor, distro *platform.Di
 func CheckGenericPackage(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	switch distro.PackageManager {
 	case platform.DNF:
-		if err := cmdExec.RunCmd("rpm", "-q", dep.Name); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "rpm", "-q", dep.Name); err != nil {
 			return fmt.Errorf("package %s is not installed: %w", dep.Name, err)
 		}
 	case platform.APT:
-		if err := cmdExec.RunCmd("dpkg", "-s", dep.Name); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "dpkg", "-s", dep.Name); err != nil {
 			return fmt.Errorf("package %s is not installed: %w", dep.Name, err)
 		}
 	default:
@@ -96,10 +96,10 @@ func ConfigureK8sKernelModules(cmdExec platform.CommandExecutor, distro *platfor
 		return fmt.Errorf("failed to write modules load file: %w", err)
 	}
 	// Load kernel modules
-	if err := cmdExec.RunCmd("sudo", "modprobe", "overlay"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "modprobe", "overlay"); err != nil {
 		return fmt.Errorf("failed to modprobe overlay: %w", err)
 	}
-	if err := cmdExec.RunCmd("sudo", "modprobe", "br_netfilter"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "modprobe", "br_netfilter"); err != nil {
 		return fmt.Errorf("failed to modprobe br_netfilter: %w", err)
 	}
 	// Enable IPv4 packets to be routed between interfaces
@@ -111,7 +111,7 @@ func ConfigureK8sKernelModules(cmdExec platform.CommandExecutor, distro *platfor
 		return fmt.Errorf("failed to write sysctl file: %w", err)
 	}
 	// Apply sysctl params without reboot
-	if err := cmdExec.RunCmd("sudo", "sysctl", "--system"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "sysctl", "--system"); err != nil {
 		return fmt.Errorf("failed to apply sysctl params: %w", err)
 	}
 	return nil
@@ -153,24 +153,24 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 			return fmt.Errorf("failed to write cri-o repo file: %w", err)
 		}
 		// Install CRI-O, iproute-tc, and containernetworking-plugins (standard CNI plugins like bridge, host-local, etc.)
-		if err := cmdExec.RunCmd("sudo", platform.DNF, "install", "-y", "cri-o", "iproute-tc", "containernetworking-plugins"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "cri-o", "iproute-tc", "containernetworking-plugins"); err != nil {
 			return fmt.Errorf("failed to install CRI-O: %w", err)
 		}
 		// On Fedora, CNI plugins are installed to /usr/libexec/cni/ but CRI-O looks in /opt/cni/bin/
 		// Create symlinks so CRI-O can find them
-		if err := cmdExec.RunCmd("sudo", "mkdir", "-p", "/opt/cni/bin"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "mkdir", "-p", "/opt/cni/bin"); err != nil {
 			return fmt.Errorf("failed to create /opt/cni/bin: %w", err)
 		}
-		if err := cmdExec.RunCmd("sudo", "ln", "-sf", "/usr/libexec/cni/*", "/opt/cni/bin/"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "ln", "-sf", "/usr/libexec/cni/*", "/opt/cni/bin/"); err != nil {
 			return fmt.Errorf("failed to create symlinks: %w", err)
 		}
 	} else {
 		return platform.UnsupportedPackageManager(distro)
 	}
-	if err := cmdExec.RunCmd("sudo", "systemctl", "enable", "crio"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "crio"); err != nil {
 		return fmt.Errorf("failed to enable CRI-O: %w", err)
 	}
-	if err := cmdExec.RunCmd("sudo", "systemctl", "start", "crio"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "start", "crio"); err != nil {
 		return fmt.Errorf("failed to start CRI-O: %w", err)
 	}
 	return nil
@@ -181,27 +181,32 @@ func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distr
 	switch distro.PackageManager {
 	case platform.DNF:
 		if distro.Architecture == platform.X86_64 {
-			_ = cmdExec.RunCmd("sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
+			if distro.IsRHEL() {
+				err := cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
+				if err != nil {
+					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
+				}
+			}
 		} else {
 			return platform.UnsupportedArchitecture(distro)
 		}
-		if err := cmdExec.RunCmd("sudo", platform.DNF, "install", "-y", "openvswitch"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "openvswitch"); err != nil {
 			return fmt.Errorf("failed to install openvswitch: %w", err)
 		}
 	case platform.APT:
-		if err := cmdExec.RunCmd("sudo", platform.APT, "install", "-y", "openvswitch-switch"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.APT, "install", "-y", "openvswitch-switch"); err != nil {
 			return fmt.Errorf("failed to install openvswitch: %w", err)
 		}
 	default:
 		return platform.UnsupportedPackageManager(distro)
 	}
-	if err := cmdExec.RunCmd("sudo", "systemctl", "enable", "openvswitch"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "openvswitch"); err != nil {
 		return fmt.Errorf("failed to enable openvswitch: %w", err)
 	}
-	if err := cmdExec.RunCmd("sudo", "systemctl", "restart", "NetworkManager"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "restart", "NetworkManager"); err != nil {
 		return fmt.Errorf("failed to restart NetworkManager: %w", err)
 	}
-	if err := cmdExec.RunCmd("sudo", "systemctl", "start", "openvswitch"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "start", "openvswitch"); err != nil {
 		return fmt.Errorf("failed to start openvswitch: %w", err)
 	}
 	return nil
@@ -212,11 +217,16 @@ func InstallNetworkManagerOpenVSwitch(cmdExec platform.CommandExecutor, distro *
 	switch distro.PackageManager {
 	case platform.DNF:
 		if distro.Architecture == platform.X86_64 {
-			_ = cmdExec.RunCmd("sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
+			if distro.IsRHEL() {
+				err := cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
+				if err != nil {
+					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
+				}
+			}
 		} else {
 			return platform.UnsupportedArchitecture(distro)
 		}
-		if err := cmdExec.RunCmd("sudo", platform.DNF, "install", "-y", "NetworkManager-ovs"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "NetworkManager-ovs"); err != nil {
 			return fmt.Errorf("failed to install NetworkManager-ovs: %w", err)
 		}
 	case platform.APT:
@@ -224,13 +234,13 @@ func InstallNetworkManagerOpenVSwitch(cmdExec platform.CommandExecutor, distro *
 	default:
 		return platform.UnsupportedPackageManager(distro)
 	}
-	if err := cmdExec.RunCmd("sudo", "systemctl", "enable", "openvswitch"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "openvswitch"); err != nil {
 		return fmt.Errorf("failed to enable openvswitch: %w", err)
 	}
-	if err := cmdExec.RunCmd("sudo", "systemctl", "restart", "NetworkManager"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "restart", "NetworkManager"); err != nil {
 		return fmt.Errorf("failed to restart NetworkManager: %w", err)
 	}
-	if err := cmdExec.RunCmd("sudo", "systemctl", "start", "openvswitch"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "start", "openvswitch"); err != nil {
 		return fmt.Errorf("failed to start openvswitch: %w", err)
 	}
 	return nil
@@ -257,13 +267,13 @@ func InstallKubelet(cmdExec platform.CommandExecutor, distro *platform.Distro, c
 			return fmt.Errorf("failed to write repo file: %w", err)
 		}
 		// Install kubelet, kubeadm, kubectl
-		if err := cmdExec.RunCmd("sudo", platform.DNF, "install", "-y", "kubelet", "kubeadm", "kubectl", "--setopt=disable_excludes=kubernetes"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "kubelet", "kubeadm", "kubectl", "--setopt=disable_excludes=kubernetes"); err != nil {
 			return fmt.Errorf("failed to install kubelet, kubeadm, kubectl: %w", err)
 		}
 	default:
 		return platform.UnsupportedPackageManager(distro)
 	}
-	if err := cmdExec.RunCmd("sudo", "systemctl", "enable", "kubelet"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "kubelet"); err != nil {
 		return fmt.Errorf("failed to enable kubelet: %w", err)
 	}
 	return nil
@@ -306,7 +316,7 @@ func CheckFirewallDisabled(cmdExec platform.CommandExecutor, distro *platform.Di
 
 // InstallJinjanator installs jinjanator via pip3 on the target machine
 func InstallJinjanator(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
-	if err := cmdExec.RunCmd("pip3", "install", "--user", "jinjanator[yaml]"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "pip3", "install", "--user", "jinjanator[yaml]"); err != nil {
 		return fmt.Errorf("failed to install jinjanator: %w", err)
 	}
 	return nil
@@ -329,7 +339,7 @@ func InstallKubectl(cmdExec platform.CommandExecutor, distro *platform.Distro, c
 			return fmt.Errorf("failed to write repo file: %w", err)
 		}
 		// Install kubectl
-		if err := cmdExec.RunCmd("sudo", platform.DNF, "install", "-y", "kubectl"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "kubectl"); err != nil {
 			return fmt.Errorf("failed to install kubectl: %w", err)
 		}
 	default:
@@ -342,16 +352,16 @@ func InstallKubectl(cmdExec platform.CommandExecutor, distro *platform.Distro, c
 func InstallContainerRuntime(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	switch distro.PackageManager {
 	case platform.DNF:
-		if err := cmdExec.RunCmd("sudo", platform.DNF, "install", "-y", "podman"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "podman"); err != nil {
 			return fmt.Errorf("failed to install podman: %w", err)
 		}
-		if err := cmdExec.RunCmd("sudo", platform.DNF, "install", "-y", "docker"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "docker"); err != nil {
 			return fmt.Errorf("failed to install docker: %w", err)
 		}
-		if err := cmdExec.RunCmd("sudo", "systemctl", "start", "podman"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "start", "podman"); err != nil {
 			return fmt.Errorf("failed to start podman: %w", err)
 		}
-		if err := cmdExec.RunCmd("sudo", "systemctl", "enable", "podman"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "podman"); err != nil {
 			return fmt.Errorf("failed to enable podman: %w", err)
 		}
 	default:
@@ -364,21 +374,21 @@ func InstallContainerRuntime(cmdExec platform.CommandExecutor, distro *platform.
 func InstallKind(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	switch distro.Architecture {
 	case platform.X86_64:
-		if err := cmdExec.RunCmd("curl", "-Lo", "./kind", "https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "curl", "-Lo", "./kind", "https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64"); err != nil {
 			return fmt.Errorf("failed to download kind: %w", err)
 		}
 	case platform.AARCH64:
-		if err := cmdExec.RunCmd("curl", "-Lo", "./kind", "https://kind.sigs.k8s.io/dl/latest/kind-linux-arm64"); err != nil {
+		if err := cmdExec.RunCmd(log.LevelDebug, "curl", "-Lo", "./kind", "https://kind.sigs.k8s.io/dl/latest/kind-linux-arm64"); err != nil {
 			return fmt.Errorf("failed to download kind: %w", err)
 		}
 	default:
 		return platform.UnsupportedArchitecture(distro)
 	}
 
-	if err := cmdExec.RunCmd("chmod", "+x", "./kind"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "chmod", "+x", "./kind"); err != nil {
 		return fmt.Errorf("failed to chmod kind: %w", err)
 	}
-	if err := cmdExec.RunCmd("sudo", "mv", "./kind", "/usr/local/bin/kind"); err != nil {
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "mv", "./kind", "/usr/local/bin/kind"); err != nil {
 		return fmt.Errorf("failed to move kind to /usr/local/bin: %w", err)
 	}
 	return nil
