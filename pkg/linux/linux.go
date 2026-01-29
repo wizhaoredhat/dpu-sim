@@ -182,7 +182,15 @@ func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distr
 	case platform.DNF:
 		if distro.Architecture == platform.X86_64 {
 			if distro.IsRHEL() {
-				err := cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
+				err := cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=codeready-builder-for-rhel-9-x86_64-rpms")
+				if err != nil {
+					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
+				}
+				err = cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=fast-datapath-for-rhel-9-x86_64-rpms")
+				if err != nil {
+					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
+				}
+				err = cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
 				if err != nil {
 					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
 				}
@@ -218,7 +226,15 @@ func InstallNetworkManagerOpenVSwitch(cmdExec platform.CommandExecutor, distro *
 	case platform.DNF:
 		if distro.Architecture == platform.X86_64 {
 			if distro.IsRHEL() {
-				err := cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
+				err := cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=codeready-builder-for-rhel-9-x86_64-rpms")
+				if err != nil {
+					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
+				}
+				err = cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=fast-datapath-for-rhel-9-x86_64-rpms")
+				if err != nil {
+					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
+				}
+				err = cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
 				if err != nil {
 					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
 				}

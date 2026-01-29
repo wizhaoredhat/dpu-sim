@@ -214,7 +214,12 @@ func runExec(cmd *cobra.Command, args []string) error {
 func runStart(cmd *cobra.Command, args []string) error {
 	vmName := args[0]
 
-	vmMgr, err := vm.NewVMManager(nil)
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
@@ -231,7 +236,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 func runStop(cmd *cobra.Command, args []string) error {
 	vmName := args[0]
 
-	vmMgr, err := vm.NewVMManager(nil)
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
@@ -248,7 +258,12 @@ func runStop(cmd *cobra.Command, args []string) error {
 func runDestroy(cmd *cobra.Command, args []string) error {
 	vmName := args[0]
 
-	vmMgr, err := vm.NewVMManager(nil)
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
@@ -265,7 +280,12 @@ func runDestroy(cmd *cobra.Command, args []string) error {
 func runReboot(cmd *cobra.Command, args []string) error {
 	vmName := args[0]
 
-	vmMgr, err := vm.NewVMManager(nil)
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create VM manager: %w", err)
 	}
