@@ -13,6 +13,7 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/log"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -607,5 +608,28 @@ func (c *K8sClient) RolloutRestartDaemonSet(namespace, name string) error {
 	}
 
 	log.Info("✓ Triggered rollout restart for daemonset %s/%s", namespace, name)
+	return nil
+}
+
+// DeleteDaemonSet deletes a DaemonSet by name from the specified namespace.
+func (c *K8sClient) DeleteDaemonSet(namespace, name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Check if the DaemonSet exists
+	_, err := c.clientset.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Info("DaemonSet %s/%s does not exist, skipping deletion", namespace, name)
+			return nil
+		}
+		return fmt.Errorf("failed to get daemonset %s/%s: %w", namespace, name, err)
+	}
+
+	if err := c.clientset.AppsV1().DaemonSets(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("failed to delete daemonset %s/%s: %w", namespace, name, err)
+	}
+
+	log.Info("✓ Deleted DaemonSet %s/%s", namespace, name)
 	return nil
 }

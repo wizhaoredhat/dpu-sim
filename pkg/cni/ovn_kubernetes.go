@@ -339,5 +339,9 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsN
 		log.Info("✓ OVN-Kubernetes pods are ready, installed successfully!")
 	}
 
+	if err := m.k8sClient.DeleteDaemonSet("kube-system", "kube-proxy"); err != nil {
+		return fmt.Errorf("failed to delete kube-proxy DaemonSet: %w", err)
+	}
+
 	return nil
 }
