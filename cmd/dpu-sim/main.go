@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/kind"
@@ -184,7 +183,7 @@ func runKindDeploymentWorkflow(cfg *config.Config) error {
 
 	if !skipK8s {
 		log.Info("\n=== Installing CNI ===")
-		if err := doKindInstallCNI(cfg); err != nil {
+		if err := doKindInstallCNI(kindMgr); err != nil {
 			return fmt.Errorf("CNI installation failed: %w", err)
 		}
 	} else {
@@ -301,24 +300,12 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager) error {
 	return nil
 }
 
-func doKindInstallCNI(cfg *config.Config) error {
+func doKindInstallCNI(kindMgr *kind.KindManager) error {
 	log.Info("\n=== Installing CNI on Kind clusters ===")
 
-	for _, cluster := range cfg.Kubernetes.Clusters {
-		log.Info("\n--- Installing CNI on cluster %s ---", cluster.Name)
-		kubeconfigPath := k8s.GetKubeconfigPath(cluster.Name, cfg.Kubernetes.GetKubeconfigDir())
-		cniType := cni.CNIType(cluster.CNI)
-		cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(cfg, kubeconfigPath)
-		if err != nil {
-			return fmt.Errorf("failed to create CNI manager: %w", err)
-		}
-
-		if err := cniMgr.InstallCNI(cniType, cluster.Name, ""); err != nil {
-			return fmt.Errorf("failed to install CNI on cluster %s: %w", cluster.Name, err)
-		}
+	if err := kindMgr.InstallCNI(); err != nil {
+		return fmt.Errorf("failed to deploy CNI: %w", err)
 	}
-
-	log.Info("\n✓ CNI installation complete on Kind clusters")
 	return nil
 }
 

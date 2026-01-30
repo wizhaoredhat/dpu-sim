@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
+	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/linux"
 	"github.com/wizhao/dpu-sim/pkg/log"
@@ -45,6 +47,41 @@ func (m *KindManager) DeployAllClusters() error {
 			return fmt.Errorf("failed to save kubeconfig for %s: %w", cluster.Name, err)
 		}
 	}
+	return nil
+}
+
+func (m *KindManager) InstallCNI() error {
+	for _, cluster := range m.config.Kubernetes.Clusters {
+		log.Info("\n--- Installing CNI on cluster %s ---", cluster.Name)
+		cniType := cni.CNIType(cluster.CNI)
+
+		if cniType == cni.CNIOVNKubernetes {
+			if err := m.PullAndLoadImage(cluster.Name, cni.DefaultOVNImage); err != nil {
+				return fmt.Errorf("failed to load OVN-Kubernetes image: %w", err)
+			}
+		}
+
+		kubeconfigContent, err := m.GetKubeconfigContent(cluster.Name)
+		if err != nil {
+			return fmt.Errorf("failed to get kubeconfig for cluster %s: %w", cluster.Name, err)
+		}
+
+		cniMgr, err := cni.NewCNIManagerWithKubeconfig(m.config, kubeconfigContent)
+		if err != nil {
+			return fmt.Errorf("failed to create CNI manager: %w", err)
+		}
+
+		apiServerIP, err := m.GetInternalAPIServerIP(cluster.Name)
+		if err != nil {
+			return fmt.Errorf("failed to get internal API server IP for cluster %s: %w", cluster.Name, err)
+		}
+
+		if err := cniMgr.InstallCNI(cniType, cluster.Name, apiServerIP); err != nil {
+			return fmt.Errorf("failed to install CNI on cluster %s: %w", cluster.Name, err)
+		}
+	}
+
+	log.Info("\n✓ CNI installation complete on Kind clusters")
 	return nil
 }
 
@@ -180,12 +217,26 @@ func (m *KindManager) GetKubeconfig(name string, kubeconfigPath string) error {
 		return fmt.Errorf("failed to get kubeconfig for cluster %s: %w", name, err)
 	}
 
+	// Ensure parent directory exists
+	kubeconfigDir := filepath.Dir(kubeconfigPath)
+	if err := os.MkdirAll(kubeconfigDir, 0755); err != nil {
+		return fmt.Errorf("failed to create kubeconfig directory %s: %w", kubeconfigDir, err)
+	}
+
 	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
 		return fmt.Errorf("failed to write kubeconfig to %s: %w", kubeconfigPath, err)
 	}
 
 	log.Info("✓ Kubeconfig saved to: %s", kubeconfigPath)
 	return nil
+}
+
+func (m *KindManager) GetKubeconfigContent(name string) (string, error) {
+	if !m.ClusterExists(name) {
+		return "", fmt.Errorf("cluster %s does not exist", name)
+	}
+
+	return m.provider.KubeConfig(name, false)
 }
 
 // LoadImage loads a Docker image into a Kind cluster
@@ -240,4 +291,82 @@ func (m *KindManager) ExportLogs(clusterName, outputDir string) error {
 
 	log.Info("✓ Logs exported to: %s", outputDir)
 	return nil
+}
+
+// GetInternalAPIServerIP retrieves the internal API server IP for a Kind cluster.
+// This returns the control plane node's (or load balancer's) IP address
+// in the kind network, suitable for in-cluster communication (e.g., https://172.18.0.2:6443).
+// For HA clusters with multiple control planes, this returns the load balancer IP.
+func (m *KindManager) GetInternalAPIServerIP(clusterName string) (string, error) {
+	if !m.ClusterExists(clusterName) {
+		return "", fmt.Errorf("cluster %s does not exist", clusterName)
+	}
+
+	// Get the internal kubeconfig which contains the control plane node's DNS name
+	// (or load balancer DNS name for HA clusters)
+	internalKubeconfig, err := m.provider.KubeConfig(clusterName, true) // true = internal
+	if err != nil {
+		return "", fmt.Errorf("failed to get internal kubeconfig: %w", err)
+	}
+
+	// Extract the server URL from the kubeconfig
+	var serverURL string
+	for _, line := range strings.Split(internalKubeconfig, "\n") {
+		if strings.Contains(line, "server:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				serverURL = parts[1]
+				break
+			}
+		}
+	}
+
+	if serverURL == "" {
+		return "", fmt.Errorf("failed to extract server URL from kubeconfig")
+	}
+
+	// Extract the node name (e.g., https://cluster-control-plane:6443 -> cluster-control-plane)
+	// This could be a control plane node or a load balancer for HA clusters
+	hostPart := strings.TrimPrefix(serverURL, "https://")
+	nodeName := strings.Split(hostPart, ":")[0]
+
+	// Get the node IP address from Docker using the kind network
+	cmd := exec.Command("docker", "inspect", "-f",
+		"{{.NetworkSettings.Networks.kind.IPAddress}}", nodeName)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get node IP for %s: %w", nodeName, err)
+	}
+
+	nodeIP := strings.TrimSpace(string(output))
+	if nodeIP == "" {
+		return "", fmt.Errorf("node IP is empty for %s", nodeName)
+	}
+
+	log.Info("Internal API server IP for cluster %s: %s", clusterName, nodeIP)
+	return nodeIP, nil
+}
+
+// PullAndLoadImage pulls a Docker image from a registry and loads it into a Kind cluster.
+// If the image already exists locally, it skips the pull step.
+func (m *KindManager) PullAndLoadImage(clusterName, imageName string) error {
+	if !m.ClusterExists(clusterName) {
+		return fmt.Errorf("cluster %s does not exist", clusterName)
+	}
+
+	log.Info("Pulling image %s...", imageName)
+
+	// Pull the image first to ensure it exists locally
+	pullCmd := exec.Command("docker", "pull", imageName)
+	pullCmd.Stdout = os.Stdout
+	pullCmd.Stderr = os.Stderr
+
+	if err := pullCmd.Run(); err != nil {
+		return fmt.Errorf("failed to pull image %s: %w", imageName, err)
+	}
+
+	log.Info("✓ Pulled image: %s", imageName)
+
+	// Load the image into Kind
+	return m.LoadImage(clusterName, imageName)
 }
