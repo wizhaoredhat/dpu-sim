@@ -1317,6 +1317,175 @@ sudo ovs-vsctl list-br
 sudo ovs-vsctl add-port br0 eth1
 ```
 
+## Design
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                      dpu-sim Deployment Flow                                                    │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+                                         ┌──────────────────┐
+                                         │  User runs       │
+                                         │  dpu-sim         │
+                                         └────────┬─────────┘
+                                                  │
+                                                  ▼
+                                         ┌──────────────────┐
+                                         │ Load config.yaml │
+                                         │(config.LoadConfig)│
+                                         └────────┬─────────┘
+                                                  │
+                                                  ▼
+                                         ┌──────────────────┐
+                                         │EnsureDependencies│◀─── Check: docker, kind, kubectl, etc.
+                                         │ (if not skipped) │
+                                         └────────┬─────────┘
+                                                  │
+                                                  ▼
+                                         ┌──────────────────┐
+                                         │  Clean up stale  │
+                                         │  kubeconfigs     │
+                                         └────────┬─────────┘
+                                                  │
+                                                  ▼
+                                    ┌─────────────┴─────────────┐
+                                    │    Deployment Mode?       │
+                                    └─────────────┬─────────────┘
+                                                  │
+                        ┌─────────────────────────┼─────────────────────────┐
+                        │ VM Mode                 │                         │ Kind Mode
+                        ▼                         │                         ▼
+           ┌────────────────────────┐             │            ┌────────────────────────┐
+           │    NewVMManager()      │             │            │   NewKindManager()     │
+           │  (connect to libvirt)  │             │            │   (Kind provider)      │
+           └───────────┬────────────┘             │            └───────────┬────────────┘
+                       │                          │                        │
+                       ▼                          │                        ▼
+           ┌────────────────────────┐             │            ┌────────────────────────┐
+           │    CleanupAll()        │             │            │    CleanupAll()        │
+           │  (VMs, Networks, Disks)│             │            │  (Delete Kind clusters)│
+           └───────────┬────────────┘             │            └───────────┬────────────┘
+                       │                          │                        │
+═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
+                       │  PHASE 1: INFRASTRUCTURE │                        │  PHASE 1: CLUSTER CREATION
+═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
+                       ▼                          │                        ▼
+           ┌────────────────────────┐             │            ┌────────────────────────┐
+           │  CreateAllNetworks()   │             │            │  DeployAllClusters()   │
+           └───────────┬────────────┘             │            └───────────┬────────────┘
+                       │                          │                        │
+              ┌────────┴────────┐                 │                        │ (for each cluster)
+              ▼                 ▼                 │                        ▼
+        ┌──────────┐    ┌─────────────┐           │            ┌────────────────────────┐
+        │   NAT    │    │  L2-Bridge  │           │            │  BuildKindConfig()     │
+        │ Networks │    │  Networks   │           │            │  - Nodes (CP/worker)   │
+        │ (DHCP)   │    │ (OVS/Linux) │           │            │  - Pod/Service CIDR    │
+        └────┬─────┘    └──────┬──────┘           │            │  - Disable default CNI │
+             │                 │                  │            │  - kubeadm patches     │
+             └────────┬────────┘                  │            └───────────┬────────────┘
+                      │                           │                        │
+                      ▼                           │                        ▼
+           ┌────────────────────────┐             │            ┌────────────────────────┐
+           │Create Host-DPU Networks│             │            │   provider.Create()    │◀─── Kind library creates:
+           │  (Implicit OVS links)  │             │            │                        │     - Docker containers
+           └───────────┬────────────┘             │            │                        │     - Docker network
+                       │                          │            │                        │     - kubeadm init/join
+                       ▼                          │            └───────────┬────────────┘
+           ┌────────────────────────┐             │                        │
+           │    CreateAllVMs()      │             │                        ▼
+           └───────────┬────────────┘             │            ┌────────────────────────┐
+                       │                          │            │   GetKubeconfig()      │
+                       │ (for each VM)            │            │   Save to file         │
+                       ▼                          │            └───────────┬────────────┘
+           ┌────────────────────────┐             │                        │
+           │ CreateVMDisk()         │             │                        ▼
+           │ (qemu-img, qcow2)      │             │            ┌────────────────────────┐
+           │ CreateCloudInitISO()   │             │            │ InstallDependencies()  │
+           │ - meta-data (hostname) │             │            └───────────┬────────────┘
+           │ - user-data (SSH, pkg) │             │                        │
+           └───────────┬────────────┘             │                        │
+                       │                          │                        ▼
+                       ▼                          │            ┌────────────────────────┐
+           ┌────────────────────────┐             │            │ InstallDependencies()  │
+           │  GenerateVMXML()       │             │            │ (IPv6 on each node     │
+           │  - CPU, Memory         │             │            │  via docker exec)      │
+           │  - Disks (qcow2, ISO)  │             │            └───────────┬────────────┘
+           │  - Network interfaces  │             │                        │
+           │    (mgmt, k8s, host to │             │                        │
+           │    dpu)                │             │                        │
+           └───────────┬────────────┘             │                        │
+                       │                          │                        │
+                       ▼                          │                        │
+           ┌────────────────────────┐             │                        │
+           │ DomainDefineXML()      │             │                        │
+           │ SetAutostart()         │             │                        │
+           │ domain.Create()        │◀─── Start  │                        │
+           └───────────┬────────────┘     QEMU    │                        │
+                       │                          │                        │
+                       ▼                          │                        │
+           ┌────────────────────────┐             │                        │
+           │   WaitForVMIP()        │             │                        │
+           │   (DHCP lease, 5min)   │             │                        │
+           │   WaitForSSH()         │             │                        │
+           │   (SSH ready, 5min)    │             │                        │
+           └───────────┬────────────┘             │                        │
+                       │                          │                        │
+═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
+                       │   PHASE 2: KUBERNETES    │                        │   PHASE 2: CNI INSTALLATION
+═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
+                       ▼                          │                        ▼
+           ┌────────────────────────┐             │            ┌────────────────────────┐
+           │ InstallKubernetes()    │             │            │    InstallCNI()        │
+           │ (on each VM via SSH)   │             │            │ (for each cluster)     │
+           │ - containerd           │             │            └───────────┬────────────┘
+           │ - kubeadm, kubelet     │             │                        │
+           │ - kubectl              │             │               ┌────────┴────────┐
+           └───────────┬────────────┘             │               │                 │
+                       │                          │               ▼                 ▼
+                       ▼                          │     ┌─────────────────┐  ┌─────────────────┐
+           ┌────────────────────────┐             │     │ OVN-Kubernetes? │  │ Other CNI       │
+           │ SetupAllK8sClusters()  │             │     │ Yes             │  │ (Flannel, etc.) │
+           │ kubeadm init           │             │     └────────┬────────┘  └────────┬────────┘
+           └───────────┬────────────┘             │              │                    │
+                       │                          │              ▼                    │
+                       ▼                          │     ┌─────────────────┐           │
+           ┌────────────────────────┐             |     │PullAndLoadImage │           │
+           │ Save Kubeconfig        │             │     │(docker pull +   │           │
+           └───────────┬────────────┘             │     │ kind load)      │           │
+                       │                          │     └────────┬────────┘           │
+                       ▼                          │              │                    │
+           ┌────────────────────────┐             │              └─────────┬──────────┘
+           │ cniMgr.InstallCNI()    │             │                        │
+           │ - Apply manifests      │             │                        ▼
+           │ - Wait for pods ready  │             │            ┌────────────────────────┐
+           │ - Delete kube-proxy    │             │            │ GetInternalAPIServerIP │
+           │   (if OVN-K8s)         │             │            │ (docker inspect)       │
+           └───────────┬────────────┘             │            └───────────┬────────────┘
+                       │                          │                        │
+           ┌────────────────────────┐             │                        ▼
+           │ Join other masters &   │             │            ┌────────────────────────┐
+           │ workers via kubeadm    │             │            │ cniMgr.InstallCNI()    │
+           └───────────┬────────────┘             │            │ - Apply manifests      │
+                       │                          │            │ - Wait for pods ready  │
+                       │                          │            │ - Delete kube-proxy    │
+                       │                          │            │   (if OVN-K8s)         │
+                       |                          │            └───────────┬────────────┘
+                       |                          │                        │
+                       │                          │                        │
+═══════════════════════╪══════════════════════════╪════════════════════════╪═══════════════════════════════════════
+                       │                          │                        │
+                       ▼                          │                        ▼
+           ┌────────────────────────┐             │            ┌────────────────────────┐
+           │  ✓ VM Deployment       │            │            │  ✓ Kind Deployment     │
+           │    Complete!           │             │            │    Complete!           │
+           │                        │             │            │                        │
+           │  • VMs running         │             │            │  • Clusters running    │
+           │  • K8s installed       │             │            │  • CNI deployed        │
+           │  • CNI deployed        │             │            │  • Kubeconfigs saved   │
+           │  • Kubeconfigs saved   │             │            │                        │
+           └────────────────────────┘             │            └────────────────────────┘
+                                                  │
+                                                  │
+```
 ## License
 
 This project is provided as-is for educational and development purposes.
