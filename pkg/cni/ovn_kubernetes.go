@@ -325,6 +325,12 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsN
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
+	ovnImage := "ovn-kube-fedora:dpu-sim"
+	err = platform.BuildOVNKubernetesImage(ovnImage, "")
+	if err != nil {
+		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+	}
+
 	if err := m.runDaemonsetScript(ovnKPath, apiServerURL, podCIDR, serviceCIDR, DefaultOVNImage); err != nil {
 		return fmt.Errorf("failed to run daemonset.sh: %w", err)
 	}

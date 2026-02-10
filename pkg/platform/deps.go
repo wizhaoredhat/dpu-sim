@@ -258,3 +258,94 @@ func EnsureOVNKubernetesSource() (string, error) {
 	log.Info("✓ OVN-Kubernetes is cloned to %s", ovnPath)
 	return ovnPath, nil
 }
+
+// BuildOVNKubernetesImage builds the OVN-Kubernetes container image from the local
+// source code using the Dockerfile.fedora in ovn-kubernetes/dist/images/.
+// imageName specifies the tag for the built image (e.g., "ovn-kube-fedora:latest").
+// By default, OVN/OVS RPMs are downloaded from Koji. To build OVN from source instead,
+// set ovnGitRef to a branch/tag/commit (e.g., "main"); pass an empty string for Koji.
+func BuildOVNKubernetesImage(imageName string, ovnGitRef string) error {
+	ovnPath, err := EnsureOVNKubernetesSource()
+	if err != nil {
+		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
+	}
+
+	dockerfile := filepath.Join(ovnPath, "dist", "images", "Dockerfile.fedora")
+	if _, err := os.Stat(dockerfile); os.IsNotExist(err) {
+		return fmt.Errorf("Dockerfile.fedora not found at %s", dockerfile)
+	}
+
+	// Determine architecture (match Makefile: x86_64->amd64, aarch64->arm64)
+	arch := runtime.GOARCH // "amd64", "arm64", etc.
+
+	// Build the Go builder image reference (matches Makefile GO_IMAGE)
+	const goVersion = "1.24"
+	goImage := fmt.Sprintf("quay.io/projectquay/golang:%s", goVersion)
+
+	// Determine OVN_FROM: "koji" (pre-built RPMs) or "source" (build from git)
+	ovnFrom := "koji"
+	if ovnGitRef != "" {
+		ovnFrom = "source"
+	}
+
+	args := []string{
+		"build",
+		"--build-arg", "BUILDER_IMAGE=" + goImage,
+		"--build-arg", "OVN_FROM=" + ovnFrom,
+		"--build-arg", "OVN_KUBERNETES_DIR=.",
+		"--platform", "linux/" + arch,
+		"-t", imageName,
+		"-f", dockerfile,
+	}
+
+	// When building OVN from source, resolve the git ref to a SHA and pass it
+	if ovnGitRef != "" {
+		ovnRepo := "https://github.com/ovn-org/ovn.git"
+		sha, err := resolveGitRef(ovnRepo, ovnGitRef)
+		if err != nil {
+			return fmt.Errorf("failed to resolve OVN git ref %q: %w", ovnGitRef, err)
+		}
+		args = append(args,
+			"--build-arg", "OVN_REPO="+ovnRepo,
+			"--build-arg", "OVN_GITREF="+sha,
+		)
+	}
+
+	// Build context is the ovn-kubernetes repo root
+	args = append(args, ovnPath)
+
+	log.Info("Building OVN-Kubernetes image %s (OVN_FROM=%s, arch=%s)...", imageName, ovnFrom, arch)
+
+	cmd := exec.Command("docker", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+	}
+
+	log.Info("✓ OVN-Kubernetes image built successfully: %s", imageName)
+	return nil
+}
+
+// resolveGitRef resolves a git ref (branch, tag, or commit) to a full SHA using ls-remote.
+func resolveGitRef(repo, ref string) (string, error) {
+	cmd := exec.Command("git", "ls-remote", repo, ref)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git ls-remote failed: %w", err)
+	}
+
+	lines := strings.TrimSpace(string(output))
+	if lines == "" {
+		// The ref might already be a commit SHA; return it as-is
+		return ref, nil
+	}
+
+	// Take the last line (sorted by ref name) and extract the SHA
+	parts := strings.Fields(lines)
+	if len(parts) < 1 {
+		return ref, nil
+	}
+	return parts[0], nil
+}
