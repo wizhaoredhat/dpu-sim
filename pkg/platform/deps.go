@@ -292,6 +292,9 @@ func BuildOVNKubernetesImage(cmdExec CommandExecutor, imageName string, ovnGitRe
 	}
 	arch := targetArch.GoArch()
 
+	// Detect whether "docker" is actually podman (common on Fedora/RHEL)
+	isPodman := isDockerPodman(cmdExec)
+
 	// Build the Go builder image reference
 	const goVersion = "1.24"
 	goImage := fmt.Sprintf("quay.io/projectquay/golang:%s", goVersion)
@@ -307,9 +310,29 @@ func BuildOVNKubernetesImage(cmdExec CommandExecutor, imageName string, ovnGitRe
 		"--build-arg", "BUILDER_IMAGE=" + goImage,
 		"--build-arg", "OVN_FROM=" + ovnFrom,
 		"--build-arg", "OVN_KUBERNETES_DIR=.",
+		// Podman does not auto-populate BUILDPLATFORM/TARGETOS/TARGETARCH
+		// the way Docker BuildKit does. Pass them explicitly so the
+		// Dockerfile's cross-compilation logic works correctly.
+		"--build-arg", "BUILDPLATFORM=linux/" + arch,
+		"--build-arg", "TARGETOS=linux",
+		"--build-arg", "TARGETARCH=" + arch,
 		"--platform", "linux/" + arch,
 		"-t", imageName,
 		"-f", dockerfile,
+	}
+
+	// When using podman, mount a persistent host directory for the Go build cache.
+	// podman build --volume requires absolute host paths (no named volumes).
+	// Without this, every COPY layer change wipes the Go compiler cache and
+	// forces a full recompilation of all ~1000 packages (~5+ min).
+	// With the cache, only changed packages are recompiled.
+	if isPodman {
+		cacheDir, err := getGoBuildCacheDir()
+		if err != nil {
+			log.Warn("Warning: could not create Go build cache dir, build may be slower: %v", err)
+		} else {
+			args = append(args, "--volume", cacheDir+":/root/.cache/go-build:Z")
+		}
 	}
 
 	// When building OVN from source, resolve the git ref to a SHA and pass it
@@ -336,6 +359,31 @@ func BuildOVNKubernetesImage(cmdExec CommandExecutor, imageName string, ovnGitRe
 
 	log.Info("✓ OVN-Kubernetes image built successfully: %s", imageName)
 	return nil
+}
+
+// isDockerPodman detects whether the "docker" command is actually podman.
+// On Fedora/RHEL systems, podman is often aliased as docker.
+func isDockerPodman(cmdExec CommandExecutor) bool {
+	stdout, _, err := cmdExec.Execute("docker --version")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(stdout), "podman")
+}
+
+// getGoBuildCacheDir returns an absolute path to a persistent directory used
+// to cache Go build artifacts across podman builds. The directory is created
+// under the user's cache directory if it does not already exist.
+func getGoBuildCacheDir() (string, error) {
+	cacheHome, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user cache dir: %w", err)
+	}
+	dir := filepath.Join(cacheHome, "dpu-sim", "ovn-go-build-cache")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create cache dir %s: %w", dir, err)
+	}
+	return dir, nil
 }
 
 // writeDockerignore writes a .dockerignore file to the build context directory.
