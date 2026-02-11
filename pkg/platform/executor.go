@@ -37,8 +37,21 @@ type CommandExecutor interface {
 	// - If level > global log level: output is captured silently (included in error on failure)
 	RunCmd(level log.Level, name string, args ...string) error
 
+	// RunCmdInDir executes a command with arguments in a specific working directory.
+	// Behaves like RunCmd but sets the working directory before execution.
+	RunCmdInDir(level log.Level, dir string, name string, args ...string) error
+
+	// FileExists checks if a file or directory exists on the target system
+	FileExists(path string) (bool, error)
+
+	// ReadFile reads the contents of a file on the target system
+	ReadFile(path string) ([]byte, error)
+
 	// WriteFile writes content to a file on the target system
 	WriteFile(path string, content []byte, mode os.FileMode) error
+
+	// RemoveAll removes a path and any children it contains on the target system
+	RemoveAll(path string) error
 
 	// GetDistro returns the Linux distribution information for this executor's target
 	GetDistro() (*Distro, error)
@@ -107,9 +120,55 @@ func (e *LocalExecutor) RunCmd(level log.Level, name string, args ...string) err
 	return nil
 }
 
+// RunCmdInDir executes a command with arguments in a specific working directory
+func (e *LocalExecutor) RunCmdInDir(level log.Level, dir string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+
+	// If the requested level is visible, stream to stdout/stderr
+	if level <= log.GetLevel() {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	// Otherwise capture output silently
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdoutBuf.String(), stderrBuf.String())
+	}
+	return nil
+}
+
+// FileExists checks if a file or directory exists on the local system
+func (e *LocalExecutor) FileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// ReadFile reads the contents of a file on the local system
+func (e *LocalExecutor) ReadFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+
 // WriteFile writes content to a file on the local system
 func (e *LocalExecutor) WriteFile(path string, content []byte, mode os.FileMode) error {
 	return os.WriteFile(path, content, mode)
+}
+
+// RemoveAll removes a path and any children it contains on the local system
+func (e *LocalExecutor) RemoveAll(path string) error {
+	return os.RemoveAll(path)
 }
 
 // GetDistro returns the Linux distribution information for the local machine
@@ -197,6 +256,53 @@ func (e *SSHExecutor) RunCmd(level log.Level, name string, args ...string) error
 	return nil
 }
 
+// RunCmdInDir executes a command with arguments in a specific working directory via SSH
+func (e *SSHExecutor) RunCmdInDir(level log.Level, dir string, name string, args ...string) error {
+	// Build the command string with cd prefix
+	command := fmt.Sprintf("cd '%s' && '%s'", dir, name)
+	for _, arg := range args {
+		escaped := strings.ReplaceAll(arg, "'", "'\"'\"'")
+		command += " '" + escaped + "'"
+	}
+
+	stdout, stderr, err := e.ExecuteWithTimeout(command, 5*time.Minute)
+
+	// If the requested level is visible, print output
+	if level <= log.GetLevel() {
+		if stdout != "" {
+			fmt.Print(stdout)
+		}
+		if stderr != "" {
+			fmt.Fprint(os.Stderr, stderr)
+		}
+		return err
+	}
+
+	// Otherwise only include output in error
+	if err != nil {
+		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	return nil
+}
+
+// FileExists checks if a file or directory exists on the remote system
+func (e *SSHExecutor) FileExists(path string) (bool, error) {
+	_, _, err := e.Execute(fmt.Sprintf("test -e '%s'", path))
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+// ReadFile reads the contents of a file on the remote system
+func (e *SSHExecutor) ReadFile(path string) ([]byte, error) {
+	stdout, _, err := e.Execute(fmt.Sprintf("cat '%s'", path))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s via SSH: %w", path, err)
+	}
+	return []byte(stdout), nil
+}
+
 // WriteFile writes content to a file on the remote system
 func (e *SSHExecutor) WriteFile(path string, content []byte, mode os.FileMode) error {
 	// Use heredoc to write file content
@@ -211,6 +317,12 @@ func (e *SSHExecutor) WriteFile(path string, content []byte, mode os.FileMode) e
 	}
 
 	return nil
+}
+
+// RemoveAll removes a path and any children it contains on the remote system
+func (e *SSHExecutor) RemoveAll(path string) error {
+	_, _, err := e.Execute(fmt.Sprintf("rm -rf '%s'", path))
+	return err
 }
 
 // GetDistro returns the Linux distribution information for the remote machine
@@ -299,6 +411,55 @@ func (e *DockerExecutor) RunCmd(level log.Level, name string, args ...string) er
 	return nil
 }
 
+// RunCmdInDir executes a command with arguments in a specific working directory inside the container
+func (e *DockerExecutor) RunCmdInDir(level log.Level, dir string, name string, args ...string) error {
+	// Build the command string with cd prefix
+	command := fmt.Sprintf("cd '%s' && '%s'", dir, name)
+	for _, arg := range args {
+		escaped := strings.ReplaceAll(arg, "'", "'\\''")
+		command += " '" + escaped + "'"
+	}
+
+	dockerArgs := []string{"exec", e.containerID, "sh", "-c", command}
+	cmd := exec.Command("docker", dockerArgs...)
+
+	// If the requested level is visible, stream to stdout/stderr
+	if level <= log.GetLevel() {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	// Otherwise capture output silently
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdoutBuf.String(), stderrBuf.String())
+	}
+	return nil
+}
+
+// FileExists checks if a file or directory exists inside the container
+func (e *DockerExecutor) FileExists(path string) (bool, error) {
+	_, _, err := e.Execute(fmt.Sprintf("test -e '%s'", path))
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+// ReadFile reads the contents of a file inside the container
+func (e *DockerExecutor) ReadFile(path string) ([]byte, error) {
+	stdout, _, err := e.Execute(fmt.Sprintf("cat '%s'", path))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s in container: %w", path, err)
+	}
+	return []byte(stdout), nil
+}
+
 // WriteFile writes content to a file inside the container
 func (e *DockerExecutor) WriteFile(path string, content []byte, mode os.FileMode) error {
 	// Use docker cp via stdin
@@ -324,6 +485,12 @@ func (e *DockerExecutor) WriteFile(path string, content []byte, mode os.FileMode
 	}
 
 	return nil
+}
+
+// RemoveAll removes a path and any children it contains inside the container
+func (e *DockerExecutor) RemoveAll(path string) error {
+	_, _, err := e.Execute(fmt.Sprintf("rm -rf '%s'", path))
+	return err
 }
 
 // GetDistro returns the Linux distribution information for the container

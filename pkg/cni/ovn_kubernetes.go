@@ -320,13 +320,14 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsN
 		return fmt.Errorf("failed to patch CoreDNS: %w", err)
 	}
 
-	ovnKPath, err := platform.EnsureOVNKubernetesSource()
+	localExec := platform.NewLocalExecutor()
+
+	ovnKPath, err := platform.EnsureOVNKubernetesSource(localExec)
 	if err != nil {
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
-	ovnImage := "ovn-kube-fedora:dpu-sim"
-	err = platform.BuildOVNKubernetesImage(ovnImage, "")
+	err = platform.BuildOVNKubernetesImage(localExec, "ovn-kube-fedora:dpu-sim", "")
 	if err != nil {
 		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
 	}

@@ -4,7 +4,6 @@ package platform
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -162,32 +161,26 @@ func getOVNKubernetesPath() (string, error) {
 
 // isOVNKubernetesPopulated checks if the ovn-kubernetes directory contains actual content
 // An uninitialized submodule directory exists but is empty
-func isOVNKubernetesPopulated(ovnPath string) bool {
+func isOVNKubernetesPopulated(cmdExec CommandExecutor, ovnPath string) bool {
 	// Daemonset.sh is a dependency, check for its existence
 	daemonsetScript := filepath.Join(ovnPath, "dist", "images", "daemonset.sh")
-	if _, err := os.Stat(daemonsetScript); err == nil {
-		return true
+	exists, err := cmdExec.FileExists(daemonsetScript)
+	if err != nil {
+		log.Error("Failed to check if daemonset.sh exists: %v", err)
+		return false
 	}
-	return false
+	return exists
 }
 
 // initOVNKubernetesSubmodule initializes and updates the ovn-kubernetes git submodule
-func initOVNKubernetesSubmodule(projectRoot string) error {
+func initOVNKubernetesSubmodule(cmdExec CommandExecutor, projectRoot string) error {
 	log.Debug("Initializing ovn-kubernetes git submodule...")
 
-	initCmd := exec.Command("git", "submodule", "init", "ovn-kubernetes")
-	initCmd.Dir = projectRoot
-	initCmd.Stdout = os.Stdout
-	initCmd.Stderr = os.Stderr
-	if err := initCmd.Run(); err != nil {
+	if err := cmdExec.RunCmdInDir(log.LevelInfo, projectRoot, "git", "submodule", "init", "ovn-kubernetes"); err != nil {
 		return fmt.Errorf("failed to initialize submodule: %w", err)
 	}
 
-	updateCmd := exec.Command("git", "submodule", "update", "--init", "ovn-kubernetes")
-	updateCmd.Dir = projectRoot
-	updateCmd.Stdout = os.Stdout
-	updateCmd.Stderr = os.Stderr
-	if err := updateCmd.Run(); err != nil {
+	if err := cmdExec.RunCmdInDir(log.LevelInfo, projectRoot, "git", "submodule", "update", "--init", "ovn-kubernetes"); err != nil {
 		return fmt.Errorf("failed to update submodule: %w", err)
 	}
 
@@ -198,7 +191,7 @@ func initOVNKubernetesSubmodule(projectRoot string) error {
 // EnsureOVNKubernetesSource ensures the ovn-kubernetes source code is available.
 // It first tries to initialize the git submodule if it exists but is empty.
 // If submodule initialization fails or the directory doesn't exist, it clones the repository.
-func EnsureOVNKubernetesSource() (string, error) {
+func EnsureOVNKubernetesSource(cmdExec CommandExecutor) (string, error) {
 	ovnPath, err := getOVNKubernetesPath()
 	if err != nil {
 		return "", fmt.Errorf("failed to get OVN-Kubernetes path: %w", err)
@@ -210,25 +203,30 @@ func EnsureOVNKubernetesSource() (string, error) {
 	}
 
 	// Check if directory exists and is populated
-	if _, err := os.Stat(ovnPath); err == nil {
-		if isOVNKubernetesPopulated(ovnPath) {
+	exists, err := cmdExec.FileExists(ovnPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to check OVN-Kubernetes path: %w", err)
+	}
+
+	if exists {
+		if isOVNKubernetesPopulated(cmdExec, ovnPath) {
 			log.Debug("OVN-Kubernetes source found at %s", ovnPath)
 			return ovnPath, nil
 		}
 
 		// Directory exists but is empty (uninitialized submodule)
 		log.Info("OVN-Kubernetes directory exists but appears empty (uninitialized submodule)")
-		if err := initOVNKubernetesSubmodule(projectRoot); err != nil {
+		if err := initOVNKubernetesSubmodule(cmdExec, projectRoot); err != nil {
 			log.Warn("Warning: Failed to initialize submodule: %v", err)
 			log.Info("Attempting to clone repository directly...")
 
 			// Remove the empty directory and clone fresh
-			if err := os.RemoveAll(ovnPath); err != nil {
+			if err := cmdExec.RemoveAll(ovnPath); err != nil {
 				return "", fmt.Errorf("failed to remove empty ovn-kubernetes directory: %w", err)
 			}
 		} else {
 			// Submodule initialized successfully
-			if isOVNKubernetesPopulated(ovnPath) {
+			if isOVNKubernetesPopulated(cmdExec, ovnPath) {
 				return ovnPath, nil
 			}
 			return "", fmt.Errorf("submodule initialized but content still missing")
@@ -237,10 +235,11 @@ func EnsureOVNKubernetesSource() (string, error) {
 
 	// Directory doesn't exist or was removed - try submodule init first, then clone as fallback
 	gitDir := filepath.Join(projectRoot, ".git")
-	if _, err := os.Stat(gitDir); err == nil {
+	gitDirExists, _ := cmdExec.FileExists(gitDir)
+	if gitDirExists {
 		// We're in a git repository, try submodule init
-		if err := initOVNKubernetesSubmodule(projectRoot); err == nil {
-			if isOVNKubernetesPopulated(ovnPath) {
+		if err := initOVNKubernetesSubmodule(cmdExec, projectRoot); err == nil {
+			if isOVNKubernetesPopulated(cmdExec, ovnPath) {
 				return ovnPath, nil
 			}
 		}
@@ -248,10 +247,7 @@ func EnsureOVNKubernetesSource() (string, error) {
 	}
 
 	log.Info("OVN-Kubernetes not found, cloning from %s:master...", DefaultOVNRepoURL)
-	cmd := exec.Command("git", "clone", "--branch", "master", DefaultOVNRepoURL, ovnPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := cmdExec.RunCmdInDir(log.LevelInfo, projectRoot, "git", "clone", "--branch", "master", DefaultOVNRepoURL, ovnPath); err != nil {
 		return "", fmt.Errorf("failed to clone OVN-Kubernetes repository: %w", err)
 	}
 
@@ -264,21 +260,29 @@ func EnsureOVNKubernetesSource() (string, error) {
 // imageName specifies the tag for the built image (e.g., "ovn-kube-fedora:latest").
 // By default, OVN/OVS RPMs are downloaded from Koji. To build OVN from source instead,
 // set ovnGitRef to a branch/tag/commit (e.g., "main"); pass an empty string for Koji.
-func BuildOVNKubernetesImage(imageName string, ovnGitRef string) error {
-	ovnPath, err := EnsureOVNKubernetesSource()
+func BuildOVNKubernetesImage(cmdExec CommandExecutor, imageName string, ovnGitRef string) error {
+	ovnPath, err := EnsureOVNKubernetesSource(cmdExec)
 	if err != nil {
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
 	dockerfile := filepath.Join(ovnPath, "dist", "images", "Dockerfile.fedora")
-	if _, err := os.Stat(dockerfile); os.IsNotExist(err) {
+	exists, err := cmdExec.FileExists(dockerfile)
+	if err != nil {
+		return fmt.Errorf("failed to check for Dockerfile.fedora: %w", err)
+	}
+	if !exists {
 		return fmt.Errorf("Dockerfile.fedora not found at %s", dockerfile)
 	}
 
-	// Determine architecture (match Makefile: x86_64->amd64, aarch64->arm64)
-	arch := runtime.GOARCH // "amd64", "arm64", etc.
+	// Detect architecture from the executor's target system
+	targetArch, err := cmdExec.GetArchitecture()
+	if err != nil {
+		return fmt.Errorf("failed to detect architecture: %w", err)
+	}
+	arch := targetArch.GoArch()
 
-	// Build the Go builder image reference (matches Makefile GO_IMAGE)
+	// Build the Go builder image reference
 	const goVersion = "1.24"
 	goImage := fmt.Sprintf("quay.io/projectquay/golang:%s", goVersion)
 
@@ -301,7 +305,7 @@ func BuildOVNKubernetesImage(imageName string, ovnGitRef string) error {
 	// When building OVN from source, resolve the git ref to a SHA and pass it
 	if ovnGitRef != "" {
 		ovnRepo := "https://github.com/ovn-org/ovn.git"
-		sha, err := resolveGitRef(ovnRepo, ovnGitRef)
+		sha, err := resolveGitRef(cmdExec, ovnRepo, ovnGitRef)
 		if err != nil {
 			return fmt.Errorf("failed to resolve OVN git ref %q: %w", ovnGitRef, err)
 		}
@@ -316,11 +320,7 @@ func BuildOVNKubernetesImage(imageName string, ovnGitRef string) error {
 
 	log.Info("Building OVN-Kubernetes image %s (OVN_FROM=%s, arch=%s)...", imageName, ovnFrom, arch)
 
-	cmd := exec.Command("docker", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
+	if err := cmdExec.RunCmdInDir(log.LevelInfo, ovnPath, "docker", args...); err != nil {
 		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
 	}
 
@@ -329,20 +329,19 @@ func BuildOVNKubernetesImage(imageName string, ovnGitRef string) error {
 }
 
 // resolveGitRef resolves a git ref (branch, tag, or commit) to a full SHA using ls-remote.
-func resolveGitRef(repo, ref string) (string, error) {
-	cmd := exec.Command("git", "ls-remote", repo, ref)
-	output, err := cmd.Output()
+func resolveGitRef(cmdExec CommandExecutor, repo, ref string) (string, error) {
+	stdout, _, err := cmdExec.Execute(fmt.Sprintf("git ls-remote '%s' '%s'", repo, ref))
 	if err != nil {
 		return "", fmt.Errorf("git ls-remote failed: %w", err)
 	}
 
-	lines := strings.TrimSpace(string(output))
+	lines := strings.TrimSpace(stdout)
 	if lines == "" {
 		// The ref might already be a commit SHA; return it as-is
 		return ref, nil
 	}
 
-	// Take the last line (sorted by ref name) and extract the SHA
+	// Take the first line and extract the SHA
 	parts := strings.Fields(lines)
 	if len(parts) < 1 {
 		return ref, nil

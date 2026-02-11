@@ -18,6 +18,19 @@ const (
 	AARCH64 Architecture = "aarch64"
 )
 
+// GoArch returns the Go-style architecture string (e.g., "amd64", "arm64")
+// suitable for use with docker --platform=linux/<arch>.
+func (a Architecture) GoArch() string {
+	switch a {
+	case X86_64:
+		return "amd64"
+	case AARCH64:
+		return "arm64"
+	default:
+		return string(a)
+	}
+}
+
 // PackageManager names
 const (
 	DNF = "dnf"
