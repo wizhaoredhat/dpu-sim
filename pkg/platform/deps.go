@@ -326,6 +326,9 @@ func BuildOVNKubernetesImage(cmdExec CommandExecutor, imageName string, ovnGitRe
 	// Without this, every COPY layer change wipes the Go compiler cache and
 	// forces a full recompilation of all ~1000 packages (~5+ min).
 	// With the cache, only changed packages are recompiled.
+	// The culprit is the _output/ directory inside go-controller/ which linger in the
+	// tree and have different timestamps & content each time. Hence the need for a
+	// persistent Go build cache inside the build container.
 	if isPodman {
 		cacheDir, err := getGoBuildCacheDir()
 		if err != nil {

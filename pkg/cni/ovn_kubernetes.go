@@ -304,6 +304,48 @@ func (m *CNIManager) labelOVNMasterNodes() error {
 	return nil
 }
 
+// rebuildOVNKubernetesImage rebuilds the OVN-Kubernetes container image from
+// source. This does not interact with any Kubernetes cluster.
+func (m *CNIManager) rebuildOVNKubernetesImage() error {
+	log.Info("Rebuilding OVN-Kubernetes CNI image...")
+	localExec := platform.NewLocalExecutor()
+
+	if _, err := platform.EnsureOVNKubernetesSource(localExec); err != nil {
+		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
+	}
+
+	if err := platform.BuildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
+		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+	}
+
+	log.Info("✓ OVN-Kubernetes CNI image rebuilt successfully")
+	return nil
+}
+
+// redeployOVNKubernetes performs rolling restarts of the OVN-Kubernetes
+// daemonsets so that pods pick up the newly built image.
+func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
+	log.Info("Redeploying OVN-Kubernetes on cluster %s...", clusterName)
+
+	ovnDaemonSets := []string{"ovnkube-node", "ovnkube-master", "ovnkube-db", "ovs-node"}
+	for _, ds := range ovnDaemonSets {
+		if err := m.k8sClient.RolloutRestartDaemonSet("ovn-kubernetes", ds); err != nil {
+			// ovs-node may not exist depending on config; treat as non-fatal
+			log.Warn("Warning: failed to restart daemonset %s: %v", ds, err)
+		} else {
+			log.Info("✓ Rolling restart triggered for daemonset %s", ds)
+		}
+	}
+
+	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
+		log.Warn("Warning: OVN-Kubernetes pods may not be ready after redeploy: %v", err)
+	} else {
+		log.Info("✓ OVN-Kubernetes pods are ready after redeploy on cluster %s", clusterName)
+	}
+
+	return nil
+}
+
 // installOVNKubernetes installs OVN-Kubernetes CNI using the local source code
 func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsNode bool) error {
 	clusterCfg := m.config.GetClusterConfig(clusterName)
@@ -327,8 +369,7 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsN
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
-	err = platform.BuildOVNKubernetesImage(localExec, "ovn-kube-fedora:dpu-sim", "")
-	if err != nil {
+	if err := platform.BuildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
 		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
 	}
 

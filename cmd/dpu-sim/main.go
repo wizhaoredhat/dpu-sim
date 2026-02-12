@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/kind"
@@ -27,6 +28,8 @@ var (
 	cleanupOnly bool
 	skipDeploy  bool
 	skipK8s     bool
+	rebuildCNI  bool
+	redeployCNI bool
 )
 
 var rootCmd = &cobra.Command{
@@ -56,6 +59,8 @@ func init() {
 	rootCmd.Flags().BoolVar(&skipCleanup, "skip-cleanup", false, "Skip cleanup of existing resources")
 	rootCmd.Flags().BoolVar(&skipDeploy, "skip-deploy", false, "Skip VM/Kind deployment")
 	rootCmd.Flags().BoolVar(&skipK8s, "skip-k8s", false, "Skip Kubernetes (VM only) and CNI installation")
+	rootCmd.Flags().BoolVar(&rebuildCNI, "rebuild-cni", false, "Rebuild the OVN-Kubernetes CNI image and exit")
+	rootCmd.Flags().BoolVar(&redeployCNI, "redeploy-cni", false, "Redeploy the OVN-Kubernetes CNI image onto each cluster and exit")
 }
 
 // =============================================================================
@@ -75,6 +80,45 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+
+	// Handle rebuild CNI image(s) and redeploy onto each cluster
+	if rebuildCNI || redeployCNI {
+		log.Info("\n=== Rebuilding CNI images ===")
+		// Collect unique CNI types across all clusters
+		seen := make(map[cni.CNIType]bool)
+		for _, cluster := range cfg.Kubernetes.Clusters {
+			seen[cni.CNIType(cluster.CNI)] = true
+		}
+
+		// Rebuild the image once per unique CNI type
+		cniMgr, err := cni.NewCNIManager(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to create CNI manager: %w", err)
+		}
+		for cniType := range seen {
+			if err := cniMgr.RebuildCNIImage(cniType); err != nil {
+				return fmt.Errorf("failed to rebuild CNI image for %s: %w", cniType, err)
+			}
+		}
+
+		if redeployCNI {
+			// Redeploy onto each cluster
+			log.Info("\n=== Redeploying CNI images ===")
+			kubeconfigDir := cfg.Kubernetes.GetKubeconfigDir()
+			for _, cluster := range cfg.Kubernetes.Clusters {
+				kubeconfigPath := k8s.GetKubeconfigPath(cluster.Name, kubeconfigDir)
+				if err := cniMgr.SetKubeconfigFile(kubeconfigPath); err != nil {
+					return fmt.Errorf("failed to set kubeconfig for cluster %s: %w", cluster.Name, err)
+				}
+				if err := cniMgr.RedeployCNI(cluster.Name); err != nil {
+					return fmt.Errorf("failed to redeploy CNI on cluster %s: %w", cluster.Name, err)
+				}
+			}
+		}
+
+		return nil
+	}
+
 	deployMode, err := cfg.GetDeploymentMode()
 	if err != nil {
 		return fmt.Errorf("failed to determine deployment mode: %w", err)
