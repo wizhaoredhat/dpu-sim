@@ -4,11 +4,6 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
-const (
-	// DefaultOVNRepoURL is the default URL for the OVN-Kubernetes repository
-	DefaultOVNRepoURL = "https://github.com/ovn-org/ovn-kubernetes.git"
-)
-
 // Architecture represents a CPU architecture
 type Architecture string
 
