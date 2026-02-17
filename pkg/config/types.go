@@ -5,12 +5,30 @@ import (
 	"net"
 )
 
-const MgmtNetworkName = "mgmt"
-const K8sNetworkName = "k8s"
-const VMDeploymentMode = "vm"
-const KindDeploymentMode = "kind"
-const VMHostType = "host"
-const VMDPUType = "dpu"
+const (
+	MgmtNetworkName    = "mgmt"
+	K8sNetworkName     = "k8s"
+	VMDeploymentMode   = "vm"
+	KindDeploymentMode = "kind"
+	VMHostType         = "host"
+	VMDPUType          = "dpu"
+
+	// RegistryContainerName is the Docker container name for the local registry
+	DefaultRegistryContainerName = "dpu-sim-registry"
+	// RegistryPort is the host port the registry listens on
+	DefaultRegistryPort = "5000"
+	// RegistryImage is the Docker image used for the registry
+	DefaultRegistryImage = "registry:2"
+)
+
+// CNIType represents the type of CNI
+type CNIType string
+
+const (
+	CNIFlannel       CNIType = "flannel"
+	CNIOVNKubernetes CNIType = "ovn-kubernetes"
+	CNIKindnet       CNIType = "kindnet"
+)
 
 // Config represents the complete DPU simulator configuration
 type Config struct {
@@ -20,6 +38,26 @@ type Config struct {
 	OperatingSystem OSConfig         `yaml:"operating_system"`
 	SSH             SSHConfig        `yaml:"ssh"`
 	Kubernetes      KubernetesConfig `yaml:"kubernetes"`
+	Registry        *RegistryConfig  `yaml:"registry,omitempty"`
+}
+
+// RegistryConfig represents the local container registry configuration.
+// When specified, a local Docker registry is started and made accessible
+// to nodes in both VM and Kind modes.
+type RegistryConfig struct {
+	Containers []RegistryContainerConfig `yaml:"containers"`
+}
+
+// RegistryContainerConfig represents a container image to build and push
+// to the local registry.
+type RegistryContainerConfig struct {
+	// Name is a human-readable identifier for this container build
+	Name string `yaml:"name"`
+	// CNI is the CNI type whose source will be compiled (e.g. "ovn-kubernetes")
+	CNI string `yaml:"cni"`
+	// Tag is the image name:tag to use when pushing to the local registry
+	// (e.g. "ovn-kube:dpu-sim")
+	Tag string `yaml:"tag"`
 }
 
 // NetworkConfig represents a network configuration
@@ -91,10 +129,10 @@ func (k *KubernetesConfig) GetKubeconfigDir() string {
 
 // ClusterConfig represents a Kubernetes cluster configuration
 type ClusterConfig struct {
-	Name        string `yaml:"name"`
-	PodCIDR     string `yaml:"pod_cidr"`
-	ServiceCIDR string `yaml:"service_cidr"`
-	CNI         string `yaml:"cni"`
+	Name        string  `yaml:"name"`
+	PodCIDR     string  `yaml:"pod_cidr"`
+	ServiceCIDR string  `yaml:"service_cidr"`
+	CNI         CNIType `yaml:"cni"`
 }
 
 // HostDPULink represents network link information between a host and DPU

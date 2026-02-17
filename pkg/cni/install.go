@@ -3,20 +3,22 @@ package cni
 import (
 	"fmt"
 
+	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // InstallCNI installs the specified CNI on a cluster using the Kubernetes API
 // If kubeconfigPath is provided, it will configure the client from that file
-func (m *CNIManager) InstallCNI(cniType CNIType, clusterName string, k8sIP string) error {
+func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sIP string) error {
 	log.Info("\n=== Installing %s CNI on cluster %s ===", cniType, clusterName)
 
 	switch cniType {
-	case CNIFlannel:
+	case config.CNIFlannel:
 		return m.installFlannel(clusterName)
-	case CNIOVNKubernetes:
+	case config.CNIOVNKubernetes:
 		return m.installOVNKubernetes(clusterName, k8sIP, m.config.IsKindMode())
-	case CNIKindnet:
+	case config.CNIKindnet:
 		if m.config.IsKindMode() {
 			log.Info("Kindnet is the default CNI for Kind clusters, no installation needed")
 			return nil
@@ -27,17 +29,22 @@ func (m *CNIManager) InstallCNI(cniType CNIType, clusterName string, k8sIP strin
 	}
 }
 
-// RebuildCNIImage rebuilds the CNI container image from source for the given
-// CNI type. Currently only OVN-Kubernetes supports rebuilding; for other CNIs
-// a message is logged and no action is taken. This method does not require
-// Kubernetes API access.
-func (m *CNIManager) RebuildCNIImage(cniType CNIType) error {
+// BuildCNIImage builds a container image for the given registry container
+// config. This is intended to be used as a registry.BuildFunc. It dispatches
+// to the appropriate CNI-specific build logic and returns the local image name.
+func BuildCNIImage(container config.RegistryContainerConfig) (string, error) {
+	localExec := platform.NewLocalExecutor()
+
+	cniType := config.CNIType(container.CNI)
 	switch cniType {
-	case CNIOVNKubernetes:
-		return m.rebuildOVNKubernetesImage()
+	case config.CNIOVNKubernetes:
+		localImage := container.Tag
+		if err := BuildOVNKubernetesImage(localExec, localImage, ""); err != nil {
+			return "", fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+		}
+		return localImage, nil
 	default:
-		log.Info("CNI %q does not support image rebuilding, skipping", cniType)
-		return nil
+		return "", fmt.Errorf("unsupported CNI type for image build: %s", cniType)
 	}
 }
 
@@ -45,10 +52,10 @@ func (m *CNIManager) RebuildCNIImage(cniType CNIType) error {
 // cluster so that pods pick up the newly built image. Requires a Kubernetes
 // client (use NewCNIManagerWithKubeconfig or NewCNIManagerWithKubeconfigFile).
 func (m *CNIManager) RedeployCNI(clusterName string) error {
-	cniType := CNIType(m.config.GetCNIType(clusterName))
+	cniType := m.config.GetCNIType(clusterName)
 
 	switch cniType {
-	case CNIOVNKubernetes:
+	case config.CNIOVNKubernetes:
 		return m.redeployOVNKubernetes(clusterName)
 	default:
 		log.Info("CNI %q does not support redeployment, skipping cluster %s", cniType, clusterName)

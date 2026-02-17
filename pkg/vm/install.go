@@ -99,7 +99,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("CNI type is not set for cluster %s", clusterName)
 	}
 
-	if cniType == string(cni.CNIOVNKubernetes) {
+	if cniType == config.CNIOVNKubernetes {
 		if err := m.setupOVNBrExForCluster(clusterRoleMapping, k8sMgr); err != nil {
 			return err
 		}
@@ -136,7 +136,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("failed to create CNI manager: %w", err)
 	}
 
-	if err := cniMgr.InstallCNI(cni.CNIType(cniType), clusterName, firstMasterK8sIP); err != nil {
+	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP); err != nil {
 		return fmt.Errorf("failed to install CNI: %w", err)
 	}
 

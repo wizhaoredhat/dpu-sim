@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/cni"
+	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/linux"
 	"github.com/wizhao/dpu-sim/pkg/log"
@@ -51,19 +52,28 @@ func (m *KindManager) DeployAllClusters() error {
 }
 
 func (m *KindManager) InstallCNI() error {
-	for _, cluster := range m.config.Kubernetes.Clusters {
-		log.Info("\n--- Installing CNI on cluster %s ---", cluster.Name)
-		cniType := cni.CNIType(cluster.CNI)
+	for _, clusterCfg := range m.config.Kubernetes.Clusters {
+		log.Info("\n--- Installing CNI on cluster %s ---", clusterCfg.Name)
+		cniType := clusterCfg.CNI
 
-		if cniType == cni.CNIOVNKubernetes {
-			if err := m.PullAndLoadImage(cluster.Name, cni.DefaultOVNImage); err != nil {
-				return fmt.Errorf("failed to load OVN-Kubernetes image: %w", err)
+		if cniType == config.CNIOVNKubernetes {
+			// If a local registry is configured for this CNI, the image is
+			// already available in the registry and nodes can pull it directly.
+			// Otherwise, fall back to pulling to loading via
+			// `kind load docker-image`.
+			regContainer := m.config.GetRegistryContainerForCNI(clusterCfg.CNI)
+			if regContainer == nil {
+				if err := m.PullAndLoadImage(clusterCfg.Name, cni.DefaultOVNImage); err != nil {
+					return fmt.Errorf("failed to load OVN-Kubernetes image: %w", err)
+				}
+			} else {
+				log.Info("Using local registry image for OVN-Kubernetes (tag: %s)", regContainer.Tag)
 			}
 		}
 
-		kubeconfigContent, err := m.GetKubeconfigContent(cluster.Name)
+		kubeconfigContent, err := m.GetKubeconfigContent(clusterCfg.Name)
 		if err != nil {
-			return fmt.Errorf("failed to get kubeconfig for cluster %s: %w", cluster.Name, err)
+			return fmt.Errorf("failed to get kubeconfig for cluster %s: %w", clusterCfg.Name, err)
 		}
 
 		cniMgr, err := cni.NewCNIManagerWithKubeconfig(m.config, kubeconfigContent)
@@ -71,13 +81,13 @@ func (m *KindManager) InstallCNI() error {
 			return fmt.Errorf("failed to create CNI manager: %w", err)
 		}
 
-		apiServerIP, err := m.GetInternalAPIServerIP(cluster.Name)
+		apiServerIP, err := m.GetInternalAPIServerIP(clusterCfg.Name)
 		if err != nil {
-			return fmt.Errorf("failed to get internal API server IP for cluster %s: %w", cluster.Name, err)
+			return fmt.Errorf("failed to get internal API server IP for cluster %s: %w", clusterCfg.Name, err)
 		}
 
-		if err := cniMgr.InstallCNI(cniType, cluster.Name, apiServerIP); err != nil {
-			return fmt.Errorf("failed to install CNI on cluster %s: %w", cluster.Name, err)
+		if err := cniMgr.InstallCNI(cniType, clusterCfg.Name, apiServerIP); err != nil {
+			return fmt.Errorf("failed to install CNI on cluster %s: %w", clusterCfg.Name, err)
 		}
 	}
 

@@ -13,6 +13,7 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/kind"
 	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
+	"github.com/wizhao/dpu-sim/pkg/registry"
 	"github.com/wizhao/dpu-sim/pkg/requirements"
 	"github.com/wizhao/dpu-sim/pkg/vm"
 )
@@ -81,29 +82,29 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	// Create registry manager once if configured; nil otherwise.
+	var regMgr *registry.Manager = nil
+	if cfg.HasRegistry() {
+		regMgr = registry.NewManager(cfg)
+	}
+
 	// Handle rebuild CNI image(s) and redeploy onto each cluster
 	if rebuildCNI || redeployCNI {
-		log.Info("\n=== Rebuilding CNI images ===")
-		// Collect unique CNI types across all clusters
-		seen := make(map[cni.CNIType]bool)
-		for _, cluster := range cfg.Kubernetes.Clusters {
-			seen[cni.CNIType(cluster.CNI)] = true
+		if regMgr == nil {
+			return fmt.Errorf("--rebuild-cni/--redeploy-cni requires a registry section in the config")
 		}
 
-		// Rebuild the image once per unique CNI type
-		cniMgr, err := cni.NewCNIManager(cfg)
-		if err != nil {
-			return fmt.Errorf("failed to create CNI manager: %w", err)
-		}
-		for cniType := range seen {
-			if err := cniMgr.RebuildCNIImage(cniType); err != nil {
-				return fmt.Errorf("failed to rebuild CNI image for %s: %w", cniType, err)
-			}
+		log.Info("\n=== Rebuilding CNI images ===")
+		if err := regMgr.SetupAll(cni.BuildCNIImage); err != nil {
+			return fmt.Errorf("failed to rebuild CNI images: %w", err)
 		}
 
 		if redeployCNI {
-			// Redeploy onto each cluster
 			log.Info("\n=== Redeploying CNI images ===")
+			cniMgr, err := cni.NewCNIManager(cfg)
+			if err != nil {
+				return fmt.Errorf("failed to create CNI manager: %w", err)
+			}
 			kubeconfigDir := cfg.Kubernetes.GetKubeconfigDir()
 			for _, cluster := range cfg.Kubernetes.Clusters {
 				kubeconfigPath := k8s.GetKubeconfigPath(cluster.Name, kubeconfigDir)
@@ -143,17 +144,24 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		log.Info("\nSkipping Kubernetes cleanup")
 	}
 
+	// Start local registry and build/push images if configured
+	if regMgr != nil {
+		if err := regMgr.SetupAll(cni.BuildCNIImage); err != nil {
+			return fmt.Errorf("registry setup failed: %w", err)
+		}
+	}
+
 	switch deployMode {
 	case config.VMDeploymentMode:
-		return runVMDeploymentWorkflow(cfg)
+		return runVMDeploymentWorkflow(cfg, regMgr)
 	case config.KindDeploymentMode:
-		return runKindDeploymentWorkflow(cfg)
+		return runKindDeploymentWorkflow(cfg, regMgr)
 	default:
 		return fmt.Errorf("unknown deployment mode: %s", deployMode)
 	}
 }
 
-func runVMDeploymentWorkflow(cfg *config.Config) error {
+func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.Manager) error {
 	log.Info("")
 	log.Info("╔═══════════════════════════════════════════════╗")
 	log.Info("║       VM-Based Deployment Workflow            ║")
@@ -197,7 +205,7 @@ func runVMDeploymentWorkflow(cfg *config.Config) error {
 	return nil
 }
 
-func runKindDeploymentWorkflow(cfg *config.Config) error {
+func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.Manager) error {
 	log.Info("")
 	log.Info("╔═══════════════════════════════════════════════╗")
 	log.Info("║      Kind-Based Deployment Workflow           ║")
@@ -218,7 +226,7 @@ func runKindDeploymentWorkflow(cfg *config.Config) error {
 
 	if !skipDeploy {
 		log.Info("\n=== Deploying Kind clusters ===")
-		if err := doKindDeploy(cfg, kindMgr); err != nil {
+		if err := doKindDeploy(cfg, kindMgr, regMgr); err != nil {
 			return fmt.Errorf("Kind deployment failed: %w", err)
 		}
 	} else {
@@ -312,10 +320,18 @@ func doVMInstallK8s(vmMgr *vm.VMManager) error {
 	return nil
 }
 
-func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager) error {
+func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registry.Manager) error {
 	log.Info("\n=== Creating Kind Clusters ===")
 	if err := kindMgr.DeployAllClusters(); err != nil {
 		return fmt.Errorf("failed to deploy Kind clusters: %w", err)
+	}
+
+	// Connect the local registry to the Kind Docker network so that Kind
+	// nodes can pull images from it by container name.
+	if regMgr != nil {
+		if err := regMgr.ConnectToKindNetwork(); err != nil {
+			return fmt.Errorf("failed to connect registry to kind network: %w", err)
+		}
 	}
 
 	for _, cluster := range cfg.Kubernetes.Clusters {

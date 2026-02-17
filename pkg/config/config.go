@@ -164,6 +164,23 @@ func (c *Config) validateAndSetDefaults() error {
 		}
 	}
 
+	// Validate registry configuration
+	if c.Registry != nil {
+		for i, container := range c.Registry.Containers {
+			if container.Name == "" {
+				errors = append(errors, fmt.Sprintf("registry.containers[%d]: 'name' is required", i))
+			}
+			if container.CNI == "" {
+				errors = append(errors, fmt.Sprintf("registry.containers[%d] (%s): 'cni' is required", i, container.Name))
+			} else if container.CNI != "ovn-kubernetes" {
+				errors = append(errors, fmt.Sprintf("registry.containers[%d] (%s): 'cni' must be 'ovn-kubernetes', got '%s'", i, container.Name, container.CNI))
+			}
+			if container.Tag == "" {
+				errors = append(errors, fmt.Sprintf("registry.containers[%d] (%s): 'tag' is required", i, container.Name))
+			}
+		}
+	}
+
 	// Validate DPU host references exist
 	if len(c.VMs) > 0 {
 		hostNames := make(map[string]bool)
@@ -294,7 +311,7 @@ func (c *Config) GetClusterConfig(name string) *ClusterConfig {
 }
 
 // GetCNIType returns the CNI type for a cluster
-func (c *Config) GetCNIType(clusterName string) string {
+func (c *Config) GetCNIType(clusterName string) CNIType {
 	cluster := c.GetClusterConfig(clusterName)
 	if cluster == nil {
 		// Return default based on mode
@@ -352,6 +369,49 @@ func (c *Config) GetNetworkByName(name string) *NetworkConfig {
 		}
 	}
 	return nil
+}
+
+// HasRegistry returns true if the configuration includes a local registry
+func (c *Config) HasRegistry() bool {
+	return c.Registry != nil && len(c.Registry.Containers) > 0
+}
+
+// GetRegistryContainerForCNI returns the registry container config for a
+// given CNI type, or nil if none is configured.
+func (c *Config) GetRegistryContainerForCNI(cniType CNIType) *RegistryContainerConfig {
+	if c.Registry == nil {
+		return nil
+	}
+	for i := range c.Registry.Containers {
+		if CNIType(c.Registry.Containers[i].CNI) == cniType {
+			return &c.Registry.Containers[i]
+		}
+	}
+	return nil
+}
+
+func (c *Config) GetRegistryContainer(cniType CNIType) string {
+	if c.Registry == nil {
+		return ""
+	}
+	regContainer := c.GetRegistryContainerForCNI(cniType)
+	return fmt.Sprintf("localhost:%s/%s", DefaultRegistryPort, regContainer.Tag)
+}
+
+func (c *Config) GetRegistryEndpoint() string {
+	return fmt.Sprintf("localhost:%s", DefaultRegistryPort)
+}
+
+func (c *Config) GetRegistryPort() string {
+	return DefaultRegistryPort
+}
+
+func (c *Config) GetRegistryImage() string {
+	return DefaultRegistryImage
+}
+
+func (c *Config) GetRegistryContainerName() string {
+	return DefaultRegistryContainerName
 }
 
 // expandTilde expands a leading ~ in a path to the user's home directory

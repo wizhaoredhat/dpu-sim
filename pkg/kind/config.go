@@ -81,5 +81,16 @@ nodeRegistration:
     "v": "4"`,
 	}
 
+	// If a local registry is configured, patch containerd on every node so
+	// it can pull from the insecure registry via its container name on the
+	// kind Docker network.
+	if m.config.HasRegistry() {
+		registryEndpoint := fmt.Sprintf("%s:%s", m.config.GetRegistryContainerName(), m.config.GetRegistryPort())
+		containerdPatch := fmt.Sprintf(`[plugins."io.containerd.grpc.v1.cri".registry.mirrors."%s"]
+  endpoint = ["http://%s"]`, registryEndpoint, registryEndpoint)
+
+		cluster.ContainerdConfigPatches = append(cluster.ContainerdConfigPatches, containerdPatch)
+	}
+
 	return cluster, nil
 }

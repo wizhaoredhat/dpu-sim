@@ -73,3 +73,8 @@ kubernetes:
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
 
+registry:
+  containers:
+    - name: "ovn-kube"
+      cni: "ovn-kubernetes"
+      tag: "ovn-kube:dpu-sim"

@@ -7,14 +7,7 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 )
 
-// CNIType represents the type of CNI
-type CNIType string
-
 const (
-	CNIFlannel       CNIType = "flannel"
-	CNIOVNKubernetes CNIType = "ovn-kubernetes"
-	CNIKindnet       CNIType = "kindnet"
-
 	// DefaultOVNKubeImage is the default image name for locally-built OVN-Kubernetes
 	DefaultOVNKubeImage = "ovn-kube-fedora:dpu-sim"
 )
@@ -27,7 +20,7 @@ type CNIManager struct {
 }
 
 // NewCNIManager creates a new CNI manager with only a config.
-// Use this for operations that do not require Kubernetes API access (e.g. RebuildCNIImage).
+// Use this for operations that do not require Kubernetes API access.
 func NewCNIManager(cfg *config.Config) (*CNIManager, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("failed to create CNI manager: config is nil")

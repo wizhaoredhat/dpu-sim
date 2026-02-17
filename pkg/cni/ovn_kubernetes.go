@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
@@ -308,24 +309,6 @@ func (m *CNIManager) labelOVNMasterNodes() error {
 	return nil
 }
 
-// rebuildOVNKubernetesImage rebuilds the OVN-Kubernetes container image from
-// source. This does not interact with any Kubernetes cluster.
-func (m *CNIManager) rebuildOVNKubernetesImage() error {
-	log.Info("Rebuilding OVN-Kubernetes CNI image...")
-	localExec := platform.NewLocalExecutor()
-
-	if _, err := ensureOVNKubernetesSource(localExec); err != nil {
-		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
-	}
-
-	if err := buildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
-		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
-	}
-
-	log.Info("✓ OVN-Kubernetes CNI image rebuilt successfully")
-	return nil
-}
-
 // redeployOVNKubernetes performs rolling restarts of the OVN-Kubernetes
 // daemonsets so that pods pick up the newly built image.
 func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
@@ -368,16 +351,28 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsN
 
 	localExec := platform.NewLocalExecutor()
 
-	ovnKPath, err := ensureOVNKubernetesSource(localExec)
+	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
 	if err != nil {
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
-	if err := buildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
+	// Always build the OVN-Kubernetes image from source.
+	if err := BuildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
 		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
 	}
 
-	if err := m.runDaemonsetScript(ovnKPath, apiServerURL, podCIDR, serviceCIDR, DefaultOVNImage); err != nil {
+	// If a local registry is configured for OVN-Kubernetes, use the registry
+	// image reference in daemonset manifests (the image was already built and
+	// pushed by registry.Manager.SetupAll). Otherwise fall back to the
+	// default upstream image.
+	ovnImage := DefaultOVNImage
+	regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
+	if regContainer != nil {
+		ovnImage = m.config.GetRegistryContainer(config.CNIOVNKubernetes)
+		log.Info("Using local registry image for OVN-Kubernetes daemonsets: %s", ovnImage)
+	}
+
+	if err := m.runDaemonsetScript(ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage); err != nil {
 		return fmt.Errorf("failed to run daemonset.sh: %w", err)
 	}
 
@@ -449,10 +444,10 @@ func initOVNKubernetesSubmodule(cmdExec platform.CommandExecutor, projectRoot st
 	return nil
 }
 
-// ensureOVNKubernetesSource ensures the ovn-kubernetes source code is available.
+// EnsureOVNKubernetesSource ensures the ovn-kubernetes source code is available.
 // It first tries to initialize the git submodule if it exists but is empty.
 // If submodule initialization fails or the directory doesn't exist, it clones the repository.
-func ensureOVNKubernetesSource(cmdExec platform.CommandExecutor) (string, error) {
+func EnsureOVNKubernetesSource(cmdExec platform.CommandExecutor) (string, error) {
 	ovnPath, err := getOVNKubernetesPath()
 	if err != nil {
 		return "", fmt.Errorf("failed to get OVN-Kubernetes path: %w", err)
@@ -516,13 +511,13 @@ func ensureOVNKubernetesSource(cmdExec platform.CommandExecutor) (string, error)
 	return ovnPath, nil
 }
 
-// buildOVNKubernetesImage builds the OVN-Kubernetes container image from the local
+// BuildOVNKubernetesImage builds the OVN-Kubernetes container image from the local
 // source code using the Dockerfile.fedora in ovn-kubernetes/dist/images/.
 // imageName specifies the tag for the built image (e.g., "ovn-kube-fedora:latest").
 // By default, OVN/OVS RPMs are downloaded from Koji. To build OVN from source instead,
 // set ovnGitRef to a branch/tag/commit (e.g., "main"); pass an empty string for Koji.
-func buildOVNKubernetesImage(cmdExec platform.CommandExecutor, imageName string, ovnGitRef string) error {
-	ovnPath, err := ensureOVNKubernetesSource(cmdExec)
+func BuildOVNKubernetesImage(cmdExec platform.CommandExecutor, imageName string, ovnGitRef string) error {
+	ovnPath, err := EnsureOVNKubernetesSource(cmdExec)
 	if err != nil {
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
