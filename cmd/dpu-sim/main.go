@@ -326,12 +326,19 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registr
 		return fmt.Errorf("failed to deploy Kind clusters: %w", err)
 	}
 
-	// Connect the local registry to the Kind Docker network so that Kind
-	// nodes can pull images from it by container name.
+	// Connect the local registry to the Kind Docker network and resolve its
+	// IP so containerd on each node can reach it without DNS.
+	var registryIP string
 	if regMgr != nil {
 		if err := regMgr.ConnectToKindNetwork(); err != nil {
 			return fmt.Errorf("failed to connect registry to kind network: %w", err)
 		}
+		ip, err := regMgr.GetKindNetworkIP()
+		if err != nil {
+			return fmt.Errorf("failed to get registry IP on kind network: %w", err)
+		}
+		registryIP = ip
+		log.Info("Registry IP on kind network: %s", registryIP)
 	}
 
 	for _, cluster := range cfg.Kubernetes.Clusters {
@@ -354,7 +361,7 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registr
 				return fmt.Errorf("failed to install Kind dependencies on %s: %w", node.Name, err)
 			}
 			if regMgr != nil {
-				if err := kindMgr.ConfigureRegistryOnNode(dockerExec); err != nil {
+				if err := kindMgr.ConfigureRegistryOnNode(dockerExec, registryIP); err != nil {
 					return fmt.Errorf("failed to configure registry on %s: %w", node.Name, err)
 				}
 			}

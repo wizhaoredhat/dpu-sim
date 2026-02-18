@@ -170,25 +170,21 @@ func (m *KindManager) ListClusters() ([]string, error) {
 // ConfigureRegistryOnNode writes the containerd host-level registry
 // configuration so the node can pull from the insecure local registry.
 // Image refs use localhost:<port>, but the actual registry container lives
-// on the kind Docker network, so containerd is told to redirect pulls to
-// http://<container-name>:<port>.
+// on the kind Docker network. registryIP is the container's IP on that
+// network (obtained via RegistryManager.GetKindNetworkIP after connecting).
 // Must be called after cluster creation (the containerd config_path patch
 // is applied at creation time via BuildKindConfig).
-func (m *KindManager) ConfigureRegistryOnNode(cmdExec platform.CommandExecutor) error {
+func (m *KindManager) ConfigureRegistryOnNode(cmdExec platform.CommandExecutor, registryIP string) error {
 	imageEndpoint := m.config.GetRegistryNodeEndpoint()
-	containerEndpoint := m.config.GetRegistryContainerEndpoint()
+	registryAddr := fmt.Sprintf("%s:%s", registryIP, m.config.GetRegistryPort())
 	hostsDir := fmt.Sprintf("/etc/containerd/certs.d/%s", imageEndpoint)
 
 	if err := cmdExec.RunCmd(log.LevelDebug, "mkdir", "-p", hostsDir); err != nil {
 		return fmt.Errorf("failed to create containerd certs.d directory: %w", err)
 	}
 
-	// Generated hosts.toml file example:
-	//server = "http://dpu-sim-registry:5000"
-	//[host."http://dpu-sim-registry:5000"]
-	//  capabilities = ["pull", "resolve"]
 	hostsTOML := fmt.Sprintf("server = \"http://%s\"\n\n[host.\"http://%s\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
-		containerEndpoint, containerEndpoint)
+		registryAddr, registryAddr)
 
 	if err := cmdExec.WriteFile(hostsDir+"/hosts.toml", []byte(hostsTOML), 0644); err != nil {
 		return fmt.Errorf("failed to write hosts.toml: %w", err)

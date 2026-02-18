@@ -9,6 +9,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -136,20 +137,62 @@ func (m *RegistryManager) SetupAll(buildFunc BuildFunc) error {
 func (m *RegistryManager) ConnectToKindNetwork() error {
 	containerName := m.config.GetRegistryContainerName()
 
-	stdout, _, _ := m.exec.Execute(
-		fmt.Sprintf("docker inspect -f '{{index .NetworkSettings.Networks \"kind\"}}' %s 2>/dev/null", containerName))
-	if strings.TrimSpace(stdout) != "" && strings.TrimSpace(stdout) != "<no value>" {
-		log.Debug("Registry already connected to kind network")
+	// Check if already connected by parsing JSON (works with both Docker and Podman)
+	if ip, err := m.GetKindNetworkIP(); err == nil && ip != "" {
+		log.Debug("Registry already connected to kind network (IP: %s)", ip)
 		return nil
 	}
 
 	log.Info("Connecting registry to kind Docker network...")
+
 	if err := m.exec.RunCmd(log.LevelDebug, "docker", "network", "connect", "kind", containerName); err != nil {
 		return fmt.Errorf("failed to connect registry to kind network: %w", err)
 	}
 
 	log.Info("✓ Registry connected to kind network")
 	return nil
+}
+
+// GetKindNetworkIP returns the registry container's IP address on the
+// "kind" Docker network. Must be called after ConnectToKindNetwork.
+// Uses JSON output + jq-style parsing to work with both Docker and Podman.
+func (m *RegistryManager) GetKindNetworkIP() (string, error) {
+	containerName := m.config.GetRegistryContainerName()
+
+	// Podman and Docker have different NetworkSettings layouts, so extract
+	// the full JSON and look for the IP in the "kind" network entry.
+	stdout, _, err := m.exec.Execute(
+		fmt.Sprintf("docker inspect --format '{{json .NetworkSettings.Networks}}' %s", containerName))
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect registry container: %w", err)
+	}
+
+	// Parse the JSON map to find the "kind" network's IP address.
+	// Podman may use a different key than "kind" (e.g. including a hash),
+	// so fall back to any network key containing "kind".
+	type netInfo struct {
+		IPAddress string `json:"IPAddress"`
+	}
+	networks := make(map[string]netInfo)
+	cleaned := strings.TrimSpace(stdout)
+	if err := json.Unmarshal([]byte(cleaned), &networks); err != nil {
+		return "", fmt.Errorf("failed to parse network settings for %s: %w (output: %s)", containerName, err, cleaned)
+	}
+
+	log.Debug("Registry networks: %v", networks)
+
+	// Try exact match first, then substring match for Podman compatibility
+	if net, ok := networks["kind"]; ok && net.IPAddress != "" {
+		return net.IPAddress, nil
+	}
+	for name, net := range networks {
+		if strings.Contains(name, "kind") && net.IPAddress != "" {
+			log.Debug("Found kind network under key %q", name)
+			return net.IPAddress, nil
+		}
+	}
+
+	return "", fmt.Errorf("registry container %s is not connected to the kind network (available networks: %s)", containerName, cleaned)
 }
 
 // Stop stops and removes the local registry container
