@@ -390,19 +390,27 @@ func (c *Config) GetRegistryContainerForCNI(cniType CNIType) *RegistryContainerC
 	return nil
 }
 
-// GetRegistryNodeEndpoint returns the registry address reachable from cluster
-// nodes. In Kind mode this is the registry container name on the Docker
-// network; in VM mode it is the host's gateway IP on the management bridge.
+// GetRegistryNodeEndpoint returns the registry address used in image
+// references that cluster nodes will pull. In Kind mode this is
+// localhost:<port> (containerd is configured to redirect pulls to the
+// registry container on the Docker network). In VM mode it is the host's
+// gateway IP on the management bridge.
 func (c *Config) GetRegistryNodeEndpoint() string {
-	if c.IsKindMode() {
-		return fmt.Sprintf("%s:%s", DefaultRegistryContainerName, DefaultRegistryPort)
-	}
-	// VM mode: use the host's IP on the management network (gateway address)
-	mgmtNet := c.GetNetworkByType(MgmtNetworkName)
-	if mgmtNet != nil && mgmtNet.Gateway != "" {
-		return fmt.Sprintf("%s:%s", mgmtNet.Gateway, DefaultRegistryPort)
+	if c.IsVMMode() {
+		// VM mode: use the host's IP on the management network (gateway address)
+		mgmtNet := c.GetNetworkByType(MgmtNetworkName)
+		if mgmtNet != nil && mgmtNet.Gateway != "" {
+			return fmt.Sprintf("%s:%s", mgmtNet.Gateway, DefaultRegistryPort)
+		}
 	}
 	return fmt.Sprintf("localhost:%s", DefaultRegistryPort)
+}
+
+// GetRegistryContainerEndpoint returns the registry's actual address on
+// the Docker network (container-name:port). Used by Kind containerd host
+// configs to redirect pulls from localhost to the registry container.
+func (c *Config) GetRegistryContainerEndpoint() string {
+	return fmt.Sprintf("%s:%s", DefaultRegistryContainerName, DefaultRegistryPort)
 }
 
 // GetRegistryImageRef returns the image reference for a given registry tag

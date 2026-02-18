@@ -353,6 +353,11 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registr
 			if err := kindMgr.InstallDependencies(dockerExec); err != nil {
 				return fmt.Errorf("failed to install Kind dependencies on %s: %w", node.Name, err)
 			}
+			if regMgr != nil {
+				if err := kindMgr.ConfigureRegistryOnNode(dockerExec); err != nil {
+					return fmt.Errorf("failed to configure registry on %s: %w", node.Name, err)
+				}
+			}
 		}
 
 	}

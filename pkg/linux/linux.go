@@ -167,6 +167,17 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 	} else {
 		return platform.UnsupportedPackageManager(distro)
 	}
+	// If a local registry is configured, tell CRI-O to use HTTP (insecure)
+	// when pulling from it. The registry runs plain HTTP on the host and
+	// VMs reach it via the management network gateway IP.
+	if cfg.HasRegistry() {
+		nodeEndpoint := cfg.GetRegistryNodeEndpoint()
+		registryConf := fmt.Sprintf("[[registry]]\nlocation = \"%s\"\ninsecure = true\n", nodeEndpoint)
+		if err := cmdExec.WriteFile("/etc/containers/registries.conf.d/dpu-sim-registry.conf", []byte(registryConf), 0644); err != nil {
+			return fmt.Errorf("failed to write insecure registry config: %w", err)
+		}
+	}
+
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "crio"); err != nil {
 		return fmt.Errorf("failed to enable CRI-O: %w", err)
 	}

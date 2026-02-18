@@ -81,15 +81,14 @@ nodeRegistration:
     "v": "4"`,
 	}
 
-	// If a local registry is configured, patch containerd on every node so
-	// it can pull from the insecure registry via its container name on the
-	// kind Docker network.
+	// If a local registry is configured, tell containerd to look up
+	// per-host registry configuration from /etc/containerd/certs.d/.
+	// The actual host config files are written after cluster creation
+	// via ConfigureRegistryOnNodes.
 	if m.config.HasRegistry() {
-		registryEndpoint := m.config.GetRegistryNodeEndpoint()
-		containerdPatch := fmt.Sprintf(`[plugins."io.containerd.grpc.v1.cri".registry.mirrors."%s"]
-  endpoint = ["http://%s"]`, registryEndpoint, registryEndpoint)
-
-		cluster.ContainerdConfigPatches = append(cluster.ContainerdConfigPatches, containerdPatch)
+		cluster.ContainerdConfigPatches = append(cluster.ContainerdConfigPatches,
+			`[plugins."io.containerd.cri.v1.images".registry]
+  config_path = "/etc/containerd/certs.d"`)
 	}
 
 	return cluster, nil
