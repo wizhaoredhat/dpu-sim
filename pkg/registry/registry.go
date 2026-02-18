@@ -39,32 +39,26 @@ type BuildFunc func(container config.RegistryContainerConfig) (localImage string
 
 // Manager manages the local Docker registry lifecycle and implements
 // the ImageLoader interface.
-type Manager struct {
+type RegistryManager struct {
 	config *config.Config
 	exec   platform.CommandExecutor
 }
 
 // Ensure Manager implements ImageLoader at compile time.
-var _ ImageLoader = (*Manager)(nil)
+var _ ImageLoader = (*RegistryManager)(nil)
 
 // NewManager creates a new registry Manager
-func NewManager(cfg *config.Config) *Manager {
-	return &Manager{
+func NewRegistryManager(cfg *config.Config) *RegistryManager {
+	return &RegistryManager{
 		config: cfg,
 		exec:   platform.NewLocalExecutor(),
 	}
 }
 
-// GetAddress returns the registry address accessible from the Docker host
-// (e.g. "localhost:5000").
-func (m *Manager) GetAddress() string {
-	return m.config.GetRegistryEndpoint()
-}
-
 // Start starts the local Docker registry container. If a registry container
 // is already running, it is left as-is. If a stopped container exists, it is
 // removed and recreated.
-func (m *Manager) Start() error {
+func (m *RegistryManager) Start() error {
 	log.Info("Starting local container registry...")
 
 	containerName := m.config.GetRegistryContainerName()
@@ -97,24 +91,25 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("registry did not become ready: %w", err)
 	}
 
-	log.Info("✓ Local registry started at %s", m.GetAddress())
+	log.Info("✓ Local registry started at %s", m.config.GetRegistryLocalEndpoint())
 	return nil
 }
 
 // LoadImage implements the ImageLoader interface. It tags the local image and
 // pushes it to the local registry, then returns the image reference that
 // Kubernetes manifests should use to pull the image.
-func (m *Manager) LoadImage(localImage, tag string) (string, error) {
-	if err := m.TagAndPush(localImage, tag); err != nil {
+func (m *RegistryManager) LoadImage(localImage, tag string) (string, error) {
+	imageRef := m.config.GetRegistryLocalImageRef(tag)
+	if err := m.tagAndPush(localImage, imageRef); err != nil {
 		return "", fmt.Errorf("failed to load image into registry: %w", err)
 	}
-	return m.GetImageRef(tag), nil
+	return imageRef, nil
 }
 
 // SetupAll starts the local registry, builds all configured container images
 // using the provided build function, and pushes them to the registry.
 // This is the main orchestration entry point for registry setup.
-func (m *Manager) SetupAll(buildFunc BuildFunc) error {
+func (m *RegistryManager) SetupAll(buildFunc BuildFunc) error {
 	log.Info("\n=== Setting up Local Container Registry ===")
 
 	if err := m.Start(); err != nil {
@@ -138,8 +133,7 @@ func (m *Manager) SetupAll(buildFunc BuildFunc) error {
 
 // ConnectToKindNetwork connects the registry container to the "kind" Docker
 // network so that Kind nodes can reach it by container name.
-func (m *Manager) ConnectToKindNetwork() error {
-	// Check if already connected
+func (m *RegistryManager) ConnectToKindNetwork() error {
 	containerName := m.config.GetRegistryContainerName()
 
 	stdout, _, _ := m.exec.Execute(
@@ -159,23 +153,23 @@ func (m *Manager) ConnectToKindNetwork() error {
 }
 
 // Stop stops and removes the local registry container
-func (m *Manager) Stop() error {
+func (m *RegistryManager) Stop() error {
 	log.Info("Stopping local container registry...")
 
-	if err := m.exec.RunCmd(log.LevelDebug, "docker", "rm", "-f", m.config.GetRegistryContainerName()); err != nil {
-		log.Debug("Note: failed to remove registry container (may not exist): %v", err)
+	containerName := m.config.GetRegistryContainerName()
+
+	if err := m.exec.RunCmd(log.LevelDebug, "docker", "rm", "-f", containerName); err != nil {
+		log.Debug("Failed to remove registry container %s (may not exist): %v", containerName, err)
 	}
 
-	log.Info("✓ Local registry stopped")
+	log.Info("✓ Local registry %s stopped", containerName)
 	return nil
 }
 
-// TagAndPush tags a local image and pushes it to the local registry.
+// tagAndPush tags a local image and pushes it to the local registry.
 // localImage is the image:tag as it exists locally (e.g. "ovn-kube-fedora:dpu-sim").
-// registryTag is the desired name:tag in the registry (e.g. "ovn-kube:dpu-sim").
-func (m *Manager) TagAndPush(localImage, registryTag string) error {
-	registryRef := fmt.Sprintf("%s/%s", m.GetAddress(), registryTag)
-
+// registryRef is the desired image reference in the registry (e.g. "localhost:5000/ovn-kube:dpu-sim").
+func (m *RegistryManager) tagAndPush(localImage, registryRef string) error {
 	log.Info("Tagging %s -> %s", localImage, registryRef)
 	if err := m.exec.RunCmd(log.LevelDebug, "docker", "tag", localImage, registryRef); err != nil {
 		return fmt.Errorf("failed to tag image %s as %s: %w", localImage, registryRef, err)
@@ -186,26 +180,21 @@ func (m *Manager) TagAndPush(localImage, registryTag string) error {
 		return fmt.Errorf("failed to push image %s: %w", registryRef, err)
 	}
 
-	log.Info("✓ Pushed %s to local registry", registryTag)
+	log.Info("✓ Pushed %s to local registry", registryRef)
 	return nil
 }
 
-// GetImageRef returns the full image reference for pulling from the local
-// registry (e.g. "localhost:5000/ovn-kube:dpu-sim").
-func (m *Manager) GetImageRef(registryTag string) string {
-	return fmt.Sprintf("%s/%s", m.GetAddress(), registryTag)
-}
-
 // waitForReady waits for the registry to respond to HTTP requests
-func (m *Manager) waitForReady(timeout time.Duration) error {
+func (m *RegistryManager) waitForReady(timeout time.Duration) error {
+	endpoint := m.config.GetRegistryLocalEndpoint()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		_, _, err := m.exec.Execute(
-			fmt.Sprintf("curl -sf http://%s/v2/ >/dev/null 2>&1", m.GetAddress()))
+			fmt.Sprintf("curl -sf http://%s/v2/ >/dev/null 2>&1", endpoint))
 		if err == nil {
 			return nil
 		}
 		time.Sleep(1 * time.Second)
 	}
-	return fmt.Errorf("registry at %s did not respond within %s", m.GetAddress(), timeout)
+	return fmt.Errorf("registry at %s did not respond within %s", endpoint, timeout)
 }

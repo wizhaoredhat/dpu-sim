@@ -83,9 +83,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create registry manager once if configured; nil otherwise.
-	var regMgr *registry.Manager = nil
+	var regMgr *registry.RegistryManager = nil
 	if cfg.HasRegistry() {
-		regMgr = registry.NewManager(cfg)
+		regMgr = registry.NewRegistryManager(cfg)
 	}
 
 	// Handle rebuild CNI image(s) and redeploy onto each cluster
@@ -161,7 +161,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 }
 
-func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.Manager) error {
+func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManager) error {
 	log.Info("")
 	log.Info("╔═══════════════════════════════════════════════╗")
 	log.Info("║       VM-Based Deployment Workflow            ║")
@@ -205,7 +205,7 @@ func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.Manager) error
 	return nil
 }
 
-func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.Manager) error {
+func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManager) error {
 	log.Info("")
 	log.Info("╔═══════════════════════════════════════════════╗")
 	log.Info("║      Kind-Based Deployment Workflow           ║")
@@ -320,7 +320,7 @@ func doVMInstallK8s(vmMgr *vm.VMManager) error {
 	return nil
 }
 
-func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registry.Manager) error {
+func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registry.RegistryManager) error {
 	log.Info("\n=== Creating Kind Clusters ===")
 	if err := kindMgr.DeployAllClusters(); err != nil {
 		return fmt.Errorf("failed to deploy Kind clusters: %w", err)

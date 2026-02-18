@@ -368,7 +368,7 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsN
 	ovnImage := DefaultOVNImage
 	regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
 	if regContainer != nil {
-		ovnImage = m.config.GetRegistryContainer(config.CNIOVNKubernetes)
+		ovnImage = m.config.GetRegistryImageRef(regContainer.Tag)
 		log.Info("Using local registry image for OVN-Kubernetes daemonsets: %s", ovnImage)
 	}
 

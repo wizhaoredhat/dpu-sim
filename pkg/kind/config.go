@@ -85,7 +85,7 @@ nodeRegistration:
 	// it can pull from the insecure registry via its container name on the
 	// kind Docker network.
 	if m.config.HasRegistry() {
-		registryEndpoint := fmt.Sprintf("%s:%s", m.config.GetRegistryContainerName(), m.config.GetRegistryPort())
+		registryEndpoint := m.config.GetRegistryNodeEndpoint()
 		containerdPatch := fmt.Sprintf(`[plugins."io.containerd.grpc.v1.cri".registry.mirrors."%s"]
   endpoint = ["http://%s"]`, registryEndpoint, registryEndpoint)
 

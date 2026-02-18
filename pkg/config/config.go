@@ -390,15 +390,35 @@ func (c *Config) GetRegistryContainerForCNI(cniType CNIType) *RegistryContainerC
 	return nil
 }
 
-func (c *Config) GetRegistryContainer(cniType CNIType) string {
-	if c.Registry == nil {
-		return ""
+// GetRegistryNodeEndpoint returns the registry address reachable from cluster
+// nodes. In Kind mode this is the registry container name on the Docker
+// network; in VM mode it is the host's gateway IP on the management bridge.
+func (c *Config) GetRegistryNodeEndpoint() string {
+	if c.IsKindMode() {
+		return fmt.Sprintf("%s:%s", DefaultRegistryContainerName, DefaultRegistryPort)
 	}
-	regContainer := c.GetRegistryContainerForCNI(cniType)
-	return fmt.Sprintf("localhost:%s/%s", DefaultRegistryPort, regContainer.Tag)
+	// VM mode: use the host's IP on the management network (gateway address)
+	mgmtNet := c.GetNetworkByType(MgmtNetworkName)
+	if mgmtNet != nil && mgmtNet.Gateway != "" {
+		return fmt.Sprintf("%s:%s", mgmtNet.Gateway, DefaultRegistryPort)
+	}
+	return fmt.Sprintf("localhost:%s", DefaultRegistryPort)
 }
 
-func (c *Config) GetRegistryEndpoint() string {
+// GetRegistryImageRef returns the image reference for a given registry tag
+func (c *Config) GetRegistryImageRef(registryTag string) string {
+	return fmt.Sprintf("%s/%s", c.GetRegistryNodeEndpoint(), registryTag)
+}
+
+// GetRegistryLocalImageRef returns the local image reference for a given registry tag
+// (e.g. "localhost:5000/ovn-kube:dpu-sim").
+func (c *Config) GetRegistryLocalImageRef(registryTag string) string {
+	return fmt.Sprintf("%s/%s", c.GetRegistryLocalEndpoint(), registryTag)
+}
+
+// GetRegistryEndpoint returns the registry address reachable from the host
+// (e.g. "localhost:5000"). Used for pushing images.
+func (c *Config) GetRegistryLocalEndpoint() string {
 	return fmt.Sprintf("localhost:%s", DefaultRegistryPort)
 }
 
