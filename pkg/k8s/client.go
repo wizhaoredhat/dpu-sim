@@ -611,6 +611,54 @@ func (c *K8sClient) RolloutRestartDaemonSet(namespace, name string) error {
 	return nil
 }
 
+// RolloutRestartDeployment triggers a rolling restart of a Deployment by updating
+// a pod template annotation with the current timestamp
+func (c *K8sClient) RolloutRestartDeployment(namespace, name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	deployment, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, name, err)
+	}
+
+	if deployment.Spec.Template.Annotations == nil {
+		deployment.Spec.Template.Annotations = make(map[string]string)
+	}
+	deployment.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] = time.Now().Format(time.RFC3339)
+
+	_, err = c.clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update deployment %s/%s: %w", namespace, name, err)
+	}
+
+	log.Info("✓ Triggered rollout restart for deployment %s/%s", namespace, name)
+	return nil
+}
+
+// DeletePodsByLabel deletes all pods in a namespace matching a label selector.
+func (c *K8sClient) DeletePodsByLabel(namespace, labelSelector string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list pods in %s with label %s: %w", namespace, labelSelector, err)
+	}
+
+	for _, pod := range pods.Items {
+		if err := c.clientset.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
+			log.Warn("Warning: failed to delete pod %s/%s: %v", namespace, pod.Name, err)
+		} else {
+			log.Info("✓ Deleted pod %s/%s", namespace, pod.Name)
+		}
+	}
+
+	return nil
+}
+
 // DeleteDaemonSet deletes a DaemonSet by name from the specified namespace.
 func (c *K8sClient) DeleteDaemonSet(namespace, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

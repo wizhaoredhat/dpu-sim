@@ -309,18 +309,15 @@ func (m *CNIManager) labelOVNMasterNodes() error {
 	return nil
 }
 
-// redeployOVNKubernetes performs rolling restarts of the OVN-Kubernetes
-// daemonsets so that pods pick up the newly built image.
+// redeployOVNKubernetes forces pod recreation by deleting pods by label, This avoids issues with
+// rolling updates on components like ovnkube-db that hold exclusive file locks.
 func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
 	log.Info("Redeploying OVN-Kubernetes on cluster %s...", clusterName)
 
-	ovnDaemonSets := []string{"ovnkube-node", "ovnkube-master", "ovnkube-db", "ovs-node"}
-	for _, ds := range ovnDaemonSets {
-		if err := m.k8sClient.RolloutRestartDaemonSet("ovn-kubernetes", ds); err != nil {
-			// ovs-node may not exist depending on config; treat as non-fatal
-			log.Warn("Warning: failed to restart daemonset %s: %v", ds, err)
-		} else {
-			log.Info("✓ Rolling restart triggered for daemonset %s", ds)
+	ovnPodLabels := []string{"ovnkube-db", "ovnkube-master", "ovnkube-node", "ovnkube-identity"}
+	for _, name := range ovnPodLabels {
+		if err := m.k8sClient.DeletePodsByLabel("ovn-kubernetes", "name="+name); err != nil {
+			log.Warn("Warning: failed to delete pods with label name=%s: %v", name, err)
 		}
 	}
 
