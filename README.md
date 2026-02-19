@@ -44,6 +44,8 @@ All these DPUs have common simularities, some we can emulate better than others.
 
 ### System Requirements
 - Fedora/RHEL/CentOS Linux
+- Golang compiler
+- Make
 - **For VM Mode**: KVM/QEMU virtualization support, at least 12GB RAM, 100GB disk
 - **For Kind Mode**: Container support, at least 8GB RAM
 
@@ -114,6 +116,10 @@ Building binaries...
   Building dpu-sim...
   Building vmctl...
 Build complete! Binaries are in bin/
+$ ls -lh bin/
+total 86M
+-rwxr-xr-x. 1 root root 54M Feb 18 23:45 dpu-sim
+-rwxr-xr-x. 1 root root 33M Feb 18 23:45 vmctl
 ```
 ### Makefile Commands
 
@@ -346,6 +352,70 @@ vms:
     k8s_cluster: "cluster-2"
     k8s_role: "worker"
     ...
+```
+
+### Local Registry and CNI Image Builds
+
+When developing or testing CNI changes, you can configure dpu-sim to build CNI container images from source and serve them through a local Docker registry. This works for both VM and Kind deployment modes.
+
+#### Configuration
+
+Add a `registry` section to your config file:
+
+```yaml
+registry:
+  containers:
+    - name: "ovn-kube"
+      cni: "ovn-kubernetes"
+      tag: "ovn-kube:dpu-sim"
+```
+
+Each entry under `containers` defines an image to build:
+- **name**: Human-readable identifier for the build
+- **cni**: Which CNI's source code to compile (currently `ovn-kubernetes` is supported)
+- **tag**: The `name:tag` used when pushing to the local registry (e.g. `ovn-kube:dpu-sim`)
+
+#### How It Works
+
+When a `registry` section is present, dpu-sim automatically:
+
+1. **Starts a local Docker registry** (`registry:2`) on port 5000
+2. **Builds the CNI image from source** using the OVN-Kubernetes git submodule
+3. **Pushes the image** to the local registry
+4. **Configures nodes to pull from the registry**:
+   - **Kind mode**: Containerd on each node is configured to redirect `localhost:5000` pulls to the registry container on the Docker network
+   - **VM mode**: CRI-O on each VM is configured to pull from the host's management network gateway IP (e.g. `192.168.120.1:5000`) over HTTP
+5. **Uses the registry image** in CNI daemonset manifests instead of the upstream image from `ghcr.io`
+
+#### Rebuilding and Redeploying CNI Images
+
+After making changes to the CNI source code, you can rebuild and redeploy without tearing down the entire environment:
+
+```bash
+# Rebuild the CNI image and push to the local registry
+$ ./bin/dpu-sim --rebuild-cni
+
+# Rebuild AND rolling-restart CNI pods on all clusters
+$ ./bin/dpu-sim --rebuild-cni --redeploy-cni
+```
+
+The `--rebuild-cni` flag requires a `registry` section in the config. It builds all configured container images and pushes them to the registry. Adding `--redeploy-cni` triggers a rolling restart of the CNI daemonsets so pods pick up the new image.
+
+#### OVN-Kubernetes Source
+
+The OVN-Kubernetes source code is included as a git submodule under `ovn-kubernetes/`. If the submodule is not initialized, dpu-sim will automatically initialize it during the build. To work on OVN-Kubernetes changes:
+
+```bash
+# Initialize the submodule (if not already done)
+git submodule update --init ovn-kubernetes
+
+# Make changes in ovn-kubernetes/
+cd ovn-kubernetes
+# ... edit code ...
+
+# Rebuild and redeploy
+cd ..
+./bin/dpu-sim --rebuild-cni --redeploy-cni
 ```
 
 ### Using Different Cloud Image Versions
@@ -1181,6 +1251,8 @@ Deployment mode: vm
 │   ├── executor.go
 │   ├── executor_test.go
 │   ├── types.go
+├── pkg/registry
+│   ├── registry.go      # Local Docker registry lifecycle and image loading
 ├── pkg/requirements
 │   ├── requirements.go
 ├── pkg/ssh
