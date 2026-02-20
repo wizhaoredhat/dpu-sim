@@ -37,6 +37,7 @@ bin/
 *.dylib
 *.test
 *.out
+.gocache
 coverage.out
 coverage.html
 

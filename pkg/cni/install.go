@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/containerengine"
 	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
@@ -34,17 +35,31 @@ func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sI
 // to the appropriate CNI-specific build logic and returns the local image name.
 func BuildCNIImage(container config.RegistryContainerConfig) (string, error) {
 	localExec := platform.NewLocalExecutor()
+	engine, err := containerengine.NewProjectEngine(localExec)
+	if err != nil {
+		return "", err
+	}
+	return BuildCNIImageWithRuntime(localExec, engine)(container)
+}
 
-	cniType := config.CNIType(container.CNI)
-	switch cniType {
-	case config.CNIOVNKubernetes:
-		localImage := container.Tag
-		if err := BuildOVNKubernetesImage(localExec, localImage, ""); err != nil {
-			return "", fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+// BuildCNIImageWithRuntime is BuildCNIImage with injected runtime dependencies
+// so callers can reuse a previously detected container engine.
+func BuildCNIImageWithRuntime(
+	cmdExec platform.CommandExecutor,
+	engine containerengine.Engine,
+) func(container config.RegistryContainerConfig) (string, error) {
+	return func(container config.RegistryContainerConfig) (string, error) {
+		cniType := config.CNIType(container.CNI)
+		switch cniType {
+		case config.CNIOVNKubernetes:
+			localImage := container.Tag
+			if err := BuildOVNKubernetesImageWithEngine(cmdExec, engine, localImage, ""); err != nil {
+				return "", fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+			}
+			return localImage, nil
+		default:
+			return "", fmt.Errorf("unsupported CNI type for image build: %s", cniType)
 		}
-		return localImage, nil
-	default:
-		return "", fmt.Errorf("unsupported CNI type for image build: %s", cniType)
 	}
 }
 

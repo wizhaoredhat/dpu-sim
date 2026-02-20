@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/containerengine"
 	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
@@ -514,6 +515,22 @@ func EnsureOVNKubernetesSource(cmdExec platform.CommandExecutor) (string, error)
 // By default, OVN/OVS RPMs are downloaded from Koji. To build OVN from source instead,
 // set ovnGitRef to a branch/tag/commit (e.g., "main"); pass an empty string for Koji.
 func BuildOVNKubernetesImage(cmdExec platform.CommandExecutor, imageName string, ovnGitRef string) error {
+	engine, err := containerengine.NewProjectEngine(cmdExec)
+	if err != nil {
+		return err
+	}
+	return BuildOVNKubernetesImageWithEngine(cmdExec, engine, imageName, ovnGitRef)
+}
+
+// BuildOVNKubernetesImageWithEngine builds the image using a preselected
+// container engine so callers can detect once and reuse it.
+func BuildOVNKubernetesImageWithEngine(
+	cmdExec platform.CommandExecutor,
+	engine containerengine.Engine,
+	imageName string,
+	ovnGitRef string,
+) error {
+	ctx := context.Background()
 	ovnPath, err := EnsureOVNKubernetesSource(cmdExec)
 	if err != nil {
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
@@ -545,8 +562,7 @@ func BuildOVNKubernetesImage(cmdExec platform.CommandExecutor, imageName string,
 	}
 	arch := targetArch.GoArch()
 
-	// Detect whether "docker" is actually podman (common on Fedora/RHEL)
-	isPodman := isDockerPodman(cmdExec)
+	isPodman := engine.Name() == containerengine.EnginePodman
 
 	// Build the Go builder image reference
 	const goVersion = "1.24"
@@ -558,20 +574,22 @@ func BuildOVNKubernetesImage(cmdExec platform.CommandExecutor, imageName string,
 		ovnFrom = "source"
 	}
 
-	args := []string{
-		"build",
-		"--build-arg", "BUILDER_IMAGE=" + goImage,
-		"--build-arg", "OVN_FROM=" + ovnFrom,
-		"--build-arg", "OVN_KUBERNETES_DIR=.",
-		// Podman does not auto-populate BUILDPLATFORM/TARGETOS/TARGETARCH
-		// the way Docker BuildKit does. Pass them explicitly so the
-		// Dockerfile's cross-compilation logic works correctly.
-		"--build-arg", "BUILDPLATFORM=linux/" + arch,
-		"--build-arg", "TARGETOS=linux",
-		"--build-arg", "TARGETARCH=" + arch,
-		"--platform", "linux/" + arch,
-		"-t", imageName,
-		"-f", dockerfile,
+	buildOpts := containerengine.BuildOptions{
+		ContextDir: ovnPath,
+		Dockerfile: dockerfile,
+		Image:      imageName,
+		Platform:   "linux/" + arch,
+		BuildArgs: map[string]string{
+			"BUILDER_IMAGE":      goImage,
+			"OVN_FROM":           ovnFrom,
+			"OVN_KUBERNETES_DIR": ".",
+			// Podman does not auto-populate BUILDPLATFORM/TARGETOS/TARGETARCH
+			// the way Docker BuildKit does. Pass them explicitly so the
+			// Dockerfile's cross-compilation logic works correctly.
+			"BUILDPLATFORM": "linux/" + arch,
+			"TARGETOS":      "linux",
+			"TARGETARCH":    arch,
+		},
 	}
 
 	// When using podman, mount a persistent host directory for the Go build cache.
@@ -587,7 +605,7 @@ func BuildOVNKubernetesImage(cmdExec platform.CommandExecutor, imageName string,
 		if err != nil {
 			log.Warn("Warning: could not create Go build cache dir, build may be slower: %v", err)
 		} else {
-			args = append(args, "--volume", cacheDir+":/root/.cache/go-build:Z")
+			buildOpts.ExtraArgs = append(buildOpts.ExtraArgs, "--volume", cacheDir+":/root/.cache/go-build:Z")
 		}
 	}
 
@@ -598,33 +616,17 @@ func BuildOVNKubernetesImage(cmdExec platform.CommandExecutor, imageName string,
 		if err != nil {
 			return fmt.Errorf("failed to resolve OVN git ref %q: %w", ovnGitRef, err)
 		}
-		args = append(args,
-			"--build-arg", "OVN_REPO="+ovnRepo,
-			"--build-arg", "OVN_GITREF="+sha,
-		)
+		buildOpts.BuildArgs["OVN_REPO"] = ovnRepo
+		buildOpts.BuildArgs["OVN_GITREF"] = sha
 	}
 
-	// Build context is the ovn-kubernetes repo root
-	args = append(args, ovnPath)
-
 	log.Info("Building OVN-Kubernetes image %s (OVN_FROM=%s, arch=%s)...", imageName, ovnFrom, arch)
-
-	if err := cmdExec.RunCmd(log.LevelInfo, "docker", args...); err != nil {
+	if err := engine.Build(ctx, buildOpts); err != nil {
 		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
 	}
 
 	log.Info("✓ OVN-Kubernetes image built successfully: %s", imageName)
 	return nil
-}
-
-// isDockerPodman detects whether the "docker" command is actually podman.
-// On Fedora/RHEL systems, podman is often aliased as docker.
-func isDockerPodman(cmdExec platform.CommandExecutor) bool {
-	stdout, _, err := cmdExec.Execute("docker --version")
-	if err != nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(stdout), "podman")
 }
 
 // getGoBuildCacheDir returns an absolute path to a persistent directory used
