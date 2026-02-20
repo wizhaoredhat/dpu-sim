@@ -30,6 +30,18 @@ func (m *KindManager) InstallDependencies(cmdExec platform.CommandExecutor) erro
 	return platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config)
 }
 
+func (m *KindManager) InstallHostDependencies(cmdExec platform.CommandExecutor) error {
+	deps := []platform.Dependency{
+		{
+			Name:        "Inotify Limits",
+			Reason:      "Required for OVN-Kubernetes webhook stability on Kind",
+			CheckFunc:   linux.CheckInotifyLimits,
+			InstallFunc: linux.ConfigureInotifyLimits,
+		},
+	}
+	return platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config)
+}
+
 // DeployAllClusters deploys all Kind clusters defined in the config
 func (m *KindManager) DeployAllClusters() error {
 	for _, cluster := range m.config.Kubernetes.Clusters {

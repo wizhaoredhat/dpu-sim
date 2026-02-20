@@ -233,6 +233,11 @@ func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryMana
 	}
 
 	if !skipDeploy {
+		log.Info("\n=== Ensuring Kind host prerequisites ===")
+		if err := kindMgr.InstallHostDependencies(platform.NewLocalExecutor()); err != nil {
+			return fmt.Errorf("failed to configure Kind host prerequisites: %w", err)
+		}
+
 		log.Info("\n=== Deploying Kind clusters ===")
 		if err := doKindDeploy(cfg, kindMgr, regMgr); err != nil {
 			return fmt.Errorf("Kind deployment failed: %w", err)
