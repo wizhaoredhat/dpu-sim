@@ -2,6 +2,8 @@ package cni
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -544,6 +546,10 @@ func BuildOVNKubernetesImageWithEngine(
 	if !exists {
 		return fmt.Errorf("Dockerfile.fedora not found at %s", dockerfile)
 	}
+	dockerfileContent, err := cmdExec.ReadFile(dockerfile)
+	if err != nil {
+		return fmt.Errorf("failed to read Dockerfile.fedora: %w", err)
+	}
 
 	// Write a .dockerignore to the build context to reduce its size and improve
 	// layer cache stability. The COPY in the Dockerfile sends all files from the
@@ -555,29 +561,29 @@ func BuildOVNKubernetesImageWithEngine(
 	}
 	defer cleanupDockerignore(cmdExec, ovnPath)
 
-	// Detect architecture from the executor's target system
+	// Detect architecture from the executor's target system.
 	targetArch, err := cmdExec.GetArchitecture()
 	if err != nil {
 		return fmt.Errorf("failed to detect architecture: %w", err)
 	}
 	arch := targetArch.GoArch()
-
 	isPodman := engine.Name() == containerengine.EnginePodman
 
-	// Build the Go builder image reference
+	// Build the Go builder image reference.
 	const goVersion = "1.24"
 	goImage := fmt.Sprintf("quay.io/projectquay/golang:%s", goVersion)
 
-	// Determine OVN_FROM: "koji" (pre-built RPMs) or "source" (build from git)
+	// Determine OVN_FROM: "koji" (pre-built RPMs) or "source" (build from git).
 	ovnFrom := "koji"
+	// When building OVN from source, resolve the git ref to a SHA and pass it.
 	if ovnGitRef != "" {
 		ovnFrom = "source"
 	}
 
+	resolvedOVNGitRef := ""
 	buildOpts := containerengine.BuildOptions{
 		ContextDir: ovnPath,
 		Dockerfile: dockerfile,
-		Image:      imageName,
 		Platform:   "linux/" + arch,
 		BuildArgs: map[string]string{
 			"BUILDER_IMAGE":      goImage,
@@ -605,28 +611,129 @@ func BuildOVNKubernetesImageWithEngine(
 		if err != nil {
 			log.Warn("Warning: could not create Go build cache dir, build may be slower: %v", err)
 		} else {
-			buildOpts.ExtraArgs = append(buildOpts.ExtraArgs, "--volume", cacheDir+":/root/.cache/go-build:Z")
+			buildOpts.ExtraArgs = append(buildOpts.ExtraArgs,
+				"--volume", cacheDir+":/root/.cache/go-build:Z",
+				"--volume", cacheDir+":/go/pkg/mod:Z",
+			)
 		}
 	}
 
-	// When building OVN from source, resolve the git ref to a SHA and pass it
 	if ovnGitRef != "" {
 		ovnRepo := "https://github.com/ovn-org/ovn.git"
 		sha, err := resolveGitRef(cmdExec, ovnRepo, ovnGitRef)
 		if err != nil {
 			return fmt.Errorf("failed to resolve OVN git ref %q: %w", ovnGitRef, err)
 		}
+		resolvedOVNGitRef = sha
 		buildOpts.BuildArgs["OVN_REPO"] = ovnRepo
 		buildOpts.BuildArgs["OVN_GITREF"] = sha
 	}
 
-	log.Info("Building OVN-Kubernetes image %s (OVN_FROM=%s, arch=%s)...", imageName, ovnFrom, arch)
+	// Build a deterministic cache key from source/config inputs so any relevant
+	// OVN-Kubernetes or build configuration change triggers a new image tag.
+	sourceRev, err := ovnKubernetesSourceRevision(cmdExec, ovnPath)
+	if err != nil {
+		log.Warn("Warning: could not determine OVN-Kubernetes source revision, falling back to non-cached tag: %v", err)
+		sourceRev = "unknown"
+	}
+	cacheKey := ovnKubeImageCacheKey(sourceRev, arch, ovnFrom, resolvedOVNGitRef, dockerfileContent)
+	cachedImageName := ovnKubeCachedImageName(imageName, cacheKey)
+
+	// Fast path: reuse existing cached image and retag to requested image name for
+	// backward compatibility with downstream registry/manifests flow.
+	if engine.ImageExists(ctx, cachedImageName) {
+		log.Info("Using cached OVN-Kubernetes image %s", cachedImageName)
+		if cachedImageName != imageName {
+			if err := engine.Tag(ctx, cachedImageName, imageName); err != nil {
+				return fmt.Errorf("failed to tag cached image %s as %s: %w", cachedImageName, imageName, err)
+			}
+		}
+		return nil
+	}
+
+	buildOpts.Image = cachedImageName
+	log.Info("Building OVN-Kubernetes image %s (cache=%s, OVN_FROM=%s, arch=%s)...", imageName, cacheKey, ovnFrom, arch)
 	if err := engine.Build(ctx, buildOpts); err != nil {
 		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
 	}
 
-	log.Info("✓ OVN-Kubernetes image built successfully: %s", imageName)
+	if cachedImageName != imageName {
+		if err := engine.Tag(ctx, cachedImageName, imageName); err != nil {
+			return fmt.Errorf("failed to tag built image %s as %s: %w", cachedImageName, imageName, err)
+		}
+	}
+
+	log.Info("✓ OVN-Kubernetes image built successfully: %s (cached as %s)", imageName, cachedImageName)
 	return nil
+}
+
+// ovnKubernetesSourceRevision returns a source fingerprint based on HEAD, and
+// when dirty, appends a hash of tracked-file diffs so local changes invalidate cache.
+func ovnKubernetesSourceRevision(cmdExec platform.CommandExecutor, ovnPath string) (string, error) {
+	stdout, _, err := cmdExec.Execute(fmt.Sprintf("git -C %q rev-parse HEAD", ovnPath))
+	if err != nil {
+		return "", err
+	}
+	head := strings.TrimSpace(stdout)
+	if head == "" {
+		return "", fmt.Errorf("empty git HEAD")
+	}
+
+	stdout, _, err = cmdExec.Execute(fmt.Sprintf("git -C %q status --porcelain --untracked-files=no", ovnPath))
+	if err != nil {
+		return head, nil
+	}
+	if strings.TrimSpace(stdout) == "" {
+		return head, nil
+	}
+
+	diffOut, _, err := cmdExec.Execute(fmt.Sprintf("git -C %q diff --no-ext-diff --binary -- .", ovnPath))
+	if err != nil {
+		return head + "-dirty", nil
+	}
+	return head + "-dirty-" + shortSHA256(diffOut, 12), nil
+}
+
+// ovnKubeImageCacheKey generates a stable image-cache key from build inputs.
+func ovnKubeImageCacheKey(sourceRev, arch, ovnFrom, ovnGitRef string, dockerfileContent []byte) string {
+	material := strings.Join([]string{
+		sourceRev,
+		"arch=" + arch,
+		"ovn_from=" + ovnFrom,
+		"ovn_gitref=" + ovnGitRef,
+		"dockerfile_sha=" + shortSHA256Bytes(dockerfileContent, 16),
+	}, "\n")
+	return shortSHA256(material, 16)
+}
+
+// ovnKubeCachedImageName appends cacheKey to the existing tag component.
+func ovnKubeCachedImageName(imageName, cacheKey string) string {
+	lastColon := strings.LastIndex(imageName, ":")
+	lastSlash := strings.LastIndex(imageName, "/")
+	if lastColon > lastSlash {
+		repo := imageName[:lastColon]
+		tag := imageName[lastColon+1:]
+		return fmt.Sprintf("%s:%s-%s", repo, tag, cacheKey)
+	}
+	return fmt.Sprintf("%s:%s", imageName, cacheKey)
+}
+
+func shortSHA256(s string, n int) string {
+	sum := sha256.Sum256([]byte(s))
+	encoded := hex.EncodeToString(sum[:])
+	if n <= 0 || n >= len(encoded) {
+		return encoded
+	}
+	return encoded[:n]
+}
+
+func shortSHA256Bytes(b []byte, n int) string {
+	sum := sha256.Sum256(b)
+	encoded := hex.EncodeToString(sum[:])
+	if n <= 0 || n >= len(encoded) {
+		return encoded
+	}
+	return encoded[:n]
 }
 
 // getGoBuildCacheDir returns an absolute path to a persistent directory used
