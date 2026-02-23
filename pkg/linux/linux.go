@@ -341,10 +341,18 @@ func CheckFirewallDisabled(cmdExec platform.CommandExecutor, distro *platform.Di
 	return nil
 }
 
-// InstallJinjanator installs jinjanator via pip3 on the target machine
+// InstallJinjanator installs jinjanator via pip3 on the target machine.
 func InstallJinjanator(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
-	if err := cmdExec.RunCmd(log.LevelDebug, "pip3", "install", "--user", "jinjanator[yaml]"); err != nil {
-		return fmt.Errorf("failed to install jinjanator: %w", err)
+	installScript := strings.Builder{}
+	installScript.WriteString("set -e\n")
+	installScript.WriteString("if pip3 install --user 'jinjanator[yaml]'; then\n")
+	installScript.WriteString("  exit 0\n")
+	installScript.WriteString("fi\n")
+	installScript.WriteString("pip3 install --user --break-system-packages 'jinjanator[yaml]'\n")
+
+	stdout, stderr, err := cmdExec.Execute(installScript.String())
+	if err != nil {
+		return fmt.Errorf("failed to install jinjanator: %w, stdout: %s, stderr: %s", err, stdout, stderr)
 	}
 	return nil
 }
