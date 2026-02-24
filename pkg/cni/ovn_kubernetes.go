@@ -108,6 +108,7 @@ func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, ser
 		fmt.Sprintf("--net-cidr=%s", podCIDR),
 		fmt.Sprintf("--svc-cidr=%s", serviceCIDR),
 		fmt.Sprintf("--k8s-apiserver=%s", apiServerURL),
+		"--image-pull-policy=Always",
 		"--gateway-mode=shared",
 		"--dummy-gateway-bridge=false",
 		"--gateway-options=",
