@@ -152,8 +152,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		log.Info("\nSkipping Kubernetes cleanup")
 	}
 
-	// Start local registry and build/push images if configured
-	if regMgr != nil {
+	// Start local registry and build/push images if configured.
+	// Skip this entirely for cleanup-only runs.
+	if regMgr != nil && !cleanupOnly {
 		if err := regMgr.SetupAll(buildCNIImage); err != nil {
 			return fmt.Errorf("registry setup failed: %w", err)
 		}
@@ -186,6 +187,11 @@ func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManage
 			log.Warn("Warning: cleanup failed: %v", err)
 		}
 		if cleanupOnly {
+			if regMgr != nil {
+				if err := regMgr.Stop(); err != nil {
+					log.Warn("Warning: registry cleanup failed: %v", err)
+				}
+			}
 			log.Info("\n✓ Cleanup complete. No deployment performed.")
 			return nil
 		}
@@ -227,6 +233,11 @@ func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryMana
 			return fmt.Errorf("failed to cleanup Kind clusters: %w", err)
 		}
 		if cleanupOnly {
+			if regMgr != nil {
+				if err := regMgr.Stop(); err != nil {
+					log.Warn("Warning: registry cleanup failed: %v", err)
+				}
+			}
 			log.Info("✓ Cleanup complete")
 			return nil
 		}

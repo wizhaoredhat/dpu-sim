@@ -207,8 +207,18 @@ func (m *RegistryManager) Stop() error {
 	log.Info("Stopping local container registry...")
 
 	containerName := m.config.GetRegistryContainerName()
+	ctx := context.Background()
 
-	if err := m.engine.RemoveContainer(context.Background(), containerName, true); err != nil {
+	state, err := m.engine.InspectContainerState(ctx, containerName)
+	if err != nil {
+		return fmt.Errorf("failed to inspect registry container state: %w", err)
+	}
+	if !state.Exists {
+		log.Debug("Registry container %s does not exist; nothing to stop", containerName)
+		return nil
+	}
+
+	if err := m.engine.RemoveContainer(ctx, containerName, true); err != nil {
 		log.Debug("Failed to remove registry container %s (may not exist): %v", containerName, err)
 	}
 
