@@ -91,16 +91,21 @@ func installDependency(cmdExec CommandExecutor, dep Dependency, distro *Distro, 
 // cfg provides configuration including version information for dependencies
 // Returns an error if any dependency cannot be installed
 func EnsureDependenciesWithExecutor(cmdExec CommandExecutor, deps []Dependency, cfg *config.Config) error {
+	distro, err := cmdExec.GetDistro()
+	if err != nil {
+		return fmt.Errorf("failed to detect distribution on %s: %w", cmdExec.String(), err)
+	}
+	return EnsureDependenciesWithExecutorAndDistro(cmdExec, distro, deps, cfg)
+}
+
+// EnsureDependenciesWithExecutorAndDistro behaves like EnsureDependenciesWithExecutor
+// but uses the provided distro so callers can share one detection source.
+func EnsureDependenciesWithExecutorAndDistro(cmdExec CommandExecutor, distro *Distro, deps []Dependency, cfg *config.Config) error {
 	log.Debug("Checking dependencies on %s...", cmdExec.String())
 
 	// Ensure ~/.local/bin is in PATH for pip user installs (only affects local executor)
 	ensureLocalBinInPath()
 
-	// Detect distro using the executor
-	distro, err := cmdExec.GetDistro()
-	if err != nil {
-		return fmt.Errorf("failed to detect distribution on %s: %w", cmdExec.String(), err)
-	}
 	log.Info("✓ Detected Linux distribution: %s %s (package manager: %s, architecture: %s)", distro.ID, distro.VersionID, distro.PackageManager, distro.Architecture)
 
 	var missing []Dependency

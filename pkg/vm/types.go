@@ -7,17 +7,23 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // VMManager manages libvirt virtual machines and networks
 type VMManager struct {
-	conn   *libvirt.Connect
-	config *config.Config
+	conn       *libvirt.Connect
+	config     *config.Config
+	hostDistro *platform.Distro
 }
 
 // NewVMManager creates a new VMManager with the given config, connecting to libvirt.
 // cfg can be nil for operations that don't require configuration.
 func NewVMManager(cfg *config.Config) (*VMManager, error) {
+	distro, err := platform.GetHostDistro()
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect host distro: %w", err)
+	}
 	conn, err := libvirt.NewConnect("qemu:///system")
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to libvirt: %w", err)
@@ -35,8 +41,9 @@ func NewVMManager(cfg *config.Config) (*VMManager, error) {
 	}
 
 	return &VMManager{
-		conn:   conn,
-		config: cfg,
+		conn:       conn,
+		config:     cfg,
+		hostDistro: distro,
 	}, nil
 }
 

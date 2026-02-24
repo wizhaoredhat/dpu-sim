@@ -137,6 +137,10 @@ func (m *VMManager) DeleteVM(vmName string) error {
 		return fmt.Errorf("failed to delete cloud-init ISO %s: %w", vmName, err)
 	}
 
+	if err := DeleteUEFINvram(vmName); err != nil {
+		return fmt.Errorf("failed to delete UEFI NVRAM %s: %w", vmName, err)
+	}
+
 	return nil
 }
 

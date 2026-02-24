@@ -60,6 +60,58 @@ func CheckGenericPackage(cmdExec platform.CommandExecutor, distro *platform.Dist
 	return nil
 }
 
+// InstallAarch64UEFIFirmware installs UEFI firmware required for aarch64 VM mode hosts.
+func InstallAarch64UEFIFirmware(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	if distro.Architecture != platform.AARCH64 {
+		return nil
+	}
+
+	switch distro.PackageManager {
+	case platform.DNF:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "edk2-aarch64"); err != nil {
+			return fmt.Errorf("failed to install edk2-aarch64: %w", err)
+		}
+	case platform.APT:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.APT, "install", "-y", "qemu-efi-aarch64"); err != nil {
+			return fmt.Errorf("failed to install qemu-efi-aarch64: %w", err)
+		}
+	default:
+		return platform.UnsupportedPackageManager(distro)
+	}
+
+	return nil
+}
+
+// CheckAarch64UEFIFirmware validates that required aarch64 UEFI firmware files are present.
+func CheckAarch64UEFIFirmware(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	if distro.Architecture != platform.AARCH64 {
+		return nil
+	}
+
+	candidates := [][2]string{
+		{"/usr/share/AAVMF/AAVMF_CODE.fd", "/usr/share/AAVMF/AAVMF_VARS.fd"},
+		{"/usr/share/edk2/aarch64/QEMU_EFI.fd", "/usr/share/edk2/aarch64/QEMU_VARS.fd"},
+		{"/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw", "/usr/share/edk2/aarch64/vars-template-pflash.raw"},
+		{"/usr/share/edk2/aarch64/QEMU_EFI-pflash.qcow2", "/usr/share/edk2/aarch64/vars-template-pflash.qcow2"},
+	}
+
+	for _, pair := range candidates {
+		loaderExists, err := cmdExec.FileExists(pair[0])
+		if err != nil {
+			return fmt.Errorf("failed to check firmware loader path %s: %w", pair[0], err)
+		}
+		varsExists, err := cmdExec.FileExists(pair[1])
+		if err != nil {
+			return fmt.Errorf("failed to check firmware vars path %s: %w", pair[1], err)
+		}
+		if loaderExists && varsExists {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("missing aarch64 UEFI firmware files: expected AAVMF/QEMU_EFI code+vars pair")
+}
+
 // Disables swap on the target machine
 func DisableSwap(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	sb := strings.Builder{}
@@ -188,28 +240,34 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 	return nil
 }
 
+func enableRHELOVSRepos(cmdExec platform.CommandExecutor, distro *platform.Distro) {
+	if !distro.IsRHEL() {
+		return
+	}
+
+	arch := string(distro.Architecture)
+	repos := []string{
+		fmt.Sprintf("codeready-builder-for-rhel-9-%s-rpms", arch),
+		fmt.Sprintf("fast-datapath-for-rhel-9-%s-rpms", arch),
+		fmt.Sprintf("openstack-17-for-rhel-9-%s-rpms", arch),
+	}
+
+	for _, repo := range repos {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable="+repo); err != nil {
+			log.Warn("could not enable %s: %v", repo, err)
+		}
+	}
+}
+
 // Install Open vSwitch on the target machine
 func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	switch distro.PackageManager {
 	case platform.DNF:
-		if distro.Architecture == platform.X86_64 {
-			if distro.IsRHEL() {
-				err := cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=codeready-builder-for-rhel-9-x86_64-rpms")
-				if err != nil {
-					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
-				}
-				err = cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=fast-datapath-for-rhel-9-x86_64-rpms")
-				if err != nil {
-					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
-				}
-				err = cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
-				if err != nil {
-					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
-				}
-			}
-		} else {
+		if distro.Architecture != platform.X86_64 && distro.Architecture != platform.AARCH64 {
 			return platform.UnsupportedArchitecture(distro)
 		}
+		enableRHELOVSRepos(cmdExec, distro)
+
 		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "openvswitch"); err != nil {
 			return fmt.Errorf("failed to install openvswitch: %w", err)
 		}
@@ -236,24 +294,11 @@ func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distr
 func InstallNetworkManagerOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	switch distro.PackageManager {
 	case platform.DNF:
-		if distro.Architecture == platform.X86_64 {
-			if distro.IsRHEL() {
-				err := cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=codeready-builder-for-rhel-9-x86_64-rpms")
-				if err != nil {
-					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
-				}
-				err = cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=fast-datapath-for-rhel-9-x86_64-rpms")
-				if err != nil {
-					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
-				}
-				err = cmdExec.RunCmd(log.LevelDebug, "sudo", "subscription-manager", "repos", "--enable=openstack-17-for-rhel-9-x86_64-rpms")
-				if err != nil {
-					log.Warn("could not enable openstack-17-for-rhel-9-x86_64-rpms: %v", err)
-				}
-			}
-		} else {
+		if distro.Architecture != platform.X86_64 && distro.Architecture != platform.AARCH64 {
 			return platform.UnsupportedArchitecture(distro)
 		}
+		enableRHELOVSRepos(cmdExec, distro)
+
 		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "NetworkManager-ovs"); err != nil {
 			return fmt.Errorf("failed to install NetworkManager-ovs: %w", err)
 		}
