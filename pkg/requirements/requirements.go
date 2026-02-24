@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/containerengine"
 	"github.com/wizhao/dpu-sim/pkg/linux"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
@@ -108,9 +109,12 @@ func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) 
 			InstallFunc: linux.InstallKubectl,
 		})
 		deps = append(deps, platform.Dependency{
-			Name:        "Container Runtime",
-			Reason:      "Required for Kind",
-			CheckCmd:    []string{"podman", "ps"},
+			Name:   "Container Runtime",
+			Reason: "Required for Kind",
+			CheckFunc: func(exec platform.CommandExecutor, _ *platform.Distro, _ *config.Config, _ *platform.Dependency) error {
+				_, err := containerengine.NewProjectEngine(exec)
+				return err
+			},
 			InstallFunc: linux.InstallContainerRuntime,
 		})
 		deps = append(deps, platform.Dependency{

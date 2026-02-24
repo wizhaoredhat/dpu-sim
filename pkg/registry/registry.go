@@ -9,12 +9,13 @@
 package registry
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/containerengine"
 	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
@@ -43,16 +44,33 @@ type BuildFunc func(container config.RegistryContainerConfig) (localImage string
 type RegistryManager struct {
 	config *config.Config
 	exec   platform.CommandExecutor
+	engine containerengine.Engine
 }
 
 // Ensure Manager implements ImageLoader at compile time.
 var _ ImageLoader = (*RegistryManager)(nil)
 
 // NewManager creates a new registry Manager
-func NewRegistryManager(cfg *config.Config) *RegistryManager {
+func NewRegistryManager(cfg *config.Config) (*RegistryManager, error) {
+	exec := platform.NewLocalExecutor()
+	engine, err := containerengine.NewProjectEngine(exec)
+	if err != nil {
+		return nil, err
+	}
+	return NewRegistryManagerWithRuntime(cfg, exec, engine), nil
+}
+
+// NewRegistryManagerWithRuntime creates a new registry manager with injected
+// command executor and container engine.
+func NewRegistryManagerWithRuntime(
+	cfg *config.Config,
+	exec platform.CommandExecutor,
+	engine containerengine.Engine,
+) *RegistryManager {
 	return &RegistryManager{
 		config: cfg,
-		exec:   platform.NewLocalExecutor(),
+		exec:   exec,
+		engine: engine,
 	}
 }
 
@@ -63,27 +81,31 @@ func (m *RegistryManager) Start() error {
 	log.Info("Starting local container registry...")
 
 	containerName := m.config.GetRegistryContainerName()
+	ctx := context.Background()
 
-	// Check if registry container already exists
-	stdout, _, err := m.exec.Execute(
-		fmt.Sprintf("docker inspect -f '{{.State.Running}}' %s 2>/dev/null", containerName))
-	if err == nil {
-		running := strings.TrimSpace(stdout)
-		if running == "true" {
+	// Check if registry container already exists.
+	state, err := m.engine.InspectContainerState(ctx, containerName)
+	if err != nil {
+		return fmt.Errorf("failed to inspect registry container state: %w", err)
+	}
+	if state.Exists {
+		if state.Running {
 			log.Info("Registry container %s is already running", containerName)
 			return nil
 		}
 		// Container exists but is not running — remove it so we can recreate
 		log.Info("Removing stopped registry container %s...", containerName)
-		m.exec.Execute(fmt.Sprintf("docker rm -f %s", containerName))
+		_ = m.engine.RemoveContainer(ctx, containerName, true)
 	}
 
-	// Start the registry container
-	cmd := fmt.Sprintf(
-		"docker run -d --restart=always -p %s:5000 --network bridge --name %s %s",
-		m.config.GetRegistryPort(), m.config.GetRegistryContainerName(), m.config.GetRegistryImage(),
-	)
-	if err := m.exec.RunCmd(log.LevelInfo, "sh", "-c", cmd); err != nil {
+	if err := m.engine.RunContainer(ctx, containerengine.RunContainerOptions{
+		Name:    m.config.GetRegistryContainerName(),
+		Image:   m.config.GetRegistryImage(),
+		Detach:  true,
+		Restart: "always",
+		Network: "bridge",
+		Publish: []string{fmt.Sprintf("%s:5000", m.config.GetRegistryPort())},
+	}); err != nil {
 		return fmt.Errorf("failed to start registry container: %w", err)
 	}
 
@@ -92,7 +114,7 @@ func (m *RegistryManager) Start() error {
 		return fmt.Errorf("registry did not become ready: %w", err)
 	}
 
-	log.Info("✓ Local registry started at %s", m.config.GetRegistryLocalEndpoint())
+	log.Info("Local registry started at %s", m.config.GetRegistryLocalEndpoint())
 	return nil
 }
 
@@ -128,7 +150,7 @@ func (m *RegistryManager) SetupAll(buildFunc BuildFunc) error {
 		}
 	}
 
-	log.Info("✓ Registry setup complete")
+	log.Info("Registry setup complete")
 	return nil
 }
 
@@ -136,6 +158,7 @@ func (m *RegistryManager) SetupAll(buildFunc BuildFunc) error {
 // network so that Kind nodes can reach it by container name.
 func (m *RegistryManager) ConnectToKindNetwork() error {
 	containerName := m.config.GetRegistryContainerName()
+	ctx := context.Background()
 
 	// Check if already connected by parsing JSON (works with both Docker and Podman)
 	if ip, err := m.GetKindNetworkIP(); err == nil && ip != "" {
@@ -145,11 +168,11 @@ func (m *RegistryManager) ConnectToKindNetwork() error {
 
 	log.Info("Connecting registry to kind Docker network...")
 
-	if err := m.exec.RunCmd(log.LevelDebug, "docker", "network", "connect", "kind", containerName); err != nil {
+	if err := m.engine.ConnectNetwork(ctx, "kind", containerName); err != nil {
 		return fmt.Errorf("failed to connect registry to kind network: %w", err)
 	}
 
-	log.Info("✓ Registry connected to kind network")
+	log.Info("Registry connected to kind network")
 	return nil
 }
 
@@ -158,25 +181,9 @@ func (m *RegistryManager) ConnectToKindNetwork() error {
 // Uses JSON output + jq-style parsing to work with both Docker and Podman.
 func (m *RegistryManager) GetKindNetworkIP() (string, error) {
 	containerName := m.config.GetRegistryContainerName()
-
-	// Podman and Docker have different NetworkSettings layouts, so extract
-	// the full JSON and look for the IP in the "kind" network entry.
-	stdout, _, err := m.exec.Execute(
-		fmt.Sprintf("docker inspect --format '{{json .NetworkSettings.Networks}}' %s", containerName))
+	networks, err := m.engine.InspectContainerNetworks(context.Background(), containerName)
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect registry container: %w", err)
-	}
-
-	// Parse the JSON map to find the "kind" network's IP address.
-	// Podman may use a different key than "kind" (e.g. including a hash),
-	// so fall back to any network key containing "kind".
-	type netInfo struct {
-		IPAddress string `json:"IPAddress"`
-	}
-	networks := make(map[string]netInfo)
-	cleaned := strings.TrimSpace(stdout)
-	if err := json.Unmarshal([]byte(cleaned), &networks); err != nil {
-		return "", fmt.Errorf("failed to parse network settings for %s: %w (output: %s)", containerName, err, cleaned)
 	}
 
 	log.Debug("Registry networks: %v", networks)
@@ -192,7 +199,7 @@ func (m *RegistryManager) GetKindNetworkIP() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("registry container %s is not connected to the kind network (available networks: %s)", containerName, cleaned)
+	return "", fmt.Errorf("registry container %s is not connected to the kind network", containerName)
 }
 
 // Stop stops and removes the local registry container
@@ -201,11 +208,11 @@ func (m *RegistryManager) Stop() error {
 
 	containerName := m.config.GetRegistryContainerName()
 
-	if err := m.exec.RunCmd(log.LevelDebug, "docker", "rm", "-f", containerName); err != nil {
+	if err := m.engine.RemoveContainer(context.Background(), containerName, true); err != nil {
 		log.Debug("Failed to remove registry container %s (may not exist): %v", containerName, err)
 	}
 
-	log.Info("✓ Local registry %s stopped", containerName)
+	log.Info("Local registry %s stopped", containerName)
 	return nil
 }
 
@@ -214,16 +221,17 @@ func (m *RegistryManager) Stop() error {
 // registryRef is the desired image reference in the registry (e.g. "localhost:5000/ovn-kube:dpu-sim").
 func (m *RegistryManager) tagAndPush(localImage, registryRef string) error {
 	log.Info("Tagging %s -> %s", localImage, registryRef)
-	if err := m.exec.RunCmd(log.LevelDebug, "docker", "tag", localImage, registryRef); err != nil {
+	ctx := context.Background()
+	if err := m.engine.Tag(ctx, localImage, registryRef); err != nil {
 		return fmt.Errorf("failed to tag image %s as %s: %w", localImage, registryRef, err)
 	}
 
 	log.Info("Pushing %s to local registry...", registryRef)
-	if err := m.exec.RunCmd(log.LevelInfo, "docker", "push", "--tls-verify=false", registryRef); err != nil {
+	if err := m.engine.Push(ctx, registryRef, containerengine.PushOptions{Insecure: true}); err != nil {
 		return fmt.Errorf("failed to push image %s: %w", registryRef, err)
 	}
 
-	log.Info("✓ Pushed %s to local registry", registryRef)
+	log.Info("Pushed %s to local registry", registryRef)
 	return nil
 }
 

@@ -2,6 +2,7 @@ package linux
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -341,10 +342,18 @@ func CheckFirewallDisabled(cmdExec platform.CommandExecutor, distro *platform.Di
 	return nil
 }
 
-// InstallJinjanator installs jinjanator via pip3 on the target machine
+// InstallJinjanator installs jinjanator via pip3 on the target machine.
 func InstallJinjanator(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
-	if err := cmdExec.RunCmd(log.LevelDebug, "pip3", "install", "--user", "jinjanator[yaml]"); err != nil {
-		return fmt.Errorf("failed to install jinjanator: %w", err)
+	installScript := strings.Builder{}
+	installScript.WriteString("set -e\n")
+	installScript.WriteString("if pip3 install --user 'jinjanator[yaml]'; then\n")
+	installScript.WriteString("  exit 0\n")
+	installScript.WriteString("fi\n")
+	installScript.WriteString("pip3 install --user --break-system-packages 'jinjanator[yaml]'\n")
+
+	stdout, stderr, err := cmdExec.Execute(installScript.String())
+	if err != nil {
+		return fmt.Errorf("failed to install jinjanator: %w, stdout: %s, stderr: %s", err, stdout, stderr)
 	}
 	return nil
 }
@@ -440,5 +449,59 @@ func CheckIpv6(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *c
 	if strings.TrimSpace(stdout) != "1" {
 		return fmt.Errorf("ipv6 forwarding is not enabled: stdout: %s, stderr: %s, err: %w", stdout, stderr, err)
 	}
+	return nil
+}
+
+const (
+	MinInotifyMaxUserInstances = 8192
+	MinInotifyMaxUserWatches   = 1048576
+	MinInotifyMaxQueuedEvents  = 32768
+)
+
+func ConfigureInotifyLimits(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	sb := strings.Builder{}
+	sb.WriteString("set -e\n")
+	sb.WriteString("sudo mkdir -p /etc/sysctl.d\n")
+	sb.WriteString(fmt.Sprintf("echo 'fs.inotify.max_user_instances=%d' | sudo tee /etc/sysctl.d/99-dpu-sim-kind.conf >/dev/null\n", MinInotifyMaxUserInstances))
+	sb.WriteString(fmt.Sprintf("echo 'fs.inotify.max_user_watches=%d' | sudo tee -a /etc/sysctl.d/99-dpu-sim-kind.conf >/dev/null\n", MinInotifyMaxUserWatches))
+	sb.WriteString(fmt.Sprintf("echo 'fs.inotify.max_queued_events=%d' | sudo tee -a /etc/sysctl.d/99-dpu-sim-kind.conf >/dev/null\n", MinInotifyMaxQueuedEvents))
+	sb.WriteString(fmt.Sprintf("sudo sysctl -w fs.inotify.max_user_instances=%d\n", MinInotifyMaxUserInstances))
+	sb.WriteString(fmt.Sprintf("sudo sysctl -w fs.inotify.max_user_watches=%d\n", MinInotifyMaxUserWatches))
+	sb.WriteString(fmt.Sprintf("sudo sysctl -w fs.inotify.max_queued_events=%d\n", MinInotifyMaxQueuedEvents))
+
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(sb.String(), 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to configure inotify limits: %w, stdout: %s, stderr: %s", err, stdout, stderr)
+	}
+
+	return nil
+}
+
+func CheckInotifyLimits(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	checks := []struct {
+		key      string
+		minValue int
+	}{
+		{key: "fs.inotify.max_user_instances", minValue: MinInotifyMaxUserInstances},
+		{key: "fs.inotify.max_user_watches", minValue: MinInotifyMaxUserWatches},
+		{key: "fs.inotify.max_queued_events", minValue: MinInotifyMaxQueuedEvents},
+	}
+
+	for _, c := range checks {
+		stdout, stderr, err := cmdExec.Execute(fmt.Sprintf("sysctl -n %s", c.key))
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w, stderr: %s", c.key, err, stderr)
+		}
+
+		value, err := strconv.Atoi(strings.TrimSpace(stdout))
+		if err != nil {
+			return fmt.Errorf("failed to parse %s value %q: %w", c.key, strings.TrimSpace(stdout), err)
+		}
+
+		if value < c.minValue {
+			return fmt.Errorf("%s is %d, expected >= %d", c.key, value, c.minValue)
+		}
+	}
+
 	return nil
 }
