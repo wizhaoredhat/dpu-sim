@@ -15,11 +15,15 @@ import (
 func EnsureDependencies(cfg *config.Config) error {
 	// Create a local executor
 	exec := platform.NewLocalExecutor()
+	hostDistro, err := platform.GetHostDistro()
+	if err != nil {
+		return fmt.Errorf("failed to detect host distribution: %w", err)
+	}
 	deps, err := getRequiredDependencies(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to get dependencies: %w", err)
 	}
-	return platform.EnsureDependenciesWithExecutor(exec, deps, cfg)
+	return platform.EnsureDependenciesWithExecutorAndDistro(exec, hostDistro, deps, cfg)
 }
 
 // getRequiredDependencies returns the list of dependencies needed by dpu-sim
