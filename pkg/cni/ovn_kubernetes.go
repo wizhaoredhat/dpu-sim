@@ -312,10 +312,20 @@ func (m *CNIManager) labelOVNMasterNodes() error {
 	return nil
 }
 
-// redeployOVNKubernetes forces pod recreation by deleting pods by label, This avoids issues with
-// rolling updates on components like ovnkube-db that hold exclusive file locks.
+// redeployOVNKubernetes re-applies manifests and then deletes pods by label to
+// force recreation
 func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
 	log.Info("Redeploying OVN-Kubernetes on cluster %s...", clusterName)
+
+	localExec := platform.NewLocalExecutor()
+	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
+	if err != nil {
+		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
+	}
+
+	if err := m.applyOVNKubernetesManifests(ovnKPath, false); err != nil {
+		return fmt.Errorf("failed to re-apply OVN-Kubernetes manifests: %w", err)
+	}
 
 	ovnPodLabels := []string{"ovnkube-db", "ovnkube-master", "ovnkube-node", "ovnkube-identity"}
 	for _, name := range ovnPodLabels {
