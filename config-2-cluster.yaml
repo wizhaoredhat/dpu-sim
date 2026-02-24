@@ -96,6 +96,8 @@ vms:
 operating_system:
   # Download from https://download.fedoraproject.org/pub/fedora/linux/releases/
   image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
+  # Alternative path: pull the prebuilt OCI image artifact instead.
+  # image_ref: ghcr.io/samd2021/dpu-sim-control-plane-qcow2:latest-amd64
   image_name: "Fedora-x86_64.qcow2"
 
 ssh:

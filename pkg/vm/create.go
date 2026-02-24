@@ -22,8 +22,8 @@ func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
 
 	imagePath := GetImagePath(m.config.OperatingSystem)
 
-	if err := DownloadCloudImage(m.config.OperatingSystem.ImageURL, imagePath); err != nil {
-		return fmt.Errorf("failed to download cloud image: %w", err)
+	if err := EnsureCloudImage(m.config.OperatingSystem, imagePath); err != nil {
+		return fmt.Errorf("failed to ensure cloud image: %w", err)
 	}
 
 	diskPath, err := CreateVMDisk(vmCfg.Name, vmCfg.DiskSize, imagePath)
