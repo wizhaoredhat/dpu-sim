@@ -340,12 +340,27 @@ func CreateVMDisk(vmName string, sizeGB int, baseImage string) (string, error) {
 		return "", fmt.Errorf("failed to create image directory: %w", err)
 	}
 
+	baseVirtualSizeBytes, err := imageVirtualSizeBytes(baseImage)
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect base image size %s: %w", baseImage, err)
+	}
+	requestedSizeBytes := int64(sizeGB) * 1024 * 1024 * 1024
+
 	log.Debug("Creating disk for %s based on %s...", vmName, baseImage)
 	cmd := exec.Command("qemu-img", "create", "-f", "qcow2",
-		"-F", "qcow2", "-b", baseImage, diskPath, fmt.Sprintf("%dG", sizeGB))
+		"-F", "qcow2", "-b", baseImage, diskPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to create disk: %w, output: %s", err, string(output))
+	}
+
+	// Never shrink below backing image size. Only grow when requested size is larger.
+	if requestedSizeBytes > baseVirtualSizeBytes {
+		resizeCmd := exec.Command("qemu-img", "resize", diskPath, fmt.Sprintf("%dG", sizeGB))
+		resizeOutput, resizeErr := resizeCmd.CombinedOutput()
+		if resizeErr != nil {
+			return "", fmt.Errorf("failed to resize disk %s: %w, output: %s", diskPath, resizeErr, string(resizeOutput))
+		}
 	}
 
 	log.Info("✓ Created disk for %s: %s", vmName, diskPath)
@@ -405,8 +420,26 @@ func getInterfaceNamesAndMACs(cfg *config.Config, vmConfig config.VMConfig) []if
 	return out
 }
 
-// CreateCloudInitISO creates a cloud-init ISO for VM initialization.
-// If cfg is non-nil, udev rules are added to rename interfaces by MAC to common names (mgmt, k8s, eth0-0, rep0-0, etc.).
+func imageVirtualSizeBytes(imagePath string) (int64, error) {
+	cmd := exec.Command("qemu-img", "info", "--output=json", imagePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("qemu-img info failed: %w, output: %s", err, string(output))
+	}
+
+	var info struct {
+		VirtualSize int64 `json:"virtual-size"`
+	}
+	if err := json.Unmarshal(output, &info); err != nil {
+		return 0, fmt.Errorf("failed to parse qemu-img info json: %w", err)
+	}
+	if info.VirtualSize <= 0 {
+		return 0, fmt.Errorf("invalid virtual-size reported for %s", imagePath)
+	}
+
+	return info.VirtualSize, nil
+}
+
 func CreateCloudInitISO(vmName string, sshConfig config.SSHConfig, vmConfig config.VMConfig, cfg *config.Config) (string, error) {
 	vmName = vmConfig.Name
 	isoPath := filepath.Join(DefaultImageDir, fmt.Sprintf("%s-cloud-init.iso", vmName))
