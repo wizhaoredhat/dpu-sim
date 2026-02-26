@@ -71,6 +71,14 @@ func (m *K8sMachineManager) InstallKubernetes(cmdExec platform.CommandExecutor, 
 	if err := platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config); err != nil {
 		return fmt.Errorf("failed to ensure dependencies: %w", err)
 	}
+	if err := linux.ConfigureCRIOLocalRegistry(cmdExec, m.config); err != nil {
+		return fmt.Errorf("failed to configure local registry for CRI-O: %w", err)
+	}
+	if m.config.HasRegistry() {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "restart", "crio"); err != nil {
+			return fmt.Errorf("failed to restart CRI-O after local registry config update: %w", err)
+		}
+	}
 
 	log.Info("✓ Kubernetes %s installed on %s", k8sVersion, machineName)
 	return nil
