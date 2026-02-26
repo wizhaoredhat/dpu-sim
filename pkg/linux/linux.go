@@ -198,7 +198,7 @@ func ConfigureK8sKernelModules(cmdExec platform.CommandExecutor, distro *platfor
 	loadModulesContent.WriteString("overlay\n")
 	loadModulesContent.WriteString("br_netfilter\n")
 	loadModulesContent.WriteString("EOF\n")
-	if err := cmdExec.WriteFile("/etc/modules-load.d/k8s.conf", []byte(loadModulesContent.String()), 0644); err != nil {
+	if err := cmdExec.WriteFile("/etc/modules-load.d/k8s.conf", []byte(loadModulesContent.String()), 0o644); err != nil {
 		return fmt.Errorf("failed to write modules load file: %w", err)
 	}
 	// Load kernel modules
@@ -213,7 +213,7 @@ func ConfigureK8sKernelModules(cmdExec platform.CommandExecutor, distro *platfor
 	sysctlContent.WriteString("net.bridge.bridge-nf-call-iptables = 1\n")
 	sysctlContent.WriteString("net.bridge.bridge-nf-call-ip6tables = 1\n")
 	sysctlContent.WriteString("net.ipv4.ip_forward = 1\n")
-	if err := cmdExec.WriteFile("/etc/sysctl.d/k8s.conf", []byte(sysctlContent.String()), 0644); err != nil {
+	if err := cmdExec.WriteFile("/etc/sysctl.d/k8s.conf", []byte(sysctlContent.String()), 0o644); err != nil {
 		return fmt.Errorf("failed to write sysctl file: %w", err)
 	}
 	// Apply sysctl params without reboot
@@ -255,7 +255,7 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 		repoContent.WriteString("enabled=1\n")
 		repoContent.WriteString("gpgcheck=1\n")
 		repoContent.WriteString(fmt.Sprintf("gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/v%s/rpm/repodata/repomd.xml.key\n", k8sVersion))
-		if err := cmdExec.WriteFile("/etc/yum.repos.d/cri-o.repo", []byte(repoContent.String()), 0644); err != nil {
+		if err := cmdExec.WriteFile("/etc/yum.repos.d/cri-o.repo", []byte(repoContent.String()), 0o644); err != nil {
 			return fmt.Errorf("failed to write cri-o repo file: %w", err)
 		}
 		// Install CRI-O, iproute-tc, and containernetworking-plugins (standard CNI plugins like bridge, host-local, etc.)
@@ -273,15 +273,8 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 	} else {
 		return platform.UnsupportedPackageManager(distro)
 	}
-	// If a local registry is configured, tell CRI-O to use HTTP (insecure)
-	// when pulling from it. The registry runs plain HTTP on the host and
-	// VMs reach it via the management network gateway IP.
-	if cfg.HasRegistry() {
-		nodeEndpoint := cfg.GetRegistryNodeEndpoint()
-		registryConf := fmt.Sprintf("[[registry]]\nlocation = \"%s\"\ninsecure = true\n", nodeEndpoint)
-		if err := cmdExec.WriteFile("/etc/containers/registries.conf.d/dpu-sim-registry.conf", []byte(registryConf), 0644); err != nil {
-			return fmt.Errorf("failed to write insecure registry config: %w", err)
-		}
+	if err := ConfigureCRIOLocalRegistry(cmdExec, cfg); err != nil {
+		return err
 	}
 
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "crio"); err != nil {
@@ -290,6 +283,23 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "start", "crio"); err != nil {
 		return fmt.Errorf("failed to start CRI-O: %w", err)
 	}
+	return nil
+}
+
+// ConfigureCRIOLocalRegistry configures CRI-O to use the local dpu-sim
+// registry over HTTP from cluster nodes.
+func ConfigureCRIOLocalRegistry(cmdExec platform.CommandExecutor, cfg *config.Config) error {
+	// No-op when no local registry is configured.
+	if !cfg.HasRegistry() {
+		return nil
+	}
+
+	nodeEndpoint := cfg.GetRegistryNodeEndpoint()
+	registryConf := fmt.Sprintf("[[registry]]\nlocation = \"%s\"\ninsecure = true\n", nodeEndpoint)
+	if err := cmdExec.WriteFile("/etc/containers/registries.conf.d/dpu-sim-registry.conf", []byte(registryConf), 0o644); err != nil {
+		return fmt.Errorf("failed to write insecure registry config: %w", err)
+	}
+
 	return nil
 }
 
@@ -414,7 +424,7 @@ func InstallKubelet(cmdExec platform.CommandExecutor, distro *platform.Distro, c
 		repoContent.WriteString("gpgcheck=1\n")
 		repoContent.WriteString(fmt.Sprintf("gpgkey=https://pkgs.k8s.io/core:/stable:/v%s/rpm/repodata/repomd.xml.key\n", k8sVersion))
 		repoContent.WriteString("exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni\n")
-		if err := cmdExec.WriteFile("/etc/yum.repos.d/kubernetes.repo", []byte(repoContent.String()), 0644); err != nil {
+		if err := cmdExec.WriteFile("/etc/yum.repos.d/kubernetes.repo", []byte(repoContent.String()), 0o644); err != nil {
 			return fmt.Errorf("failed to write repo file: %w", err)
 		}
 		// Install kubelet, kubeadm, kubectl
@@ -494,7 +504,7 @@ func InstallKubectl(cmdExec platform.CommandExecutor, distro *platform.Distro, c
 		repoContent.WriteString("enabled=1\n")
 		repoContent.WriteString("gpgcheck=1\n")
 		repoContent.WriteString(fmt.Sprintf("gpgkey=https://pkgs.k8s.io/core:/stable:/v%s/rpm/repodata/repomd.xml.key\n", k8sVersion))
-		if err := cmdExec.WriteFile("/etc/yum.repos.d/kubernetes.repo", []byte(repoContent.String()), 0644); err != nil {
+		if err := cmdExec.WriteFile("/etc/yum.repos.d/kubernetes.repo", []byte(repoContent.String()), 0o644); err != nil {
 			return fmt.Errorf("failed to write repo file: %w", err)
 		}
 		// Install kubectl
