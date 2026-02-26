@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -227,4 +228,82 @@ func TestIsKindMode(t *testing.T) {
 	}
 	assert.True(t, kindConfig.IsKindMode())
 	assert.False(t, kindConfig.IsVMMode())
+}
+
+func TestValidateOperatingSystemAllowsImageRef(t *testing.T) {
+	cfg := Config{
+		Networks: []NetworkConfig{
+			{
+				Name:       "mgmt-network",
+				Type:       MgmtNetworkName,
+				BridgeName: "virbr-mgmt",
+				Mode:       "nat",
+				NICModel:   "virtio",
+			},
+		},
+		VMs: []VMConfig{
+			{
+				Name:       "master-1",
+				Type:       VMHostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleMaster),
+				K8sNodeMAC: "52:54:00:00:01:11",
+				K8sNodeIP:  "192.168.123.11",
+				Memory:     4096,
+				VCPUs:      2,
+				DiskSize:   20,
+			},
+		},
+		OperatingSystem: OSConfig{
+			ImageRef:  "ghcr.io/example/fedora-cloud:43",
+			ImageName: "Fedora-x86_64.qcow2",
+		},
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIOVNKubernetes},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+}
+
+func TestValidateOperatingSystemRequiresURLOrRef(t *testing.T) {
+	cfg := Config{
+		Networks: []NetworkConfig{
+			{
+				Name:       "mgmt-network",
+				Type:       MgmtNetworkName,
+				BridgeName: "virbr-mgmt",
+				Mode:       "nat",
+				NICModel:   "virtio",
+			},
+		},
+		VMs: []VMConfig{
+			{
+				Name:       "master-1",
+				Type:       VMHostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleMaster),
+				K8sNodeMAC: "52:54:00:00:01:11",
+				K8sNodeIP:  "192.168.123.11",
+				Memory:     4096,
+				VCPUs:      2,
+				DiskSize:   20,
+			},
+		},
+		OperatingSystem: OSConfig{
+			ImageName: "Fedora-x86_64.qcow2",
+		},
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIOVNKubernetes},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "one of 'image_url' or 'image_ref' is required"))
 }

@@ -101,7 +101,8 @@ type KindNodeConfig struct {
 
 // OSConfig represents operating system configuration
 type OSConfig struct {
-	ImageURL  string `yaml:"image_url"`
+	ImageURL  string `yaml:"image_url,omitempty"`
+	ImageRef  string `yaml:"image_ref,omitempty"`
 	ImageName string `yaml:"image_name"`
 }
 

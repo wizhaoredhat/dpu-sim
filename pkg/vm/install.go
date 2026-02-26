@@ -131,15 +131,6 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("failed to save kubeconfig for cluster %s: %w", clusterName, err)
 	}
 
-	cniMgr, err := cni.NewCNIManagerWithKubeconfig(m.config, clusterInfo.Kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to create CNI manager: %w", err)
-	}
-
-	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP); err != nil {
-		return fmt.Errorf("failed to install CNI: %w", err)
-	}
-
 	// Join additional master nodes to the control plane
 	if len(masterVMs) > 1 {
 		log.Info("=== Joining additional control plane nodes ===")
@@ -171,6 +162,15 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 				return fmt.Errorf("failed to join worker node %s: %w", workerVM.Name, err)
 			}
 		}
+	}
+
+	cniMgr, err := cni.NewCNIManagerWithKubeconfig(m.config, clusterInfo.Kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create CNI manager: %w", err)
+	}
+
+	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP); err != nil {
+		return fmt.Errorf("failed to install CNI: %w", err)
 	}
 
 	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)

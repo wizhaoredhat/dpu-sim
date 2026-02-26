@@ -71,6 +71,14 @@ func (m *K8sMachineManager) InstallKubernetes(cmdExec platform.CommandExecutor, 
 	if err := platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config); err != nil {
 		return fmt.Errorf("failed to ensure dependencies: %w", err)
 	}
+	if err := linux.ConfigureCRIOLocalRegistry(cmdExec, m.config); err != nil {
+		return fmt.Errorf("failed to configure local registry for CRI-O: %w", err)
+	}
+	if m.config.HasRegistry() {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "restart", "crio"); err != nil {
+			return fmt.Errorf("failed to restart CRI-O after local registry config update: %w", err)
+		}
+	}
 
 	log.Info("✓ Kubernetes %s installed on %s", k8sVersion, machineName)
 	return nil
@@ -300,6 +308,9 @@ func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecu
 	if err := m.SetupKubectlForRootUser(cmdExec, machineName); err != nil {
 		return nil, fmt.Errorf("failed to setup kubectl for root user: %w", err)
 	}
+	if err := m.WaitForControlPlaneReady(cmdExec); err != nil {
+		return nil, fmt.Errorf("control plane is not ready for node joins: %w", err)
+	}
 
 	workerJoinCommand, err := m.ExtractWorkerJoinCommand(cmdExec, machineName)
 	if err != nil {
@@ -335,6 +346,23 @@ func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecu
 	log.Info("Control plane join command: %s", controlPlaneJoinCommand)
 	log.Info("API server endpoint: %s", apiServerEndpoint)
 	return joinInfo, nil
+}
+
+// WaitForControlPlaneReady waits until bootstrap-critical control plane components
+// are ready enough for additional nodes to join (CSR approval/signing path available).
+func (m *K8sMachineManager) WaitForControlPlaneReady(cmdExec platform.CommandExecutor) error {
+	sb := strings.Builder{}
+	sb.WriteString("set -e\n")
+	sb.WriteString("KUBECTL='sudo kubectl --kubeconfig /etc/kubernetes/admin.conf'\n")
+	sb.WriteString("$KUBECTL wait --for=condition=Ready node/$(hostname) --timeout=5m\n")
+	sb.WriteString("$KUBECTL wait --for=condition=Ready pod -n kube-system -l component=kube-controller-manager --timeout=5m\n")
+
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(sb.String(), 6*time.Minute)
+	if err != nil {
+		return fmt.Errorf("failed waiting for control plane readiness: %w, stdout: %s, stderr: %s", err, stdout, stderr)
+	}
+
+	return nil
 }
 
 // JoinControlPlane joins an additional control plane node to a Kubernetes cluster
