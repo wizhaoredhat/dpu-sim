@@ -391,6 +391,9 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registr
 			}
 		}
 
+		if err := kindMgr.SetupHostToDpuNetwork(cluster.Name); err != nil {
+			return fmt.Errorf("failed to setup host-to-DPU veth topology for cluster %s: %w", cluster.Name, err)
+		}
 	}
 
 	return nil

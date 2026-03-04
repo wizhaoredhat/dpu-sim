@@ -2,6 +2,7 @@ package network
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,15 +12,16 @@ func TestGenerateBridgeName(t *testing.T) {
 	tests := []struct {
 		hostName string
 		dpuName  string
+		index    int
 	}{
-		{"host-1", "dpu-1"},
-		{"host-2", "dpu-2"},
-		{"master-1", "worker-1"},
+		{"host-1", "dpu-1", 0},
+		{"host-2", "dpu-2", 5},
+		{"master-1", "worker-1", 15},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.hostName+"-"+tt.dpuName, func(t *testing.T) {
-			name := GenerateBridgeName(tt.hostName, tt.dpuName)
+		t.Run(fmt.Sprintf("%s-%s-%d", tt.hostName, tt.dpuName, tt.index), func(t *testing.T) {
+			name := GenerateBridgeName(tt.hostName, tt.dpuName, tt.index)
 
 			// Bridge name should start with 'h'
 			assert.True(t, name[0] == 'h', "Bridge name should start with 'h'")
@@ -28,12 +30,16 @@ func TestGenerateBridgeName(t *testing.T) {
 			assert.LessOrEqual(t, len(name), 15, "Bridge name too long")
 
 			// Same inputs should generate same name (deterministic)
-			name2 := GenerateBridgeName(tt.hostName, tt.dpuName)
+			name2 := GenerateBridgeName(tt.hostName, tt.dpuName, tt.index)
 			assert.Equal(t, name, name2, "Bridge name should be deterministic")
 
 			// Different inputs should generate different names
-			name3 := GenerateBridgeName("different", "pair")
+			name3 := GenerateBridgeName("different", "pair", 0)
 			assert.NotEqual(t, name, name3, "Different inputs should generate different names")
+
+			// Different index should generate different names
+			name4 := GenerateBridgeName(tt.hostName, tt.dpuName, tt.index+1)
+			assert.NotEqual(t, name, name4, "Different index should generate different names")
 		})
 	}
 }
@@ -42,15 +48,17 @@ func TestGetHostToDPUNetworkName(t *testing.T) {
 	tests := []struct {
 		hostName string
 		dpuName  string
+		index    int
 		expected string
 	}{
-		{"host-1", "dpu-1", "h2d-host-1-dpu-1"},
-		{"master", "worker", "h2d-master-worker"},
+		{"host-1", "dpu-1", 0, "h2d-host-1-dpu-1-0"},
+		{"host-1", "dpu-1", 15, "h2d-host-1-dpu-1-15"},
+		{"master", "worker", 3, "h2d-master-worker-3"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
-			name := GetHostToDPUNetworkName(tt.hostName, tt.dpuName)
+			name := GetHostToDPUNetworkName(tt.hostName, tt.dpuName, tt.index)
 			assert.Equal(t, tt.expected, name)
 		})
 	}

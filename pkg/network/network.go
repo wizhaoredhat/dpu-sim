@@ -138,23 +138,22 @@ func getInterfaceByNameWithTimeout(cmdExec platform.CommandExecutor, ifaceName s
 	return &interfaces[0], nil
 }
 
-// GenerateBridgeName generates a bridge name for a host-DPU pair
-// Format: h2d-<short-hash> where hash is from "hostName-dpuName"
-func GenerateBridgeName(hostName, dpuName string) string {
-	// Create deterministic hash from host and DPU names
-	input := fmt.Sprintf("%s-%s", hostName, dpuName)
+// GenerateBridgeName generates a bridge name for a specific channel in a
+// host-DPU pair.
+// Format: h2d-<short-hash> where hash is from "hostName-dpuName-index"
+func GenerateBridgeName(hostName, dpuName string, index int) string {
+	input := fmt.Sprintf("%s-%s-%d", hostName, dpuName, index)
 	hash := sha256.Sum256([]byte(input))
-
-	// Take first 8 characters of hex hash for short identifier
 	shortHash := fmt.Sprintf("%x", hash[:8])
 
 	bridgeName := fmt.Sprintf("h2d-%s", shortHash)
 	return SanitizeBridgeName(bridgeName)
 }
 
-// GetHostToDPUNetworkName generates the libvirt network name for a host-DPU pair
-func GetHostToDPUNetworkName(hostName, dpuName string) string {
-	return fmt.Sprintf("h2d-%s-%s", hostName, dpuName)
+// GetHostToDPUNetworkName generates the libvirt network name for a specific
+// channel in a host-DPU pair.
+func GetHostToDPUNetworkName(hostName, dpuName string, index int) string {
+	return fmt.Sprintf("h2d-%s-%s-%d", hostName, dpuName, index)
 }
 
 // SanitizeBridgeName ensures bridge name meets Linux requirements

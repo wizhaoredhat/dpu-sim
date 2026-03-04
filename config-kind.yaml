@@ -6,13 +6,24 @@
 # To use this config:
 #   python3 dpu-sim.py --config config-kind.yaml
 
+networks:
+  - name: "host-to-dpu-link"
+    type: "HostToDpu"
+    num_pairs: 16
+
 # Kind cluster configuration
 # This replaces the 'vms' section when using container mode
 kind:
   nodes:
     - role: control-plane
     - role: worker
+      type: dpu-host    # Host side of host-DPU pair 0
     - role: worker
+      type: dpu          # DPU side of host-DPU pair 0
+    - role: worker
+      type: dpu-host    # Host side of host-DPU pair 1
+    - role: worker
+      type: dpu          # DPU side of host-DPU pair 1
 
 # Kubernetes cluster configuration
 kubernetes:

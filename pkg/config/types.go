@@ -6,12 +6,13 @@ import (
 )
 
 const (
-	MgmtNetworkName    = "mgmt"
-	K8sNetworkName     = "k8s"
-	VMDeploymentMode   = "vm"
-	KindDeploymentMode = "kind"
-	VMHostType         = "host"
-	VMDPUType          = "dpu"
+	MgmtNetworkName      = "mgmt"
+	K8sNetworkName       = "k8s"
+	HostToDpuNetworkType = "HostToDpu"
+	VMDeploymentMode     = "vm"
+	KindDeploymentMode   = "kind"
+	VMHostType           = "host"
+	VMDPUType            = "dpu"
 
 	// RegistryContainerName is the Docker container name for the local registry
 	DefaultRegistryContainerName = "dpu-sim-registry"
@@ -73,6 +74,7 @@ type NetworkConfig struct {
 	NICModel   string `yaml:"nic_model"`
 	UseOVS     bool   `yaml:"use_ovs,omitempty"`
 	AttachTo   string `yaml:"attach_to,omitempty"`
+	NumPairs   int    `yaml:"num_pairs,omitempty"`
 }
 
 // VMConfig represents a virtual machine configuration
@@ -97,6 +99,9 @@ type KindConfig struct {
 // KindNodeConfig represents a Kind node configuration
 type KindNodeConfig struct {
 	Role string `yaml:"role"`
+	// Type distinguishes DPU-related workers: "dpu-host" or "dpu".
+	// Regular workers and control-plane nodes leave this empty.
+	Type string `yaml:"type,omitempty"`
 }
 
 // OSConfig represents operating system configuration

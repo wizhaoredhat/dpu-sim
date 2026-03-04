@@ -9,6 +9,7 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/network"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
@@ -289,20 +290,23 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 	// networks.
 	sb.WriteString(m.generateNetworkInterfaces(vmCfg))
 
+	numPairs := m.config.GetHostToDpuNumPairs()
 	mappings := m.config.GetHostDPUMappings()
 
-	// Add implicit host-to-DPU network interface if this is a host
+	// Add host-to-DPU network interfaces
 	if vmCfg.Type == "host" {
 		for _, mapping := range mappings {
 			if mapping.Host.Name == vmCfg.Name {
 				for _, conn := range mapping.Connections {
-					sb.WriteString("    <interface type='network'>\n")
-					sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", conn.Link.NetworkName))
-					sb.WriteString("      <virtualport type='openvswitch'/>\n")
-					sb.WriteString("      <model type='igb'/>\n")
-					sb.WriteString("    </interface>\n")
+					for idx := 0; idx < numPairs; idx++ {
+						netName := network.GetHostToDPUNetworkName(mapping.Host.Name, conn.DPU.Name, idx)
+						sb.WriteString("    <interface type='network'>\n")
+						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))
+						sb.WriteString("      <virtualport type='openvswitch'/>\n")
+						sb.WriteString("      <model type='igb'/>\n")
+						sb.WriteString("    </interface>\n")
+					}
 				}
-				// Host found, break out of the loop
 				break
 			}
 		}
@@ -312,12 +316,14 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 		for _, mapping := range mappings {
 			for _, conn := range mapping.Connections {
 				if conn.DPU.Name == vmCfg.Name {
-					sb.WriteString("    <interface type='network'>\n")
-					sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", conn.Link.NetworkName))
-					sb.WriteString("      <virtualport type='openvswitch'/>\n")
-					sb.WriteString("      <model type='igb'/>\n")
-					sb.WriteString("    </interface>\n")
-					// DPU found, break out of the loop
+					for idx := 0; idx < numPairs; idx++ {
+						netName := network.GetHostToDPUNetworkName(mapping.Host.Name, conn.DPU.Name, idx)
+						sb.WriteString("    <interface type='network'>\n")
+						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))
+						sb.WriteString("      <virtualport type='openvswitch'/>\n")
+						sb.WriteString("      <model type='igb'/>\n")
+						sb.WriteString("    </interface>\n")
+					}
 					break
 				}
 			}

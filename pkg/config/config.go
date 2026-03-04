@@ -45,21 +45,28 @@ func (c *Config) validateAndSetDefaults() error {
 		if net.Type == "" {
 			errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'type' is required", i, net.Name))
 		}
-		if net.BridgeName == "" {
-			errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'bridge_name' is required", i, net.Name))
-		}
 
-		if c.Networks[i].Mode == "" {
-			c.Networks[i].Mode = "nat"
-		}
-		if c.Networks[i].NICModel == "" {
-			c.Networks[i].NICModel = "virtio"
-		}
-		if c.Networks[i].UseOVS == false {
-			c.Networks[i].UseOVS = false
-		}
-		if c.Networks[i].AttachTo == "" {
-			c.Networks[i].AttachTo = "any"
+		if net.Type == HostToDpuNetworkType {
+			if c.Networks[i].NumPairs <= 0 {
+				c.Networks[i].NumPairs = 1
+			}
+		} else {
+			if net.BridgeName == "" {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'bridge_name' is required", i, net.Name))
+			}
+
+			if c.Networks[i].Mode == "" {
+				c.Networks[i].Mode = "nat"
+			}
+			if c.Networks[i].NICModel == "" {
+				c.Networks[i].NICModel = "virtio"
+			}
+			if c.Networks[i].UseOVS == false {
+				c.Networks[i].UseOVS = false
+			}
+			if c.Networks[i].AttachTo == "" {
+				c.Networks[i].AttachTo = "any"
+			}
 		}
 	}
 
@@ -133,6 +140,9 @@ func (c *Config) validateAndSetDefaults() error {
 		for i, node := range c.Kind.Nodes {
 			if node.Role != "" && node.Role != "control-plane" && node.Role != "worker" {
 				errors = append(errors, fmt.Sprintf("kind.nodes[%d]: 'role' must be 'control-plane' or 'worker', got '%s'", i, node.Role))
+			}
+			if node.Type != "" && node.Type != "dpu-host" && node.Type != "dpu" {
+				errors = append(errors, fmt.Sprintf("kind.nodes[%d]: 'type' must be 'dpu-host' or 'dpu', got '%s'", i, node.Type))
 			}
 		}
 	}
@@ -351,6 +361,60 @@ func (c *Config) GetKindWorkerCount() int {
 	return count
 }
 
+// KindHostDPUPair describes a host-DPU worker pair derived from Kind node config.
+type KindHostDPUPair struct {
+	HostContainer string
+	DPUContainer  string
+}
+
+// GetKindHostDPUPairs returns the host-DPU container pairs for Kind mode.
+// It pairs consecutive "dpu-host" and "dpu" workers in the order they appear
+// in the Kind node config.
+func (c *Config) GetKindHostDPUPairs(clusterName string) []KindHostDPUPair {
+	if c.Kind == nil {
+		return nil
+	}
+
+	var hosts, dpus []string
+	workerIdx := 0
+	for _, node := range c.Kind.Nodes {
+		if node.Role == "control-plane" {
+			continue
+		}
+		var containerName string
+		// Unfortunately Kind doesn't provide a way to rename nodes.
+		if workerIdx == 0 {
+			// First worker's name is clusterName-worker
+			containerName = clusterName + "-worker"
+		} else {
+			// Second worker's name is clusterName-worker2, third worker's name is clusterName-worker3, etc.
+			containerName = fmt.Sprintf("%s-worker%d", clusterName, workerIdx+1)
+		}
+		workerIdx++
+
+		switch node.Type {
+		case "dpu-host":
+			hosts = append(hosts, containerName)
+		case "dpu":
+			dpus = append(dpus, containerName)
+		}
+	}
+
+	numPairs := len(hosts)
+	if len(dpus) < numPairs {
+		numPairs = len(dpus)
+	}
+
+	pairs := make([]KindHostDPUPair, numPairs)
+	for idx := 0; idx < numPairs; idx++ {
+		pairs[idx] = KindHostDPUPair{
+			HostContainer: hosts[idx],
+			DPUContainer:  dpus[idx],
+		}
+	}
+	return pairs
+}
+
 // GetNetworkByType returns the network configuration by type (e.g., "mgmt" or "k8s")
 func (c *Config) GetNetworkByType(networkType string) *NetworkConfig {
 	for i := range c.Networks {
@@ -359,6 +423,26 @@ func (c *Config) GetNetworkByType(networkType string) *NetworkConfig {
 		}
 	}
 	return nil
+}
+
+// GetHostToDpuNetwork returns the HostToDpu network config, or nil if not configured.
+func (c *Config) GetHostToDpuNetwork() *NetworkConfig {
+	for i := range c.Networks {
+		if c.Networks[i].Type == HostToDpuNetworkType {
+			return &c.Networks[i]
+		}
+	}
+	return nil
+}
+
+// GetHostToDpuNumPairs returns the number of data channels per host-DPU pair.
+// Returns 1 if no HostToDpu network is configured.
+func (c *Config) GetHostToDpuNumPairs() int {
+	net := c.GetHostToDpuNetwork()
+	if net == nil || net.NumPairs <= 0 {
+		return 1
+	}
+	return net.NumPairs
 }
 
 // GetNetworkByName returns the network configuration by name

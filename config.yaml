@@ -22,6 +22,10 @@ networks:
     use_ovs: false
     attach_to: "any"
 
+  - name: "host-to-dpu-link"
+    type: "HostToDpu"
+    num_pairs: 16
+
 vms:
   - name: "master-1"
     type: "host"
