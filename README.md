@@ -147,21 +147,62 @@ The simulator supports two deployment modes, configured via different sections i
 
 ### Kind Mode Configuration (config-kind.yaml)
 
+Kind mode supports **two clusters** (host and DPU), similar to the VM approach. One Kind cluster is created per entry in `kubernetes.clusters`. Each node must specify which cluster it belongs to and is identified by a **node label** (`dpu-sim.org/node-name`) because Kind does not support renaming nodes.
+
+**Node fields:**
+
+| Field         | Required | Description |
+|---------------|----------|-------------|
+| `name`        | Yes      | Logical node name; applied as label `dpu-sim.org/node-name` on the Kind node. |
+| `k8s_cluster` | Yes      | Cluster name from `kubernetes.clusters` this node belongs to. |
+| `k8s_role`    | Yes      | `control-plane` or `worker`. |
+| `type`        | No       | For workers: `dpu-host` (host side) or `dpu` (DPU side). Omit for control-plane. |
+| `host`        | Yes*     | For `type: dpu` only: `name` of the `dpu-host` node this DPU is paired with. |
+
+Example with two clusters (host cluster and DPU cluster) and two host–DPU pairs:
+
 ```yaml
 kind:
   nodes:
-    - role: control-plane
-    - role: worker
-    - role: worker
+    - name: "control-plane-host"
+      k8s_role: "control-plane"
+      k8s_cluster: "dpu-sim-host-kind"
+    - name: "control-plane-dpu"
+      k8s_role: "control-plane"
+      k8s_cluster: "dpu-sim-dpu-kind"
+    - name: "host-1-1"
+      type: dpu-host
+      k8s_role: "worker"
+      k8s_cluster: "dpu-sim-host-kind"
+    - name: "dpu-1-1"
+      type: dpu
+      k8s_role: "worker"
+      k8s_cluster: "dpu-sim-dpu-kind"
+      host: "host-1-1"
+    - name: "host-2-1"
+      type: dpu-host
+      k8s_role: "worker"
+      k8s_cluster: "dpu-sim-host-kind"
+    - name: "dpu-2-1"
+      type: dpu
+      k8s_role: "worker"
+      k8s_cluster: "dpu-sim-dpu-kind"
+      host: "host-2-1"
 
 kubernetes:
   version: "1.33"
   clusters:
-    - name: "dpu-sim-kind"
+    - name: "dpu-sim-host-kind"
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
+    - name: "dpu-sim-dpu-kind"
+      pod_cidr: "10.246.0.0/16"
+      service_cidr: "10.247.0.0/16"
+      cni: "ovn-kubernetes"
 ```
+
+To look up a node by its config name after deployment, use the label: `kubectl get nodes -l dpu-sim.org/node-name=host-1-1`.
 
 ### VM Mode Configuration (config.yaml)
 
