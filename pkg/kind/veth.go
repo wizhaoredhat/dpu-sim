@@ -21,14 +21,14 @@ const (
 )
 
 // SetupHostToDpuNetwork reads the HostToDpu network config and creates veth
-// channels between the host and dpu Kind containers.
-func (m *KindManager) SetupHostToDpuNetwork(clusterName string) error {
+// channels between host and DPU Kind containers (which may be in different clusters).
+func (m *KindManager) SetupHostToDpuNetwork() error {
 	h2dCfg := m.config.GetHostToDpuNetwork()
 	if h2dCfg == nil {
 		return nil
 	}
 
-	pairs := m.config.GetKindHostDPUPairs(clusterName)
+	pairs := m.config.GetKindHostDPUPairs()
 	if len(pairs) == 0 {
 		log.Warn("HostToDpu network configured but no dpu-host/dpu worker pairs found in Kind node config")
 		return nil

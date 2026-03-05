@@ -96,12 +96,13 @@ type KindConfig struct {
 	Nodes []KindNodeConfig `yaml:"nodes"`
 }
 
-// KindNodeConfig represents a Kind node configuration
+// KindNodeConfig represents a Kind node configuration.
 type KindNodeConfig struct {
-	Role string `yaml:"role"`
-	// Type distinguishes DPU-related workers: "dpu-host" or "dpu".
-	// Regular workers and control-plane nodes leave this empty.
-	Type string `yaml:"type,omitempty"`
+	Name       string `yaml:"name"`                  // Name is used as a node label (dpu-sim.org/node-name) since Kind does not support node renaming.
+	Type       string `yaml:"type,omitempty"`        // "dpu-host" or "dpu" for workers
+	K8sCluster string `yaml:"k8s_cluster,omitempty"` // Kubernetes cluster name
+	K8sRole    string `yaml:"k8s_role,omitempty"`    // "control-plane" or "worker"
+	Host       string `yaml:"host,omitempty"`        // for type "dpu", the name of the dpu-host node
 }
 
 // OSConfig represents operating system configuration

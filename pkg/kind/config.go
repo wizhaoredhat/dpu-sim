@@ -8,7 +8,11 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
-// BuildKindConfig builds a Kind cluster configuration using the kind library's data structures
+// Node label used to identify the config "name" since Kind does not support node renaming.
+const kindNodeNameLabel = "dpu-sim.org/node-name"
+
+// BuildKindConfig builds a Kind cluster configuration using the kind library's data structures.
+// Only nodes with k8s_cluster == clusterName are included; each node gets a label with its config name.
 func (m *KindManager) BuildKindConfig(clusterName string, clusterCfg config.ClusterConfig) (*v1alpha4.Cluster, error) {
 	cluster := &v1alpha4.Cluster{
 		TypeMeta: v1alpha4.TypeMeta{
@@ -31,28 +35,43 @@ func (m *KindManager) BuildKindConfig(clusterName string, clusterCfg config.Clus
 		cluster.Networking.KubeProxyMode = v1alpha4.ProxyMode("none")
 	}
 
-	// Nodes configuration for kind configuration
-	if m.config.Kind != nil && len(m.config.Kind.Nodes) > 0 {
-		for i, node := range m.config.Kind.Nodes {
-			kindNode := v1alpha4.Node{
-				Role: v1alpha4.NodeRole(node.Role),
-			}
+	// Nodes: only those belonging to this cluster, with role from k8s_role and name label
+	nodes := m.config.GetKindNodesForCluster(clusterName)
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("no kind nodes for cluster %s", clusterName)
+	}
 
-			// Add extra port mappings for the first control-plane node
-			if node.Role == "control-plane" && i == 0 {
-				kindNode.KubeadmConfigPatches = []string{
-					`kind: InitConfiguration
+	firstControlPlane := true
+	for _, node := range nodes {
+		role := node.K8sRole
+		if role == "master" {
+			role = "control-plane"
+		}
+		kindNode := v1alpha4.Node{
+			Role: v1alpha4.NodeRole(role),
+		}
+		// Label to identify this node by config name (Kind does not support renaming)
+		label := fmt.Sprintf("%s=%s", kindNodeNameLabel, node.Name)
+		labelsArg := label
+		if role == "control-plane" && firstControlPlane {
+			labelsArg = label + ",ingress-ready=true"
+			firstControlPlane = false
+			kindNode.KubeadmConfigPatches = []string{
+				fmt.Sprintf(`kind: InitConfiguration
 nodeRegistration:
   kubeletExtraArgs:
-    node-labels: "ingress-ready=true"
-    authorization-mode: "AlwaysAllow"`,
-				}
+    node-labels: "%s"
+    authorization-mode: "AlwaysAllow"`, labelsArg),
 			}
-
-			cluster.Nodes = append(cluster.Nodes, kindNode)
+		} else {
+			kindNode.KubeadmConfigPatches = []string{
+				fmt.Sprintf(`kind: InitConfiguration
+nodeRegistration:
+  kubeletExtraArgs:
+    node-labels: "%s"`, labelsArg),
+			}
 		}
-	} else {
-		return nil, fmt.Errorf("nodes configuration is required for kind configuration")
+		cluster.Nodes = append(cluster.Nodes, kindNode)
 	}
 
 	cluster.KubeadmConfigPatches = []string{

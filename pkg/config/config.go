@@ -137,12 +137,37 @@ func (c *Config) validateAndSetDefaults() error {
 
 	// Validate Kind nodes (if Kind mode)
 	if c.Kind != nil {
+		kindNodeNames := make(map[string]bool)
 		for i, node := range c.Kind.Nodes {
-			if node.Role != "" && node.Role != "control-plane" && node.Role != "worker" {
-				errors = append(errors, fmt.Sprintf("kind.nodes[%d]: 'role' must be 'control-plane' or 'worker', got '%s'", i, node.Role))
+			if node.Name == "" {
+				errors = append(errors, fmt.Sprintf("kind.nodes[%d]: 'name' is required", i))
+			} else {
+				kindNodeNames[node.Name] = true
+			}
+			if node.K8sRole != "" && node.K8sRole != "control-plane" && node.K8sRole != "worker" {
+				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'k8s_role' must be 'control-plane' or 'worker', got '%s'", i, node.Name, node.K8sRole))
+			}
+			if node.K8sCluster == "" {
+				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'k8s_cluster' is required", i, node.Name))
 			}
 			if node.Type != "" && node.Type != "dpu-host" && node.Type != "dpu" {
-				errors = append(errors, fmt.Sprintf("kind.nodes[%d]: 'type' must be 'dpu-host' or 'dpu', got '%s'", i, node.Type))
+				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'type' must be 'dpu-host' or 'dpu', got '%s'", i, node.Name, node.Type))
+			}
+			if node.Type == "dpu" && node.Host == "" {
+				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'host' is required for type 'dpu'", i, node.Name))
+			}
+		}
+		// Validate Kind host references and cluster names
+		clusterNames := make(map[string]bool)
+		for _, cluster := range c.Kubernetes.Clusters {
+			clusterNames[cluster.Name] = true
+		}
+		for i, node := range c.Kind.Nodes {
+			if node.K8sCluster != "" && !clusterNames[node.K8sCluster] {
+				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'k8s_cluster' %q not found in kubernetes.clusters", i, node.Name, node.K8sCluster))
+			}
+			if node.Type == "dpu" && node.Host != "" && !kindNodeNames[node.Host] {
+				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'host' references non-existent node '%s'", i, node.Name, node.Host))
 			}
 		}
 	}
@@ -333,84 +358,120 @@ func (c *Config) GetCNIType(clusterName string) CNIType {
 	return cluster.CNI
 }
 
-// GetKindControlPlaneCount returns the number of control-plane nodes in Kind config
-func (c *Config) GetKindControlPlaneCount() int {
+// GetKindNodesForCluster returns Kind nodes that belong to the given cluster, in config file order.
+func (c *Config) GetKindNodesForCluster(clusterName string) []KindNodeConfig {
+	if c.Kind == nil {
+		return nil
+	}
+	var out []KindNodeConfig
+	for _, node := range c.Kind.Nodes {
+		if node.K8sCluster == clusterName {
+			out = append(out, node)
+		}
+	}
+	return out
+}
+
+// GetKindNodeContainerName returns the Docker container name for a Kind node.
+// clusterName is the Kind cluster name
+// nodeName is the config "name" (also the dpu-sim.org/node-name label) of the node.
+// Kind names: first control-plane = <cluster>-control-plane, then control-plane2, ...;
+// first worker = <cluster>-worker, then worker2, worker3, ...
+func (c *Config) GetKindNodeContainerName(clusterName string, nodeName string) string {
+	nodes := c.GetKindNodesForCluster(clusterName)
+	cpIdx, workerIdx := 0, 0
+	for _, n := range nodes {
+		role := n.K8sRole
+		var name string
+		switch role {
+		case "control-plane":
+			cpIdx++
+			if cpIdx == 1 {
+				name = clusterName + "-control-plane"
+			} else {
+				name = fmt.Sprintf("%s-control-plane%d", clusterName, cpIdx)
+			}
+		case "worker":
+			workerIdx++
+			if workerIdx == 1 {
+				name = clusterName + "-worker"
+			} else {
+				name = fmt.Sprintf("%s-worker%d", clusterName, workerIdx)
+			}
+		default:
+			return ""
+		}
+		if n.Name == nodeName {
+			return name
+		}
+	}
+	return ""
+}
+
+// GetKindControlPlaneCount returns the number of control-plane nodes in Kind config for a cluster.
+func (c *Config) GetKindControlPlaneCount(clusterName string) int {
 	if c.Kind == nil {
 		return 0
 	}
 	count := 0
 	for _, node := range c.Kind.Nodes {
-		if node.Role == "control-plane" {
+		if node.K8sCluster == clusterName && node.K8sRole == "control-plane" {
 			count++
 		}
 	}
 	return count
 }
 
-// GetKindWorkerCount returns the number of worker nodes in Kind config
-func (c *Config) GetKindWorkerCount() int {
+// GetKindWorkerCount returns the number of worker nodes in Kind config for a cluster.
+func (c *Config) GetKindWorkerCount(clusterName string) int {
 	if c.Kind == nil {
 		return 0
 	}
 	count := 0
 	for _, node := range c.Kind.Nodes {
-		if node.Role == "worker" || node.Role == "" {
+		if node.K8sCluster == clusterName && (node.K8sRole == "worker" || node.K8sRole == "") {
 			count++
 		}
 	}
 	return count
 }
 
-// KindHostDPUPair describes a host-DPU worker pair derived from Kind node config.
+// KindHostDPUPair describes a host-DPU worker pair; containers may be in different Kind clusters.
 type KindHostDPUPair struct {
 	HostContainer string
 	DPUContainer  string
 }
 
-// GetKindHostDPUPairs returns the host-DPU container pairs for Kind mode.
-// It pairs consecutive "dpu-host" and "dpu" workers in the order they appear
-// in the Kind node config.
-func (c *Config) GetKindHostDPUPairs(clusterName string) []KindHostDPUPair {
+// GetKindHostDPUPairs returns all host-DPU container pairs for Kind mode, even if across clusters.
+// Each DPU node's "host" field references a dpu-host node; pairs use Docker container names.
+func (c *Config) GetKindHostDPUPairs() []KindHostDPUPair {
 	if c.Kind == nil {
 		return nil
 	}
-
-	var hosts, dpus []string
-	workerIdx := 0
+	hostByName := make(map[string]KindNodeConfig)
 	for _, node := range c.Kind.Nodes {
-		if node.Role == "control-plane" {
+		if node.Type == "dpu-host" {
+			hostByName[node.Name] = node
+		}
+	}
+	var pairs []KindHostDPUPair
+	for _, node := range c.Kind.Nodes {
+		if node.Type != "dpu" || node.Host == "" {
 			continue
 		}
-		var containerName string
-		// Unfortunately Kind doesn't provide a way to rename nodes.
-		if workerIdx == 0 {
-			// First worker's name is clusterName-worker
-			containerName = clusterName + "-worker"
-		} else {
-			// Second worker's name is clusterName-worker2, third worker's name is clusterName-worker3, etc.
-			containerName = fmt.Sprintf("%s-worker%d", clusterName, workerIdx+1)
+		host, ok := hostByName[node.Host]
+		if !ok {
+			continue
 		}
-		workerIdx++
-
-		switch node.Type {
-		case "dpu-host":
-			hosts = append(hosts, containerName)
-		case "dpu":
-			dpus = append(dpus, containerName)
+		hostContainer := c.GetKindNodeContainerName(host.K8sCluster, host.Name)
+		dpuContainer := c.GetKindNodeContainerName(node.K8sCluster, node.Name)
+		if hostContainer == "" || dpuContainer == "" {
+			continue
 		}
-	}
-
-	numPairs := len(hosts)
-	if len(dpus) < numPairs {
-		numPairs = len(dpus)
-	}
-
-	pairs := make([]KindHostDPUPair, numPairs)
-	for idx := 0; idx < numPairs; idx++ {
-		pairs[idx] = KindHostDPUPair{
-			HostContainer: hosts[idx],
-			DPUContainer:  dpus[idx],
-		}
+		pairs = append(pairs, KindHostDPUPair{
+			HostContainer: hostContainer,
+			DPUContainer:  dpuContainer,
+		})
 	}
 	return pairs
 }

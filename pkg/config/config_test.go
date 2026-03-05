@@ -95,8 +95,9 @@ func TestGetDeploymentMode(t *testing.T) {
 		{
 			name: "Kind mode",
 			config: Config{
+				Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "k"}}},
 				Kind: &KindConfig{
-					Nodes: []KindNodeConfig{{Role: "control-plane"}},
+					Nodes: []KindNodeConfig{{Name: "cp", K8sRole: "control-plane", K8sCluster: "k"}},
 				},
 			},
 			expected:    KindDeploymentMode,
@@ -106,8 +107,9 @@ func TestGetDeploymentMode(t *testing.T) {
 			name: "Both modes - error",
 			config: Config{
 				VMs: []VMConfig{{Name: "vm1"}},
+				Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "k"}}},
 				Kind: &KindConfig{
-					Nodes: []KindNodeConfig{{Role: "control-plane"}},
+					Nodes: []KindNodeConfig{{Name: "cp", K8sRole: "control-plane", K8sCluster: "k"}},
 				},
 			},
 			expected:    "",
@@ -199,18 +201,27 @@ func TestGetClusterConfig(t *testing.T) {
 
 func TestGetKindNodeCounts(t *testing.T) {
 	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-a"},
+				{Name: "cluster-b"},
+			},
+		},
 		Kind: &KindConfig{
 			Nodes: []KindNodeConfig{
-				{Role: "control-plane"},
-				{Role: "worker"},
-				{Role: "worker"},
-				{Role: ""}, // Empty role defaults to worker
+				{Name: "cp-a", K8sRole: "control-plane", K8sCluster: "cluster-a"},
+				{Name: "w-a1", K8sRole: "worker", K8sCluster: "cluster-a"},
+				{Name: "w-a2", K8sRole: "worker", K8sCluster: "cluster-a"},
+				{Name: "cp-b", K8sRole: "control-plane", K8sCluster: "cluster-b"},
+				{Name: "w-b1", K8sRole: "worker", K8sCluster: "cluster-b"},
 			},
 		},
 	}
 
-	assert.Equal(t, 1, cfg.GetKindControlPlaneCount())
-	assert.Equal(t, 3, cfg.GetKindWorkerCount())
+	assert.Equal(t, 1, cfg.GetKindControlPlaneCount("cluster-a"))
+	assert.Equal(t, 2, cfg.GetKindWorkerCount("cluster-a"))
+	assert.Equal(t, 1, cfg.GetKindControlPlaneCount("cluster-b"))
+	assert.Equal(t, 1, cfg.GetKindWorkerCount("cluster-b"))
 }
 
 func TestIsKindMode(t *testing.T) {
@@ -221,8 +232,9 @@ func TestIsKindMode(t *testing.T) {
 	assert.True(t, vmConfig.IsVMMode())
 
 	kindConfig := Config{
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "k"}}},
 		Kind: &KindConfig{
-			Nodes: []KindNodeConfig{{Role: "control-plane"}},
+			Nodes: []KindNodeConfig{{Name: "cp", K8sRole: "control-plane", K8sCluster: "k"}},
 		},
 	}
 	assert.True(t, kindConfig.IsKindMode())

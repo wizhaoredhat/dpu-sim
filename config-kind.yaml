@@ -1,7 +1,7 @@
 # DPU Simulator Configuration - Kind (Container) Mode
 #
-# This configuration uses Kind (Kubernetes in Docker) instead of VMs
-# for faster iteration and development.
+# This configuration uses Kind (Kubernetes in Docker) with two clusters
+# (host and DPU), similar to the VM approach.
 #
 # To use this config:
 #   python3 dpu-sim.py --config config-kind.yaml
@@ -11,27 +11,45 @@ networks:
     type: "HostToDpu"
     num_pairs: 16
 
-# Kind cluster configuration
-# This replaces the 'vms' section when using container mode
+# Kind cluster configuration: one Kind cluster per kubernetes.clusters entry.
+# Node "name" is applied as a label (dpu-sim.org/node-name); Kind does not support node renaming.
 kind:
   nodes:
-    - role: control-plane
-    - role: worker
-      type: dpu-host    # Host side of host-DPU pair 0
-    - role: worker
-      type: dpu          # DPU side of host-DPU pair 0
-    - role: worker
-      type: dpu-host    # Host side of host-DPU pair 1
-    - role: worker
-      type: dpu          # DPU side of host-DPU pair 1
+    - name: "control-plane-host"
+      k8s_role: "control-plane"
+      k8s_cluster: "dpu-sim-host-kind"
+    - name: "control-plane-dpu"
+      k8s_role: "control-plane"
+      k8s_cluster: "dpu-sim-dpu-kind"
+    - name: "host-1-1"
+      type: dpu-host
+      k8s_role: "worker"
+      k8s_cluster: "dpu-sim-host-kind"
+    - name: "dpu-1-1"
+      type: dpu
+      k8s_role: "worker"
+      k8s_cluster: "dpu-sim-dpu-kind"
+      host: "host-1-1"
+    - name: "host-2-1"
+      type: dpu-host
+      k8s_role: "worker"
+      k8s_cluster: "dpu-sim-host-kind"
+    - name: "dpu-2-1"
+      type: dpu
+      k8s_role: "worker"
+      k8s_cluster: "dpu-sim-dpu-kind"
+      host: "host-2-1"
 
-# Kubernetes cluster configuration
 kubernetes:
   version: "1.33"
   clusters:
-    - name: "dpu-sim-kind"
+    - name: "dpu-sim-host-kind"
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
+      cni: "ovn-kubernetes"
+    - name: "dpu-sim-dpu-kind"
+      pod_cidr: "10.246.0.0/16"
+      service_cidr: "10.247.0.0/16"
       cni: "ovn-kubernetes"
 
 registry:
