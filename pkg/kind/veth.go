@@ -12,16 +12,12 @@ import (
 const (
 	// Format strings for veth endpoint names on the host namespace (before
 	// they are moved into containers and renamed).
-	vethHostEndFmt  = "host%d-eth0-%d" // host-side data veth: host{pairIdx}-eth0-{i}
-	vethDpuEndFmt   = "dpu%d-rep0-%d"  // DPU-side data veth:  dpu{pairIdx}-rep0-{i}
-	vethMgmtHostFmt = "temp-pf%d"      // management host end: temp-pf{pairIdx}
-	vethMgmtDpuFmt  = "temp-pfrep%d"   // management DPU end:  temp-pfrep{pairIdx}
+	vethHostEndFmt = "host%d-eth0-%d" // host-side data veth: host{pairIdx}-eth0-{i}
+	vethDpuEndFmt  = "dpu%d-rep0-%d"  // DPU-side data veth:  dpu{pairIdx}-rep0-{i}
 
 	// Names used inside the containers after rename.
 	hostDataIfFmt = "eth0-%d" // data interface in host container
 	dpuDataIfFmt  = "rep0-%d" // data representor in DPU container
-	hostMgmtIf    = "pf"      // management interface in host container
-	dpuMgmtIf     = "pfrep"   // management interface in DPU container
 )
 
 // SetupHostToDpuNetwork reads the HostToDpu network config and creates veth
@@ -53,7 +49,6 @@ func (m *KindManager) CleanupVethTopology(cmdExec platform.CommandExecutor, pair
 		for i := 0; i < numPairs; i++ {
 			cmdExec.RunCmd(log.LevelDebug, "sudo", "ip", "link", "delete", fmt.Sprintf(vethHostEndFmt, pairIdx, i))
 		}
-		cmdExec.RunCmd(log.LevelDebug, "sudo", "ip", "link", "delete", fmt.Sprintf(vethMgmtHostFmt, pairIdx))
 	}
 }
 
@@ -88,10 +83,6 @@ func (m *KindManager) CreateVethTopology(cmdExec platform.CommandExecutor, pairs
 
 		if err := createDataVeths(cmdExec, hostContainerExec, dpuContainerExec, pairIdx, hostPID, dpuPID, numPairs); err != nil {
 			return fmt.Errorf("failed to create data veths for pair %d: %w", pairIdx, err)
-		}
-
-		if err := createManagementVeth(cmdExec, hostContainerExec, dpuContainerExec, pair, pairIdx, hostPID, dpuPID); err != nil {
-			return fmt.Errorf("failed to create management veth for pair %d: %w", pairIdx, err)
 		}
 	}
 
@@ -137,87 +128,6 @@ func createDataVeths(
 			return fmt.Errorf("failed to bring up %s in DPU container: %w", dpuTarget, err)
 		}
 	}
-	return nil
-}
-
-// createManagementVeth creates a management veth pair for one host-DPU
-// pair. The host end replaces the original Kind eth0 (preserving its IP).
-// The DPU end becomes pfrep.
-func createManagementVeth(
-	cmdExec platform.CommandExecutor,
-	hostContainerExec, dpuContainerExec platform.CommandExecutor,
-	pair config.KindHostDPUPair, pairIdx int, hostPID, dpuPID string,
-) error {
-	hostEnd := fmt.Sprintf(vethMgmtHostFmt, pairIdx)
-	dpuEnd := fmt.Sprintf(vethMgmtDpuFmt, pairIdx)
-
-	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "ip", "link", "add", hostEnd, "type", "veth", "peer", "name", dpuEnd); err != nil {
-		return fmt.Errorf("failed to create management veth: %w", err)
-	}
-	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "ip", "link", "set", hostEnd, "netns", hostPID); err != nil {
-		return fmt.Errorf("failed to move %s to host container: %w", hostEnd, err)
-	}
-	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "ip", "link", "set", dpuEnd, "netns", dpuPID); err != nil {
-		return fmt.Errorf("failed to move %s to DPU container: %w", dpuEnd, err)
-	}
-
-	ipOut, stderr, err := hostContainerExec.Execute("ip addr show eth0 | grep 'inet ' | awk '{print $2}' | head -1")
-	if err != nil {
-		return fmt.Errorf("failed to get IP for %s: %w, stderr: %s", pair.HostContainer, err, stderr)
-	}
-	gwOut, stderr, err := hostContainerExec.Execute("ip route | grep default | awk '{print $3}' | head -1")
-	if err != nil {
-		return fmt.Errorf("failed to get gateway for %s: %w, stderr: %s", pair.HostContainer, err, stderr)
-	}
-	hostIP := strings.TrimSpace(ipOut)
-	hostGW := strings.TrimSpace(gwOut)
-
-	err = hostContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", hostEnd, "name", hostMgmtIf)
-	if err != nil {
-		return fmt.Errorf("failed to rename %s to %s in host container: %w", hostEnd, hostMgmtIf, err)
-	}
-
-	if hostIP != "" {
-		log.Info("%s: migrating Kind IP %s from eth0 to %s", pair.HostContainer, hostIP, hostMgmtIf)
-		err = hostContainerExec.RunCmd(log.LevelDebug, "ip", "addr", "add", hostIP, "dev", hostMgmtIf)
-		if err != nil {
-			return fmt.Errorf("failed to add IP %s to %s in host container: %w", hostIP, hostMgmtIf, err)
-		}
-		err = hostContainerExec.RunCmd(log.LevelDebug, "ip", "link", "delete", "eth0")
-		if err != nil {
-			return fmt.Errorf("failed to delete eth0 in host container: %w", err)
-		}
-		err = hostContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", hostMgmtIf, "up")
-		if err != nil {
-			return fmt.Errorf("failed to bring up %s in host container: %w", hostMgmtIf, err)
-		}
-		if hostGW != "" {
-			err = hostContainerExec.RunCmd(log.LevelDebug, "ip", "route", "add", "default", "via", hostGW, "dev", hostMgmtIf)
-			if err != nil {
-				return fmt.Errorf("failed to add default route to %s in host container: %w", hostMgmtIf, err)
-			}
-		}
-	} else {
-		err = hostContainerExec.RunCmd(log.LevelDebug, "ip", "link", "delete", "eth0")
-		if err != nil {
-			return fmt.Errorf("failed to delete eth0 in host container: %w", err)
-		}
-		err = hostContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", hostMgmtIf, "up")
-		if err != nil {
-			return fmt.Errorf("failed to bring up %s in host container: %w", hostMgmtIf, err)
-		}
-	}
-
-	err = dpuContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", dpuEnd, "name", dpuMgmtIf)
-	if err != nil {
-		return fmt.Errorf("failed to rename %s to %s in DPU container: %w", dpuEnd, dpuMgmtIf, err)
-	}
-	err = dpuContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", dpuMgmtIf, "up")
-	if err != nil {
-		return fmt.Errorf("failed to bring up %s in DPU container: %w", dpuMgmtIf, err)
-	}
-
-	log.Info("✓ Management veth created: %s:%s <--> %s:%s", pair.HostContainer, hostMgmtIf, pair.DPUContainer, dpuMgmtIf)
 	return nil
 }
 
