@@ -6,6 +6,7 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/network"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
@@ -14,10 +15,6 @@ const (
 	// they are moved into containers and renamed).
 	vethHostEndFmt = "host%d-eth0-%d" // host-side data veth: host{pairIdx}-eth0-{i}
 	vethDpuEndFmt  = "dpu%d-rep0-%d"  // DPU-side data veth:  dpu{pairIdx}-rep0-{i}
-
-	// Names used inside the containers after rename.
-	hostDataIfFmt = "eth0-%d" // data interface in host container
-	dpuDataIfFmt  = "rep0-%d" // data representor in DPU container
 )
 
 // SetupHostToDpuNetwork reads the HostToDpu network config and creates veth
@@ -112,7 +109,7 @@ func createDataVeths(
 			return fmt.Errorf("failed to move %s to DPU container: %w", dpuEnd, err)
 		}
 
-		hostTarget := fmt.Sprintf(hostDataIfFmt, i)
+		hostTarget := fmt.Sprintf(network.HostDataIfFmt, i)
 		if err := hostContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", hostEnd, "name", hostTarget); err != nil {
 			return fmt.Errorf("failed to rename %s to %s in host container: %w", hostEnd, hostTarget, err)
 		}
@@ -120,7 +117,7 @@ func createDataVeths(
 			return fmt.Errorf("failed to bring up %s in host container: %w", hostTarget, err)
 		}
 
-		dpuTarget := fmt.Sprintf(dpuDataIfFmt, i)
+		dpuTarget := fmt.Sprintf(network.DPUDataIfFmt, i)
 		if err := dpuContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", dpuEnd, "name", dpuTarget); err != nil {
 			return fmt.Errorf("failed to rename %s to %s in DPU container: %w", dpuEnd, dpuTarget, err)
 		}

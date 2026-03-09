@@ -14,6 +14,13 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
+// Host-to-DPU data interface naming
+// Format strings for the guest/container interface names; use with fmt.Sprintf(..., index).
+const (
+	HostDataIfFmt = "eth0-%d" // data interface in host (e.g. eth0-0, eth0-1)
+	DPUDataIfFmt  = "rep0-%d" // data representor in DPU (e.g. rep0-0, rep0-1)
+)
+
 // InterfaceInfo represents detailed information about a network interface
 type InterfaceInfo struct {
 	Name       string   `json:"ifname"`    // Interface name (e.g., "eth0", "enp1s0")

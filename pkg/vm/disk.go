@@ -9,6 +9,7 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/network"
 )
 
 const (
@@ -68,8 +69,62 @@ func CreateVMDisk(vmName string, sizeGB int, baseImage string) (string, error) {
 	return diskPath, nil
 }
 
-// CreateCloudInitISO creates a cloud-init ISO for VM initialization
-func CreateCloudInitISO(vmName string, sshConfig config.SSHConfig, vmConfig config.VMConfig) (string, error) {
+// ifaceNameAndMAC is the desired guest interface name and the deterministic MAC
+type ifaceNameAndMAC struct {
+	Name string
+	MAC  string
+}
+
+// getInterfaceNamesAndMACs returns (name, MAC)
+// MACs are generated the same way as when the VMs are created so udev can match ATTR{address} and set NAME.
+func getInterfaceNamesAndMACs(cfg *config.Config, vmConfig config.VMConfig) []ifaceNameAndMAC {
+	var out []ifaceNameAndMAC
+	for _, net := range cfg.Networks {
+		if net.AttachTo != "any" && net.AttachTo != vmConfig.Type {
+			continue
+		}
+		mac := GenerateMACForNetwork(vmConfig.Name, net.Type)
+		if net.Type == config.K8sNetworkName && vmConfig.K8sNodeMAC != "" {
+			mac = vmConfig.K8sNodeMAC
+		}
+		out = append(out, ifaceNameAndMAC{Name: net.Type, MAC: mac})
+	}
+	numPairs := cfg.GetHostToDpuNumPairs()
+	mappings := cfg.GetHostDPUMappings()
+	if vmConfig.Type == config.VMHostType {
+		for _, mapping := range mappings {
+			if mapping.Host.Name == vmConfig.Name {
+				for idx := 0; idx < numPairs; idx++ {
+					out = append(out, ifaceNameAndMAC{
+						Name: fmt.Sprintf(network.HostDataIfFmt, idx),
+						MAC:  GenerateMACForHostToDpu(vmConfig.Name, config.VMHostType, idx),
+					})
+				}
+				break
+			}
+		}
+	}
+	if vmConfig.Type == config.VMDPUType {
+		for _, mapping := range mappings {
+			for _, conn := range mapping.Connections {
+				if conn.DPU.Name == vmConfig.Name {
+					for idx := 0; idx < numPairs; idx++ {
+						out = append(out, ifaceNameAndMAC{
+							Name: fmt.Sprintf(network.DPUDataIfFmt, idx),
+							MAC:  GenerateMACForHostToDpu(vmConfig.Name, config.VMDPUType, idx),
+						})
+					}
+					break
+				}
+			}
+		}
+	}
+	return out
+}
+
+// CreateCloudInitISO creates a cloud-init ISO for VM initialization.
+// If cfg is non-nil, udev rules are added to rename interfaces by MAC to common names (mgmt, k8s, eth0-0, rep0-0, etc.).
+func CreateCloudInitISO(vmName string, sshConfig config.SSHConfig, vmConfig config.VMConfig, cfg *config.Config) (string, error) {
 	vmName = vmConfig.Name
 	isoPath := filepath.Join(DefaultImageDir, fmt.Sprintf("%s-cloud-init.iso", vmName))
 
@@ -99,8 +154,11 @@ func CreateCloudInitISO(vmName string, sshConfig config.SSHConfig, vmConfig conf
 		return "", fmt.Errorf("failed to read SSH public key: %w", err)
 	}
 
-	// Create user-data file
-	userData := generateUserData(string(pubKeyData), sshConfig.User, sshConfig.Password)
+	var ifaceNameMACs []ifaceNameAndMAC
+	if cfg != nil {
+		ifaceNameMACs = getInterfaceNamesAndMACs(cfg, vmConfig)
+	}
+	userData := generateUserData(string(pubKeyData), sshConfig.User, sshConfig.Password, ifaceNameMACs)
 	userDataPath := filepath.Join(tempDir, "user-data")
 	if err := os.WriteFile(userDataPath, []byte(userData), 0644); err != nil {
 		return "", fmt.Errorf("failed to write user-data: %w", err)
@@ -132,7 +190,8 @@ func generateMetaData(vmName string) string {
 
 // generateUserData generates cloud-init user-data content that sets ssh keys, passwords, updates packages, and disables
 // zram. ZRAM enables swap, which is not desirable for k8s, hense we disable it partially here.
-func generateUserData(sshPubKey, username, password string) string {
+// If ifaceNameMACs is non-empty, udev rules match by MAC and set NAME (mgmt, k8s, eth0-0, rep0-0, etc.).
+func generateUserData(sshPubKey, username, password string, ifaceNameMACs []ifaceNameAndMAC) string {
 	var sb strings.Builder
 
 	sb.WriteString("#cloud-config\n")
@@ -169,12 +228,44 @@ func generateUserData(sshPubKey, username, password string) string {
 	sb.WriteString("    content: \"\"\n")
 	sb.WriteString("    permissions: \"0644\"\n")
 
+	if len(ifaceNameMACs) > 0 {
+		// udev rules: match by deterministic MAC (hash of VM name + type), set NAME to common name
+		udevContent := "# dpu-sim: rename interfaces by MAC to common names\n"
+		for _, m := range ifaceNameMACs {
+			udevContent += fmt.Sprintf("ATTR{address}==%q, SUBSYSTEM==\"net\", ACTION==\"add\", NAME=%q\n", m.MAC, m.Name)
+		}
+		sb.WriteString("  - path: /etc/udev/rules.d/70-dpu-sim-ifnames.rules\n")
+		sb.WriteString("    content: |\n")
+		for _, line := range strings.Split(strings.TrimSuffix(udevContent, "\n"), "\n") {
+			sb.WriteString("      " + line + "\n")
+		}
+		sb.WriteString("    permissions: \"0644\"\n")
+		// First-boot script: rename existing interfaces by MAC (udev NAME= applies on add; existing devs need ip link set).
+		// Use read < file to get MAC without newline; cat would include newline and break the comparison.
+		scriptContent := "#!/bin/bash\n# dpu-sim: rename interfaces by MAC at first boot\n"
+		for _, m := range ifaceNameMACs {
+			scriptContent += fmt.Sprintf("for d in /sys/class/net/*; do [ -f \"$d/address\" ] || continue; ifname=$(basename \"$d\"); [ \"$ifname\" = lo ] && continue; read -r mac < \"$d/address\"; [ \"$mac\" = \"%s\" ] && ip link set dev \"$ifname\" name \"%s\" && break; done\n", m.MAC, m.Name)
+		}
+		sb.WriteString("  - path: /etc/dpu-sim-rename-ifaces.sh\n")
+		sb.WriteString("    content: |\n")
+		for _, line := range strings.Split(strings.TrimSuffix(scriptContent, "\n"), "\n") {
+			sb.WriteString("      " + line + "\n")
+		}
+		sb.WriteString("    permissions: \"0755\"\n")
+	}
+
 	sb.WriteString("\n# Start services\n")
 	sb.WriteString("runcmd:\n")
 	sb.WriteString("  - systemctl enable sshd\n")
 	sb.WriteString("  - systemctl start sshd\n")
 	sb.WriteString("  - systemctl daemon-reload\n")
 	sb.WriteString("  - systemctl restart zram-generator.service\n")
+
+	if len(ifaceNameMACs) > 0 {
+		sb.WriteString("  - udevadm control --reload-rules\n")
+		sb.WriteString("  - udevadm trigger --subsystem-match=net\n")
+		sb.WriteString("  - /etc/dpu-sim-rename-ifaces.sh\n")
+	}
 
 	return sb.String()
 }

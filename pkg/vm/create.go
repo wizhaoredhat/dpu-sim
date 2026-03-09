@@ -32,7 +32,7 @@ func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
 		return fmt.Errorf("failed to create VM disk: %w", err)
 	}
 
-	cloudInitPath, err := CreateCloudInitISO(vmCfg.Name, m.config.SSH, vmCfg)
+	cloudInitPath, err := CreateCloudInitISO(vmCfg.Name, m.config.SSH, vmCfg, m.config)
 	if err != nil {
 		return fmt.Errorf("failed to create cloud-init ISO: %w", err)
 	}
@@ -81,11 +81,12 @@ func (m *VMManager) generateNetworkInterfaces(vmCfg config.VMConfig) string {
 		if network.AttachTo != "any" && network.AttachTo != vmCfg.Type {
 			continue
 		}
-
-		sb.WriteString("    <interface type='network'>\n")
+		mac := GenerateMACForNetwork(vmCfg.Name, network.Type)
 		if network.Type == config.K8sNetworkName && vmCfg.K8sNodeMAC != "" {
-			sb.WriteString(fmt.Sprintf("      <mac address='%s'/>\n", vmCfg.K8sNodeMAC))
+			mac = vmCfg.K8sNodeMAC
 		}
+		sb.WriteString("    <interface type='network'>\n")
+		sb.WriteString(fmt.Sprintf("      <mac address='%s'/>\n", mac))
 		sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", network.Name))
 		if network.UseOVS {
 			sb.WriteString("      <virtualport type='openvswitch'/>\n")
@@ -297,14 +298,16 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 		hostToDpuNic = net.NICModel
 	}
 
-	// Add host-to-DPU network interfaces
-	if vmCfg.Type == "host" {
+	// Add host-to-DPU network interfaces. Deterministic MAC per (vm, index); udev in guest renames by MAC.
+	if vmCfg.Type == config.VMHostType {
 		for _, mapping := range mappings {
 			if mapping.Host.Name == vmCfg.Name {
 				for _, conn := range mapping.Connections {
 					for idx := 0; idx < numPairs; idx++ {
 						netName := network.GetHostToDPUNetworkName(mapping.Host.Name, conn.DPU.Name, idx)
+						mac := GenerateMACForHostToDpu(vmCfg.Name, config.VMHostType, idx)
 						sb.WriteString("    <interface type='network'>\n")
+						sb.WriteString(fmt.Sprintf("      <mac address='%s'/>\n", mac))
 						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))
 						sb.WriteString("      <virtualport type='openvswitch'/>\n")
 						sb.WriteString(fmt.Sprintf("      <model type='%s'/>\n", hostToDpuNic))
@@ -316,13 +319,15 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 		}
 	}
 
-	if vmCfg.Type == "dpu" {
+	if vmCfg.Type == config.VMDPUType {
 		for _, mapping := range mappings {
 			for _, conn := range mapping.Connections {
 				if conn.DPU.Name == vmCfg.Name {
 					for idx := 0; idx < numPairs; idx++ {
 						netName := network.GetHostToDPUNetworkName(mapping.Host.Name, conn.DPU.Name, idx)
+						mac := GenerateMACForHostToDpu(vmCfg.Name, config.VMDPUType, idx)
 						sb.WriteString("    <interface type='network'>\n")
+						sb.WriteString(fmt.Sprintf("      <mac address='%s'/>\n", mac))
 						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))
 						sb.WriteString("      <virtualport type='openvswitch'/>\n")
 						sb.WriteString(fmt.Sprintf("      <model type='%s'/>\n", hostToDpuNic))
