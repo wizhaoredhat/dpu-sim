@@ -50,6 +50,9 @@ func (c *Config) validateAndSetDefaults() error {
 			if c.Networks[i].NumPairs <= 0 {
 				c.Networks[i].NumPairs = 1
 			}
+			if c.Networks[i].NICModel == "" {
+				c.Networks[i].NICModel = "virtio"
+			}
 		} else {
 			if net.BridgeName == "" {
 				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'bridge_name' is required", i, net.Name))

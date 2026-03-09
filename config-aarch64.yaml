@@ -7,7 +7,7 @@ networks:
     dhcp_start: "192.168.120.10"
     dhcp_end: "192.168.120.100"
     mode: "nat"
-    nic_model: "virtio" # virtio for management network
+    nic_model: "virtio"
     attach_to: "any" # Attach to all VMs: "dpu", "host", or "any"
 
   - name: "ovn-network"
@@ -18,7 +18,7 @@ networks:
     dhcp_start: "192.168.123.50"
     dhcp_end: "192.168.123.100"
     mode: "nat"
-    nic_model: "igb" # Intel 82576 emulated NIC
+    nic_model: "virtio"
     use_ovs: false
     attach_to: "any"
 
@@ -26,7 +26,7 @@ networks:
     type: "layer2"
     bridge_name: "ovs-data"
     mode: "l2-bridge"
-    nic_model: "igb" # Intel 82576 emulated NIC
+    nic_model: "virtio"
     use_ovs: true
     attach_to: "dpu"
 

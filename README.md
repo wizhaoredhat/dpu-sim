@@ -230,7 +230,7 @@ networks:
     dhcp_start: "192.168.123.50"
     dhcp_end: "192.168.123.100"
     mode: "nat"
-    nic_model: "igb"  # Intel 82576 emulated NIC
+    nic_model: "virtio"
     use_ovs: false
     attach_to: "any"
 
@@ -239,7 +239,7 @@ networks:
     type: "layer2"
     bridge_name: "ovs-data"
     mode: "l2-bridge"
-    nic_model: "igb"  # Intel 82576 emulated NIC
+    nic_model: "virtio"
     use_ovs: true  # Use Open vSwitch (supports OpenFlow, flow tables, etc.)
     attach_to: "dpu"  # Attach to all VMs: "dpu", "host", or "any"
 

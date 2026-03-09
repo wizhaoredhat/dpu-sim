@@ -292,6 +292,10 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 
 	numPairs := m.config.GetHostToDpuNumPairs()
 	mappings := m.config.GetHostDPUMappings()
+	hostToDpuNic := "virtio"
+	if net := m.config.GetHostToDpuNetwork(); net != nil && net.NICModel != "" {
+		hostToDpuNic = net.NICModel
+	}
 
 	// Add host-to-DPU network interfaces
 	if vmCfg.Type == "host" {
@@ -303,7 +307,7 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 						sb.WriteString("    <interface type='network'>\n")
 						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))
 						sb.WriteString("      <virtualport type='openvswitch'/>\n")
-						sb.WriteString("      <model type='igb'/>\n")
+						sb.WriteString(fmt.Sprintf("      <model type='%s'/>\n", hostToDpuNic))
 						sb.WriteString("    </interface>\n")
 					}
 				}
@@ -321,7 +325,7 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 						sb.WriteString("    <interface type='network'>\n")
 						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))
 						sb.WriteString("      <virtualport type='openvswitch'/>\n")
-						sb.WriteString("      <model type='igb'/>\n")
+						sb.WriteString(fmt.Sprintf("      <model type='%s'/>\n", hostToDpuNic))
 						sb.WriteString("    </interface>\n")
 					}
 					break
