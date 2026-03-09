@@ -7,8 +7,8 @@ networks:
     dhcp_start: "192.168.120.10"
     dhcp_end: "192.168.120.100"
     mode: "nat"
-    nic_model: "virtio"  # virtio for management network
-    attach_to: "any"  # Attach to all VMs: "dpu", "host", or "any"
+    nic_model: "virtio" # virtio for management network
+    attach_to: "any" # Attach to all VMs: "dpu", "host", or "any"
 
   - name: "ovn-network"
     type: "k8s"
@@ -18,7 +18,7 @@ networks:
     dhcp_start: "192.168.123.50"
     dhcp_end: "192.168.123.100"
     mode: "nat"
-    nic_model: "igb"  # Intel 82576 emulated NIC
+    nic_model: "igb" # Intel 82576 emulated NIC
     use_ovs: false
     attach_to: "any"
 
@@ -26,9 +26,13 @@ networks:
     type: "layer2"
     bridge_name: "ovs-data"
     mode: "l2-bridge"
-    nic_model: "igb"  # Intel 82576 emulated NIC
+    nic_model: "igb" # Intel 82576 emulated NIC
     use_ovs: true
     attach_to: "dpu"
+
+  - name: "host-to-dpu-link"
+    type: "HostToDpu"
+    num_pairs: 16
 
 vms:
   - name: "master-1"
@@ -37,9 +41,9 @@ vms:
     k8s_role: "master"
     k8s_node_mac: "52:54:00:00:01:11"
     k8s_node_ip: "192.168.123.11"
-    memory: 4096  # MB
+    memory: 4096 # MB
     vcpus: 2
-    disk_size: 20  # GB
+    disk_size: 20 # GB
 
   - name: "master-2"
     type: "host"
@@ -47,9 +51,9 @@ vms:
     k8s_role: "master"
     k8s_node_mac: "52:54:00:00:02:11"
     k8s_node_ip: "192.168.123.21"
-    memory: 4096  # MB
+    memory: 4096 # MB
     vcpus: 2
-    disk_size: 20  # GB
+    disk_size: 20 # GB
 
   - name: "host-1-1"
     type: "host"
@@ -57,9 +61,9 @@ vms:
     k8s_role: "worker"
     k8s_node_mac: "52:54:00:00:01:12"
     k8s_node_ip: "192.168.123.12"
-    memory: 2048  # MB
+    memory: 2048 # MB
     vcpus: 2
-    disk_size: 20  # GB
+    disk_size: 20 # GB
 
   - name: "dpu-1-1"
     type: "dpu"
@@ -68,9 +72,9 @@ vms:
     k8s_node_mac: "52:54:00:00:02:12"
     k8s_node_ip: "192.168.123.22"
     host: "host-1-1"
-    memory: 2048  # MB
+    memory: 2048 # MB
     vcpus: 2
-    disk_size: 20  # GB
+    disk_size: 20 # GB
 
   - name: "host-2-1"
     type: "host"
@@ -78,9 +82,9 @@ vms:
     k8s_role: "worker"
     k8s_node_mac: "52:54:00:00:01:13"
     k8s_node_ip: "192.168.123.13"
-    memory: 2048  # MB
+    memory: 2048 # MB
     vcpus: 2
-    disk_size: 20  # GB
+    disk_size: 20 # GB
 
   - name: "dpu-2-1"
     type: "dpu"
@@ -89,14 +93,14 @@ vms:
     k8s_node_mac: "52:54:00:00:02:13"
     k8s_node_ip: "192.168.123.23"
     host: "host-2-1"
-    memory: 2048  # MB
+    memory: 2048 # MB
     vcpus: 2
-    disk_size: 20  # GB
+    disk_size: 20 # GB
 
 operating_system:
   # Download from https://download.fedoraproject.org/pub/fedora/linux/releases/
-  image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
-  image_name: "Fedora-x86_64.qcow2"
+  image_url: https://mirror.xenyth.net/fedora/linux/releases/43/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2
+  image_name: "Fedora-aarch64.qcow2"
 
 ssh:
   user: "root"
