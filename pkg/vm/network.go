@@ -65,7 +65,13 @@ func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
 	return nil
 }
 
-func (m *VMManager) buildDHCPReservations() string {
+// buildDHCPReservations returns DHCP host entries (MAC -> IP) for the given network.
+// Only the k8s network uses static reservations (K8sNodeMAC/K8sNodeIP). The mgmt
+// network uses dynamic DHCP only for now.
+func (m *VMManager) buildDHCPReservations(netCfg config.NetworkConfig) string {
+	if netCfg.Type != config.K8sNetworkName {
+		return ""
+	}
 	var sb strings.Builder
 	for _, vmCfg := range m.config.VMs {
 		if vmCfg.K8sNodeMAC != "" && vmCfg.K8sNodeIP != "" {
@@ -90,7 +96,7 @@ func (m *VMManager) generateNATNetworkXML(netCfg config.NetworkConfig) string {
 	if netCfg.DHCPStart != "" && netCfg.DHCPEnd != "" {
 		sb.WriteString(fmt.Sprintf("      <range start='%s' end='%s'/>\n", netCfg.DHCPStart, netCfg.DHCPEnd))
 	}
-	sb.WriteString(m.buildDHCPReservations())
+	sb.WriteString(m.buildDHCPReservations(netCfg))
 	sb.WriteString("    </dhcp>\n")
 
 	sb.WriteString("  </ip>\n")
