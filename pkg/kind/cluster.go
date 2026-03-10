@@ -98,7 +98,7 @@ func (m *KindManager) InstallCNI() error {
 			return fmt.Errorf("failed to get internal API server IP for cluster %s: %w", clusterCfg.Name, err)
 		}
 
-		if err := cniMgr.InstallCNI(cniType, clusterCfg.Name, apiServerIP); err != nil {
+		if err := cniMgr.InstallCNI(cniType, clusterCfg.Name, apiServerIP, "eth0"); err != nil {
 			return fmt.Errorf("failed to install CNI on cluster %s: %w", clusterCfg.Name, err)
 		}
 	}

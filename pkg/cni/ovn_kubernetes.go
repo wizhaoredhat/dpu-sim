@@ -92,7 +92,7 @@ func (m *CNIManager) patchCoreDNS(dnsServer string) error {
 }
 
 // runDaemonsetScript runs the OVN-Kubernetes daemonset.sh script to generate manifests
-func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, serviceCIDR, ovnImage string) error {
+func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface string) error {
 	daemonsetScript := filepath.Join(ovnkRepoPath, "dist", "images", "daemonset.sh")
 
 	if _, err := os.Stat(daemonsetScript); os.IsNotExist(err) {
@@ -108,6 +108,7 @@ func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, ser
 		fmt.Sprintf("--net-cidr=%s", podCIDR),
 		fmt.Sprintf("--svc-cidr=%s", serviceCIDR),
 		fmt.Sprintf("--k8s-apiserver=%s", apiServerURL),
+		fmt.Sprintf("--gateway-options=\"--gateway-interface=%s\"", gatewayInterface),
 		"--image-pull-policy=Always",
 		"--gateway-mode=shared",
 		"--dummy-gateway-bridge=false",
@@ -341,7 +342,7 @@ func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
 }
 
 // installOVNKubernetes installs OVN-Kubernetes CNI using the local source code
-func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsNode bool) error {
+func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsNode bool, gatewayInterface string) error {
 	clusterCfg := m.config.GetClusterConfig(clusterName)
 	if clusterCfg == nil {
 		return fmt.Errorf("cluster configuration not found for cluster %s", clusterName)
@@ -379,7 +380,7 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, ovsN
 		log.Info("Using local registry image for OVN-Kubernetes daemonsets: %s", ovnImage)
 	}
 
-	if err := m.runDaemonsetScript(ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage); err != nil {
+	if err := m.runDaemonsetScript(ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface); err != nil {
 		return fmt.Errorf("failed to run daemonset.sh: %w", err)
 	}
 

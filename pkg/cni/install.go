@@ -9,16 +9,16 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
-// InstallCNI installs the specified CNI on a cluster using the Kubernetes API
-// If kubeconfigPath is provided, it will configure the client from that file
-func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sIP string) error {
+// InstallCNI installs the specified CNI on a cluster using the Kubernetes API.
+// gatewayInterface is the default gateway interface name.
+func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sIP string, gatewayInterface string) error {
 	log.Info("\n=== Installing %s CNI on cluster %s ===", cniType, clusterName)
 
 	switch cniType {
 	case config.CNIFlannel:
 		return m.installFlannel(clusterName)
 	case config.CNIOVNKubernetes:
-		return m.installOVNKubernetes(clusterName, k8sIP, m.config.IsKindMode())
+		return m.installOVNKubernetes(clusterName, k8sIP, m.config.IsKindMode(), gatewayInterface)
 	case config.CNIKindnet:
 		if m.config.IsKindMode() {
 			log.Info("Kindnet is the default CNI for Kind clusters, no installation needed")
