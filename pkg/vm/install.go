@@ -43,7 +43,6 @@ func (m *VMManager) InstallKubernetes(vmName string) error {
 			return fmt.Errorf("failed to wait for SSH on %s: %w", vmCfg.Name, err)
 		}
 
-		// Install Kubernetes
 		if err := k8sMgr.InstallKubernetes(cmdExec, vmCfg.Name, k8sVersion); err != nil {
 			return fmt.Errorf("failed to install Kubernetes on %s: %w", vmCfg.Name, err)
 		}

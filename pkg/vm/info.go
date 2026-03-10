@@ -16,9 +16,18 @@ func (m *VMManager) GetVMMgmtIP(vmName string) (string, error) {
 	return m.WaitForVMIP(vmName, config.MgmtNetworkName, 10*time.Second)
 }
 
-// GetVMK8sIP retrieves the Kubernetes network IP address of a VM.
+// GetVMK8sIP returns the Kubernetes network IP address of a VM from configuration.
+// The k8s interface uses a static IP (no DHCP).
 func (m *VMManager) GetVMK8sIP(vmName string) (string, error) {
-	return m.WaitForVMIP(vmName, config.K8sNetworkName, 10*time.Second)
+	for _, vm := range m.config.VMs {
+		if vm.Name == vmName {
+			if vm.K8sNodeIP == "" {
+				return "", fmt.Errorf("no k8s_node_ip configured for VM %s", vmName)
+			}
+			return vm.K8sNodeIP, nil
+		}
+	}
+	return "", fmt.Errorf("VM %s not found in configuration", vmName)
 }
 
 // GetVMIP retrieves the IP address of a VM by name and network type.

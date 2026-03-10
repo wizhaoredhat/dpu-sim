@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -487,6 +488,20 @@ func (c *Config) GetNetworkByType(networkType string) *NetworkConfig {
 		}
 	}
 	return nil
+}
+
+// PrefixLenFromSubnetMask returns the CIDR prefix length (e.g. 24) for a subnet mask like "255.255.255.0".
+func PrefixLenFromSubnetMask(subnetMask string) (int, error) {
+	ip := net.ParseIP(subnetMask)
+	if ip == nil {
+		return 0, fmt.Errorf("invalid subnet mask %q", subnetMask)
+	}
+	ip = ip.To4()
+	if ip == nil {
+		return 0, fmt.Errorf("subnet mask %q is not IPv4", subnetMask)
+	}
+	ones, _ := net.IPv4Mask(ip[0], ip[1], ip[2], ip[3]).Size()
+	return ones, nil
 }
 
 // GetHostToDpuNetwork returns the HostToDpu network config, or nil if not configured.
