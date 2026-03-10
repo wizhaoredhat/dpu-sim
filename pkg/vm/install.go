@@ -99,11 +99,11 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("CNI type is not set for cluster %s", clusterName)
 	}
 
-	if cniType == config.CNIOVNKubernetes {
-		if err := m.setupOVNBrExForCluster(clusterRoleMapping, k8sMgr); err != nil {
-			return err
-		}
-	}
+	//if cniType == config.CNIOVNKubernetes {
+	//	if err := m.setupOVNBrExForCluster(clusterRoleMapping, k8sMgr); err != nil {
+	//		return err
+	//	}
+	//}
 
 	podCIDR := clusterCfg.PodCIDR
 	serviceCIDR := clusterCfg.ServiceCIDR
