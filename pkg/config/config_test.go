@@ -56,7 +56,7 @@ kubernetes:
       cni: "ovn-kubernetes"
 `
 
-	err := os.WriteFile(configPath, []byte(configContent), 0644)
+	err := os.WriteFile(configPath, []byte(configContent), 0o644)
 	require.NoError(t, err)
 
 	// Test loading config
@@ -107,7 +107,7 @@ func TestGetDeploymentMode(t *testing.T) {
 		{
 			name: "Both modes - error",
 			config: Config{
-				VMs: []VMConfig{{Name: "vm1"}},
+				VMs:        []VMConfig{{Name: "vm1"}},
 				Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "k"}}},
 				Kind: &KindConfig{
 					Nodes: []KindNodeConfig{{Name: "cp", K8sRole: "control-plane", K8sCluster: "k"}},
@@ -256,7 +256,7 @@ func TestValidateOperatingSystemAllowsImageRef(t *testing.T) {
 		VMs: []VMConfig{
 			{
 				Name:       "master-1",
-				Type:       VMHostType,
+				Type:       HostType,
 				K8sCluster: "cluster-1",
 				K8sRole:    string(ClusterRoleMaster),
 				K8sNodeMAC: "52:54:00:00:01:11",
@@ -295,7 +295,7 @@ func TestValidateOperatingSystemRequiresURLOrRef(t *testing.T) {
 		VMs: []VMConfig{
 			{
 				Name:       "master-1",
-				Type:       VMHostType,
+				Type:       HostType,
 				K8sCluster: "cluster-1",
 				K8sRole:    string(ClusterRoleMaster),
 				K8sNodeMAC: "52:54:00:00:01:11",
@@ -318,4 +318,37 @@ func TestValidateOperatingSystemRequiresURLOrRef(t *testing.T) {
 	err := cfg.validateAndSetDefaults()
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "one of 'image_url' or 'image_ref' is required"))
+}
+
+func TestValidateOperatingSystemRejectsURLAndRefTogether(t *testing.T) {
+	cfg := Config{
+		Networks: []NetworkConfig{{
+			Name:       "mgmt-network",
+			Type:       MgmtNetworkName,
+			BridgeName: "virbr-mgmt",
+			Mode:       "nat",
+			NICModel:   "virtio",
+		}},
+		VMs: []VMConfig{{
+			Name:       "master-1",
+			Type:       HostType,
+			K8sCluster: "cluster-1",
+			K8sRole:    string(ClusterRoleMaster),
+			K8sNodeMAC: "52:54:00:00:01:11",
+			K8sNodeIP:  "192.168.123.11",
+			Memory:     4096,
+			VCPUs:      2,
+			DiskSize:   20,
+		}},
+		OperatingSystem: OSConfig{
+			ImageURL:  "https://example.invalid/fedora.qcow2",
+			ImageRef:  "ghcr.io/example/fedora-cloud:43",
+			ImageName: "Fedora-x86_64.qcow2",
+		},
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIOVNKubernetes}}},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "'image_url' and 'image_ref' are mutually exclusive"))
 }
