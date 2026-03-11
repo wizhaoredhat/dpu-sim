@@ -176,6 +176,10 @@ func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManage
 	log.Info("║       VM-Based Deployment Workflow            ║")
 	log.Info("╚═══════════════════════════════════════════════╝")
 
+	if err := vm.EnsureHostNetworkPrerequisites(); err != nil {
+		return fmt.Errorf("failed to prepare host network prerequisites: %w", err)
+	}
+
 	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create VM manager: %w", err)
