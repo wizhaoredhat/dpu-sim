@@ -104,6 +104,20 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	//	}
 	//}
 
+	// Ensure br-int exists on all nodes (OVN needs it; avoids "ovs-ofctl: br-int is not a bridge or a socket").
+	for _, vms := range clusterRoleMapping {
+		for _, vmCfg := range vms {
+			mgmtIP, err := m.GetVMMgmtIP(vmCfg.Name)
+			if err != nil {
+				return fmt.Errorf("failed to get mgmt IP for %s: %w", vmCfg.Name, err)
+			}
+			exec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
+			if err := k8sMgr.EnsureOVNBrInt(exec); err != nil {
+				return fmt.Errorf("failed to ensure br-int on %s: %w", vmCfg.Name, err)
+			}
+		}
+	}
+
 	podCIDR := clusterCfg.PodCIDR
 	serviceCIDR := clusterCfg.ServiceCIDR
 
