@@ -264,7 +264,9 @@ func TestDockerTryRepairRunContainerFailureRestartsDockerOnDNATError(t *testing.
 }
 
 func TestDockerTryRepairRunContainerFailureNoopOnUnrelatedError(t *testing.T) {
-	fx := &fakeExecutor{execByCmd: map[string]execResult{}}
+	fx := &fakeExecutor{execByCmd: map[string]execResult{
+		"iptables -w -t nat -nL DOCKER >/dev/null 2>&1": {stdout: ""},
+	}}
 	e := NewDockerEngine(fx)
 
 	repaired, err := e.TryRepairRunContainerFailure(context.Background(), fmt.Errorf("some other runtime error"))
@@ -274,8 +276,37 @@ func TestDockerTryRepairRunContainerFailureNoopOnUnrelatedError(t *testing.T) {
 	if repaired {
 		t.Fatalf("expected repair=false")
 	}
-	if len(fx.execCalls) != 0 {
-		t.Fatalf("expected no exec calls, got: %#v", fx.execCalls)
+	want := []string{"iptables -w -t nat -nL DOCKER >/dev/null 2>&1"}
+	if !reflect.DeepEqual(fx.execCalls, want) {
+		t.Fatalf("exec calls mismatch\n got: %#v\nwant: %#v", fx.execCalls, want)
+	}
+}
+
+func TestDockerTryRepairRunContainerFailureRepairsOnExitStatusWhenNatChainMissing(t *testing.T) {
+	fx := &fakeExecutor{
+		execByCmd: map[string]execResult{
+			"iptables -w -t nat -nL DOCKER >/dev/null 2>&1": {err: fmt.Errorf("missing chain")},
+			"sudo systemctl restart docker":                 {stdout: ""},
+			"docker info >/dev/null 2>&1":                   {stdout: ""},
+		},
+	}
+	e := NewDockerEngine(fx)
+
+	repaired, err := e.TryRepairRunContainerFailure(context.Background(), fmt.Errorf("exit status 125"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repaired {
+		t.Fatalf("expected repair=true")
+	}
+
+	wantExec := []string{
+		"iptables -w -t nat -nL DOCKER >/dev/null 2>&1",
+		"sudo systemctl restart docker",
+		"docker info >/dev/null 2>&1",
+	}
+	if !reflect.DeepEqual(fx.execCalls, wantExec) {
+		t.Fatalf("exec calls mismatch\n got: %#v\nwant: %#v", fx.execCalls, wantExec)
 	}
 }
 

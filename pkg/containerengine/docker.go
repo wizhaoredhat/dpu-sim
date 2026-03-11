@@ -48,9 +48,17 @@ func (e *DockerEngine) TryRepairRunContainerFailure(_ context.Context, runErr er
 		return false, nil
 	}
 	errText := strings.ToLower(runErr.Error())
-	if !strings.Contains(errText, "unable to enable dnat rule") &&
-		!strings.Contains(errText, "no chain/target/match by that name") &&
-		!strings.Contains(errText, "driver failed programming external connectivity") {
+	needsRepair := strings.Contains(errText, "unable to enable dnat rule") ||
+		strings.Contains(errText, "no chain/target/match by that name") ||
+		strings.Contains(errText, "driver failed programming external connectivity")
+	if !needsRepair {
+		// Some command executors only return the exit status (e.g. "exit status 125")
+		// while streaming stderr to console. Probe the DOCKER nat chain explicitly.
+		_, _, probeErr := e.exec.Execute("iptables -w -t nat -nL DOCKER >/dev/null 2>&1")
+		needsRepair = probeErr != nil
+	}
+
+	if !needsRepair {
 		return false, nil
 	}
 
