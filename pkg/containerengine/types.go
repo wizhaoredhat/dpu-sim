@@ -59,6 +59,7 @@ type Engine interface {
 	ImageExists(ctx context.Context, imageRef string) bool
 
 	RunContainer(ctx context.Context, opts RunContainerOptions) error
+	TryRepairRunContainerFailure(ctx context.Context, runErr error) (bool, error)
 	RemoveContainer(ctx context.Context, name string, force bool) error
 	InspectContainerState(ctx context.Context, name string) (ContainerState, error)
 	InspectContainerNetworks(ctx context.Context, name string) (map[string]NetworkEndpoint, error)

@@ -98,15 +98,28 @@ func (m *RegistryManager) Start() error {
 		_ = m.engine.RemoveContainer(ctx, containerName, true)
 	}
 
-	if err := m.engine.RunContainer(ctx, containerengine.RunContainerOptions{
+	runOpts := containerengine.RunContainerOptions{
 		Name:    m.config.GetRegistryContainerName(),
 		Image:   m.config.GetRegistryImage(),
 		Detach:  true,
 		Restart: "always",
 		Network: "bridge",
 		Publish: []string{fmt.Sprintf("%s:5000", m.config.GetRegistryPort())},
-	}); err != nil {
-		return fmt.Errorf("failed to start registry container: %w", err)
+	}
+
+	if err := m.engine.RunContainer(ctx, runOpts); err != nil {
+		repaired, repairErr := m.engine.TryRepairRunContainerFailure(ctx, err)
+		if repairErr != nil {
+			return fmt.Errorf("failed to start registry container: %w (container engine repair failed: %v)", err, repairErr)
+		}
+		if !repaired {
+			return fmt.Errorf("failed to start registry container: %w", err)
+		}
+
+		log.Warn("Registry start failed due to container networking state; repaired via %s and retrying once", m.engine.Name())
+		if retryErr := m.engine.RunContainer(ctx, runOpts); retryErr != nil {
+			return fmt.Errorf("failed to start registry container after %s repair: %w", m.engine.Name(), retryErr)
+		}
 	}
 
 	// Wait a moment for the registry to become ready
