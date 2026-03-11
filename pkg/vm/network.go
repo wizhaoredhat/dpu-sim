@@ -2,12 +2,14 @@ package vm
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/network"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // NetworkExists checks if a network exists
@@ -22,6 +24,12 @@ func (m *VMManager) NetworkExists(networkName string) bool {
 
 // CreateNetwork creates a libvirt network based on the configuration
 func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
+	if netCfg.Mode == "nat" {
+		if err := ensureLibvirtNATFirewallBackend(); err != nil {
+			return fmt.Errorf("failed to prepare libvirt firewall backend for NAT network %s: %w", netCfg.Name, err)
+		}
+	}
+
 	if m.NetworkExists(netCfg.Name) {
 		log.Info("Network %s already exists, skipping creation", netCfg.Name)
 		return nil
@@ -63,6 +71,108 @@ func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
 
 	log.Info("✓ Created network: %s", netCfg.Name)
 	return nil
+}
+
+func ensureLibvirtNATFirewallBackend() error {
+	distro, err := platform.GetHostDistro()
+	if err != nil {
+		return fmt.Errorf("failed to detect host distro: %w", err)
+	}
+	if !distro.IsDebianLike() {
+		return nil
+	}
+
+	const confPath = "/etc/libvirt/network.conf"
+
+	raw, err := os.ReadFile(confPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read %s: %w", confPath, err)
+	}
+
+	updated, changed := setLibvirtFirewallBackend(string(raw), "nftables")
+	if !changed {
+		return nil
+	}
+
+	tmpFile, err := os.CreateTemp("", "dpu-sim-libvirt-network-*.conf")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file for %s: %w", confPath, err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmpFile.WriteString(updated); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to write temp libvirt config: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp libvirt config: %w", err)
+	}
+
+	installCmd := exec.Command("sudo", "install", "-m", "0644", tmpPath, confPath)
+	if output, err := installCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to install %s: %w, output: %s", confPath, err, string(output))
+	}
+
+	if err := restartLibvirtForNetworkFirewallChange(); err != nil {
+		return err
+	}
+
+	log.Info("Configured libvirt firewall backend to nftables for Debian-like host")
+	return nil
+}
+
+func restartLibvirtForNetworkFirewallChange() error {
+	services := []string{"virtnetworkd", "libvirtd"}
+	for _, svc := range services {
+		restartCmd := exec.Command("sudo", "systemctl", "restart", svc)
+		if output, err := restartCmd.CombinedOutput(); err == nil {
+			log.Debug("Restarted %s after libvirt firewall backend update", svc)
+			return nil
+		} else {
+			log.Debug("Failed restarting %s: %v (output: %s)", svc, err, strings.TrimSpace(string(output)))
+		}
+	}
+
+	return fmt.Errorf("failed to restart libvirt service after updating firewall backend")
+}
+
+func setLibvirtFirewallBackend(conf, backend string) (string, bool) {
+	desired := fmt.Sprintf("firewall_backend = %q", backend)
+	lines := strings.Split(conf, "\n")
+	updated := make([]string, 0, len(lines)+1)
+	seen := false
+	changed := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "firewall_backend") {
+			seen = true
+			if trimmed != desired {
+				updated = append(updated, desired)
+				changed = true
+			} else {
+				updated = append(updated, line)
+			}
+			continue
+		}
+		updated = append(updated, line)
+	}
+
+	if !seen {
+		if len(updated) > 0 && strings.TrimSpace(updated[len(updated)-1]) != "" {
+			updated = append(updated, "")
+		}
+		updated = append(updated, desired)
+		changed = true
+	}
+
+	result := strings.Join(updated, "\n")
+	if !strings.HasSuffix(result, "\n") {
+		result += "\n"
+	}
+
+	return result, changed
 }
 
 // buildDHCPReservations returns DHCP host entries (MAC -> IP) for the given network.
