@@ -161,11 +161,36 @@ func TestPodmanPushInsecureAddsTLSVerifyFalse(t *testing.T) {
 	}
 }
 
-func TestDockerPushInsecureReturnsActionableError(t *testing.T) {
+func TestDockerPushInsecureAllowedRegistryPushes(t *testing.T) {
 	fx := &fakeExecutor{}
+	fx.execByCmd = map[string]execResult{
+		"docker info --format '{{json .RegistryConfig}}'": {
+			stdout: `{"IndexConfigs":{"localhost:5000":{"Secure":false}},"InsecureRegistryCIDRs":["127.0.0.0/8"]}`,
+		},
+	}
 	e := NewDockerEngine(fx)
 
 	err := e.Push(context.Background(), "localhost:5000/test:v1", PushOptions{Insecure: true})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	want := []runCmdCall{{name: "docker", args: []string{"push", "localhost:5000/test:v1"}}}
+	if !reflect.DeepEqual(fx.runCalls, want) {
+		t.Fatalf("run calls mismatch\n got: %#v\nwant: %#v", fx.runCalls, want)
+	}
+}
+
+func TestDockerPushInsecureDisallowedRegistryReturnsActionableError(t *testing.T) {
+	fx := &fakeExecutor{}
+	fx.execByCmd = map[string]execResult{
+		"docker info --format '{{json .RegistryConfig}}'": {
+			stdout: `{"IndexConfigs":{"docker.io":{"Secure":true}},"InsecureRegistryCIDRs":["127.0.0.0/8"]}`,
+		},
+	}
+	e := NewDockerEngine(fx)
+
+	err := e.Push(context.Background(), "192.168.1.10:5000/test:v1", PushOptions{Insecure: true})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -174,6 +199,44 @@ func TestDockerPushInsecureReturnsActionableError(t *testing.T) {
 	}
 	if len(fx.runCalls) != 0 {
 		t.Fatalf("expected no command execution for insecure docker push, got: %#v", fx.runCalls)
+	}
+}
+
+func TestDockerPushInsecureDifferentPortReturnsError(t *testing.T) {
+	fx := &fakeExecutor{}
+	fx.execByCmd = map[string]execResult{
+		"docker info --format '{{json .RegistryConfig}}'": {
+			stdout: `{"IndexConfigs":{"localhost:5001":{"Secure":false}},"InsecureRegistryCIDRs":[]}`,
+		},
+	}
+	e := NewDockerEngine(fx)
+
+	err := e.Push(context.Background(), "localhost:5000/test:v1", PushOptions{Insecure: true})
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if len(fx.runCalls) != 0 {
+		t.Fatalf("expected no push execution, got: %#v", fx.runCalls)
+	}
+}
+
+func TestDockerPushInsecureAllowedByCIDRPushes(t *testing.T) {
+	fx := &fakeExecutor{}
+	fx.execByCmd = map[string]execResult{
+		"docker info --format '{{json .RegistryConfig}}'": {
+			stdout: `{"IndexConfigs":{},"InsecureRegistryCIDRs":["10.96.0.0/12"]}`,
+		},
+	}
+	e := NewDockerEngine(fx)
+
+	err := e.Push(context.Background(), "10.96.2.10:5000/test:v1", PushOptions{Insecure: true})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	want := []runCmdCall{{name: "docker", args: []string{"push", "10.96.2.10:5000/test:v1"}}}
+	if !reflect.DeepEqual(fx.runCalls, want) {
+		t.Fatalf("run calls mismatch\n got: %#v\nwant: %#v", fx.runCalls, want)
 	}
 }
 
