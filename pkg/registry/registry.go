@@ -98,14 +98,16 @@ func (m *RegistryManager) Start() error {
 		_ = m.engine.RemoveContainer(ctx, containerName, true)
 	}
 
-	if err := m.engine.RunContainer(ctx, containerengine.RunContainerOptions{
+	runOpts := containerengine.RunContainerOptions{
 		Name:    m.config.GetRegistryContainerName(),
 		Image:   m.config.GetRegistryImage(),
 		Detach:  true,
 		Restart: "always",
 		Network: "bridge",
 		Publish: []string{fmt.Sprintf("%s:5000", m.config.GetRegistryPort())},
-	}); err != nil {
+	}
+
+	if err := m.engine.RunContainer(ctx, runOpts); err != nil {
 		return fmt.Errorf("failed to start registry container: %w", err)
 	}
 
