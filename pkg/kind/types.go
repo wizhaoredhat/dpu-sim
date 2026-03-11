@@ -10,8 +10,9 @@ import (
 )
 
 type KindManager struct {
-	config   *config.Config
-	provider *cluster.Provider
+	config       *config.Config
+	provider     *cluster.Provider
+	containerBin string // "podman" or "docker"
 }
 
 // ClusterInfo represents information about a Kind cluster
@@ -28,27 +29,29 @@ type NodeInfo struct {
 	Status string
 }
 
-func kindProviderOptions() []cluster.ProviderOption {
+func detectContainerBin() (string, []cluster.ProviderOption) {
 	engine, err := containerengine.NewProjectEngine(platform.NewLocalExecutor())
 	if err != nil {
 		log.Warn("Container engine detection failed for kind provider selection: %v; using kind default provider autodetect", err)
-		return nil
+		return "docker", nil
 	}
 
 	switch engine.Name() {
 	case containerengine.EnginePodman:
-		return []cluster.ProviderOption{cluster.ProviderWithPodman()}
+		return "podman", []cluster.ProviderOption{cluster.ProviderWithPodman()}
 	case containerengine.EngineDocker:
-		return []cluster.ProviderOption{cluster.ProviderWithDocker()}
+		return "docker", []cluster.ProviderOption{cluster.ProviderWithDocker()}
 	default:
-		return nil
+		return "docker", nil
 	}
 }
 
 // NewKindManager creates a new Kind cluster manager
 func NewKindManager(cfg *config.Config) *KindManager {
+	bin, opts := detectContainerBin()
 	return &KindManager{
-		config:   cfg,
-		provider: cluster.NewProvider(kindProviderOptions()...),
+		config:       cfg,
+		provider:     cluster.NewProvider(opts...),
+		containerBin: bin,
 	}
 }

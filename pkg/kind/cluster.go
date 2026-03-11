@@ -44,20 +44,20 @@ func (m *KindManager) InstallHostDependencies(cmdExec platform.CommandExecutor) 
 
 // DeployAllClusters deploys all Kind clusters defined in the config
 func (m *KindManager) DeployAllClusters() error {
-	for _, cluster := range m.config.Kubernetes.Clusters {
-		// Build Kind config
-		kindCfg, err := m.BuildKindConfig(cluster.Name, cluster)
+	for _, clusterCfg := range m.config.Kubernetes.Clusters {
+		kindCfg, err := m.BuildKindConfig(clusterCfg.Name, clusterCfg)
 		if err != nil {
-			return fmt.Errorf("failed to build Kind config for %s: %w", cluster.Name, err)
+			return fmt.Errorf("failed to build Kind config for %s: %w", clusterCfg.Name, err)
 		}
 
-		if err := m.createCluster(cluster.Name, kindCfg); err != nil {
-			return fmt.Errorf("failed to create cluster %s: %w", cluster.Name, err)
+		kubeconfigPath := k8s.GetKubeconfigPath(clusterCfg.Name, m.config.Kubernetes.GetKubeconfigDir())
+		if err := m.createCluster(clusterCfg.Name, kindCfg, kubeconfigPath); err != nil {
+			return fmt.Errorf("failed to create cluster %s: %w", clusterCfg.Name, err)
 		}
 
-		kubeconfigPath := k8s.GetKubeconfigPath(cluster.Name, m.config.Kubernetes.GetKubeconfigDir())
-		if err := m.GetKubeconfig(cluster.Name, kubeconfigPath); err != nil {
-			return fmt.Errorf("failed to save kubeconfig for %s: %w", cluster.Name, err)
+		// Rewrite with our verified kubeconfig (guards against podman provider bugs).
+		if err := m.GetKubeconfig(clusterCfg.Name, kubeconfigPath); err != nil {
+			return fmt.Errorf("failed to save kubeconfig for %s: %w", clusterCfg.Name, err)
 		}
 	}
 	return nil
@@ -107,9 +107,11 @@ func (m *KindManager) InstallCNI() error {
 	return nil
 }
 
-// createCluster creates a new Kind cluster using the v1alpha4.Cluster config directly
-func (m *KindManager) createCluster(name string, cfg *v1alpha4.Cluster) error {
-	// Check if cluster already exists
+// createCluster creates a new Kind cluster using the v1alpha4.Cluster config directly.
+// kubeconfigPath tells Kind's internal kubeconfig export where to write. This
+// prevents Kind from merging into $KUBECONFIG (which may point to a different
+// cluster's file), avoiding cross-cluster kubeconfig contamination.
+func (m *KindManager) createCluster(name string, cfg *v1alpha4.Cluster, kubeconfigPath string) error {
 	if m.ClusterExists(name) {
 		log.Info("Kind cluster %s already exists, skipping creation", name)
 		return nil
@@ -129,6 +131,9 @@ func (m *KindManager) createCluster(name string, cfg *v1alpha4.Cluster) error {
 
 		opts = append(opts, cluster.CreateWithV1Alpha4Config(cfg))
 	}
+
+	// Direct Kind's internal kubeconfig export to the per-cluster file.
+	opts = append(opts, cluster.CreateWithKubeconfigPath(kubeconfigPath))
 
 	if err := m.provider.Create(name, opts...); err != nil {
 		return fmt.Errorf("failed to create Kind cluster %s: %w", name, err)
@@ -254,7 +259,13 @@ func (m *KindManager) GetClusterInfo(name string) (*ClusterInfo, error) {
 	return info, nil
 }
 
-// GetKubeconfig retrieves the kubeconfig for a Kind cluster
+// controlPlaneContainer returns the expected container name for a Kind
+// cluster's control plane node.
+func controlPlaneContainer(clusterName string) string {
+	return clusterName + "-control-plane"
+}
+
+// GetKubeconfig retrieves the kubeconfig for a Kind cluster and writes it to disk.
 func (m *KindManager) GetKubeconfig(name string, kubeconfigPath string) error {
 	if !m.ClusterExists(name) {
 		return fmt.Errorf("cluster %s does not exist", name)
@@ -265,7 +276,6 @@ func (m *KindManager) GetKubeconfig(name string, kubeconfigPath string) error {
 		return fmt.Errorf("failed to get kubeconfig for cluster %s: %w", name, err)
 	}
 
-	// Ensure parent directory exists
 	kubeconfigDir := filepath.Dir(kubeconfigPath)
 	if err := os.MkdirAll(kubeconfigDir, 0755); err != nil {
 		return fmt.Errorf("failed to create kubeconfig directory %s: %w", kubeconfigDir, err)
@@ -342,53 +352,25 @@ func (m *KindManager) ExportLogs(clusterName, outputDir string) error {
 }
 
 // GetInternalAPIServerIP retrieves the internal API server IP for a Kind cluster.
-// This returns the control plane node's (or load balancer's) IP address
-// in the kind network, suitable for in-cluster communication (e.g., https://172.18.0.2:6443).
-// For HA clusters with multiple control planes, this returns the load balancer IP.
+// This returns the control plane node's IP address on the kind container network,
+// suitable for in-cluster communication (e.g., https://172.18.0.2:6443).
 func (m *KindManager) GetInternalAPIServerIP(clusterName string) (string, error) {
 	if !m.ClusterExists(clusterName) {
 		return "", fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
-	// Get the internal kubeconfig which contains the control plane node's DNS name
-	// (or load balancer DNS name for HA clusters)
-	internalKubeconfig, err := m.provider.KubeConfig(clusterName, true) // true = internal
-	if err != nil {
-		return "", fmt.Errorf("failed to get internal kubeconfig: %w", err)
-	}
+	cpContainer := controlPlaneContainer(clusterName)
 
-	// Extract the server URL from the kubeconfig
-	var serverURL string
-	for _, line := range strings.Split(internalKubeconfig, "\n") {
-		if strings.Contains(line, "server:") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				serverURL = parts[1]
-				break
-			}
-		}
-	}
-
-	if serverURL == "" {
-		return "", fmt.Errorf("failed to extract server URL from kubeconfig")
-	}
-
-	// Extract the node name (e.g., https://cluster-control-plane:6443 -> cluster-control-plane)
-	// This could be a control plane node or a load balancer for HA clusters
-	hostPart := strings.TrimPrefix(serverURL, "https://")
-	nodeName := strings.Split(hostPart, ":")[0]
-
-	// Get the node IP address from Docker using the kind network
-	cmd := exec.Command("docker", "inspect", "-f",
-		"{{.NetworkSettings.Networks.kind.IPAddress}}", nodeName)
+	cmd := exec.Command(m.containerBin, "inspect", "-f",
+		"{{.NetworkSettings.Networks.kind.IPAddress}}", cpContainer)
 	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("failed to get node IP for %s: %w", nodeName, err)
+		return "", fmt.Errorf("failed to get IP for %s: %w", cpContainer, err)
 	}
 
 	nodeIP := strings.TrimSpace(string(output))
 	if nodeIP == "" {
-		return "", fmt.Errorf("node IP is empty for %s", nodeName)
+		return "", fmt.Errorf("IP is empty for %s", cpContainer)
 	}
 
 	log.Info("Internal API server IP for cluster %s: %s", clusterName, nodeIP)
@@ -404,8 +386,7 @@ func (m *KindManager) PullAndLoadImage(clusterName, imageName string) error {
 
 	log.Info("Pulling image %s...", imageName)
 
-	// Pull the image first to ensure it exists locally
-	pullCmd := exec.Command("docker", "pull", imageName)
+	pullCmd := exec.Command(m.containerBin, "pull", imageName)
 	pullCmd.Stdout = os.Stdout
 	pullCmd.Stderr = os.Stderr
 
