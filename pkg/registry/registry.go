@@ -117,6 +117,7 @@ func (m *RegistryManager) Start() error {
 		}
 
 		log.Warn("Registry start failed due to container networking state; repaired via %s and retrying once", m.engine.Name())
+		_ = m.engine.RemoveContainer(ctx, m.config.GetRegistryContainerName(), true)
 		if retryErr := m.engine.RunContainer(ctx, runOpts); retryErr != nil {
 			return fmt.Errorf("failed to start registry container after %s repair: %w", m.engine.Name(), retryErr)
 		}
