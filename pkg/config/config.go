@@ -139,6 +139,9 @@ func (c *Config) validateAndSetDefaults() error {
 		if c.OperatingSystem.ImageURL == "" && c.OperatingSystem.ImageRef == "" {
 			errors = append(errors, "VMs are defined, operating_system: one of 'image_url' or 'image_ref' is required")
 		}
+		if c.OperatingSystem.ImageURL != "" && c.OperatingSystem.ImageRef != "" {
+			errors = append(errors, "VMs are defined, operating_system: 'image_url' and 'image_ref' are mutually exclusive")
+		}
 		if c.OperatingSystem.ImageName == "" {
 			errors = append(errors, "VMs are defined, operating_system: 'image_name' is required")
 		}
