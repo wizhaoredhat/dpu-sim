@@ -24,12 +24,6 @@ func (m *VMManager) NetworkExists(networkName string) bool {
 
 // CreateNetwork creates a libvirt network based on the configuration
 func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
-	if netCfg.Mode == "nat" {
-		if err := ensureLibvirtNATFirewallBackend(); err != nil {
-			return fmt.Errorf("failed to prepare libvirt firewall backend for NAT network %s: %w", netCfg.Name, err)
-		}
-	}
-
 	if m.NetworkExists(netCfg.Name) {
 		log.Info("Network %s already exists, skipping creation", netCfg.Name)
 		return nil
@@ -70,6 +64,15 @@ func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
 	}
 
 	log.Info("✓ Created network: %s", netCfg.Name)
+	return nil
+}
+
+// EnsureHostNetworkPrerequisites configures host-side libvirt networking prerequisites.
+// This must run before creating a libvirt connection used by VMManager.
+func EnsureHostNetworkPrerequisites() error {
+	if err := ensureLibvirtNATFirewallBackend(); err != nil {
+		return fmt.Errorf("failed to prepare libvirt firewall backend for NAT networks: %w", err)
+	}
 	return nil
 }
 
