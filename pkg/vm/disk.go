@@ -255,19 +255,21 @@ func generateUserData(sshPubKey, username, password string, ifaceNameMACs []ifac
 		sb.WriteString("    permissions: \"0755\"\n")
 	}
 
-	// NetworkManager: manage only mgmt (DHCP). Other interfaces (k8s, and host-to-dpu links) are unmanaged.
+	// NetworkManager: manage only mgmt (DHCP). Other interfaces (k8s, host-to-dpu links) are unmanaged by MAC so it persists if interface names change.
 	if len(ifaceNameMACs) > 0 && cfg != nil {
-		var unmanaged []string
+		var unmanagedSpecs []string
 		for _, m := range ifaceNameMACs {
 			if m.Name != config.MgmtNetworkName {
-				unmanaged = append(unmanaged, "interface-name:"+m.Name)
+				unmanagedSpecs = append(unmanagedSpecs, "mac:"+strings.ToLower(m.MAC))
 			}
 		}
-		if len(unmanaged) > 0 {
+		// OVS/CNI interfaces used by OVN; keep them unmanaged so NetworkManager does not touch them.
+		unmanagedSpecs = append(unmanagedSpecs, "interface-name:br-int", "interface-name:brk8s", "interface-name:cni0", "interface-name:ovn-k8s-mp0")
+		if len(unmanagedSpecs) > 0 {
 			sb.WriteString("  - path: /etc/NetworkManager/conf.d/90-dpu-sim-unmanaged.conf\n")
 			sb.WriteString("    content: |\n")
-			sb.WriteString("      [main]\n")
-			sb.WriteString("      unmanaged-devices=" + strings.Join(unmanaged, ";") + "\n")
+			sb.WriteString("      [keyfile]\n")
+			sb.WriteString("      unmanaged-devices=" + strings.Join(unmanagedSpecs, ";") + "\n")
 			sb.WriteString("    permissions: \"0644\"\n")
 		}
 
@@ -313,13 +315,11 @@ func generateUserData(sshPubKey, username, password string, ifaceNameMACs []ifac
 		sb.WriteString("  - udevadm control --reload-rules\n")
 		sb.WriteString("  - udevadm trigger --subsystem-match=net\n")
 		sb.WriteString("  - /etc/dpu-sim-rename-ifaces.sh\n")
-	}
-
-	if len(ifaceNameMACs) > 0 && cfg != nil {
+		// Restart NM so it loads conf.d/90-dpu-sim-unmanaged.conf (unmanaged-devices).
+		sb.WriteString("  - systemctl restart NetworkManager\n")
 		sb.WriteString("  - systemctl daemon-reload\n")
 		sb.WriteString("  - systemctl enable dpu-sim-k8s-ip.service\n")
 		sb.WriteString("  - systemctl start dpu-sim-k8s-ip.service\n")
-		sb.WriteString("  - systemctl restart NetworkManager\n")
 	}
 
 	return sb.String()
