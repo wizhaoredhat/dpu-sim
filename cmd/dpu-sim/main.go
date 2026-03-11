@@ -285,7 +285,6 @@ func printSuccessMessage(cfg *config.Config, deployType string) {
 		log.Info("\nUseful commands:")
 		log.Info("  vmctl list                    # List all VMs")
 		log.Info("  vmctl ssh <vm-name>           # SSH into a VM")
-		log.Info("  kubectl --kubeconfig %s/<cluster>.kubeconfig get nodes", cfg.Kubernetes.GetKubeconfigDir())
 	} else {
 		log.Info("\n✓ Kind deployment complete!")
 		log.Info("\nYour DPU simulation environment is ready:")
@@ -293,10 +292,13 @@ func printSuccessMessage(cfg *config.Config, deployType string) {
 		log.Info("  • CNI is deployed and ready")
 		log.Info("\nUseful commands:")
 		log.Info("  kind get clusters             # List all clusters")
-		log.Info("  kubectl --kubeconfig %s/<cluster>.kubeconfig get nodes", cfg.Kubernetes.GetKubeconfigDir())
+	}
+	kubeconfigDir := cfg.Kubernetes.GetKubeconfigDir()
+	for _, c := range cfg.Kubernetes.Clusters {
+		log.Info("  kubectl --kubeconfig %s get nodes", k8s.GetKubeconfigPath(c.Name, kubeconfigDir))
 	}
 
-	log.Info("\nKubeconfig files: %s", cfg.Kubernetes.GetKubeconfigDir())
+	log.Info("\nKubeconfig directory: %s", cfg.Kubernetes.GetKubeconfigDir())
 	log.Info("For more information, see README.md")
 }
 
