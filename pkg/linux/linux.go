@@ -60,6 +60,59 @@ func CheckGenericPackage(cmdExec platform.CommandExecutor, distro *platform.Dist
 	return nil
 }
 
+// InstallQEMUKVM installs host QEMU virtualization packages.
+// Package names differ between Fedora/RHEL and Debian/Ubuntu.
+func InstallQEMUKVM(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	switch distro.PackageManager {
+	case platform.DNF:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "qemu-kvm"); err != nil {
+			return fmt.Errorf("failed to install qemu-kvm: %w", err)
+		}
+	case platform.APT:
+		pkgs := []string{"qemu-utils"}
+		switch distro.Architecture {
+		case platform.AARCH64:
+			pkgs = append(pkgs, "qemu-system-arm")
+		default:
+			pkgs = append(pkgs, "qemu-system-x86")
+		}
+		args := append([]string{"apt", "install", "-y"}, pkgs...)
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", args...); err != nil {
+			return fmt.Errorf("failed to install qemu system packages: %w", err)
+		}
+	default:
+		return platform.UnsupportedPackageManager(distro)
+	}
+
+	return nil
+}
+
+// CheckQEMUKVM validates that a usable QEMU system emulator is present.
+func CheckQEMUKVM(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	switch distro.PackageManager {
+	case platform.DNF:
+		return CheckGenericPackage(cmdExec, distro, cfg, dep)
+	case platform.APT:
+		candidates := []string{"qemu-kvm"}
+		switch distro.Architecture {
+		case platform.AARCH64:
+			candidates = append(candidates, "qemu-system-aarch64")
+		default:
+			candidates = append(candidates, "qemu-system-x86_64")
+		}
+
+		for _, candidate := range candidates {
+			if _, _, err := cmdExec.Execute("command -v " + candidate); err == nil {
+				return nil
+			}
+		}
+
+		return fmt.Errorf("no suitable qemu system binary found (checked: %s)", strings.Join(candidates, ", "))
+	default:
+		return platform.UnsupportedPackageManager(distro)
+	}
+}
+
 // InstallAarch64UEFIFirmware installs UEFI firmware required for aarch64 VM mode hosts.
 func InstallAarch64UEFIFirmware(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	if distro.Architecture != platform.AARCH64 {

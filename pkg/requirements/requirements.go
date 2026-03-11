@@ -28,6 +28,11 @@ func EnsureDependencies(cfg *config.Config) error {
 
 // getRequiredDependencies returns the list of dependencies needed by dpu-sim
 func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) {
+	hostDistro, err := platform.GetHostDistro()
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect host distribution: %w", err)
+	}
+
 	// Common dependencies needed by the tool
 	deps := []platform.Dependency{
 		{
@@ -69,6 +74,13 @@ func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) 
 
 	switch mode {
 	case config.VMDeploymentMode:
+		qemuDepName := "qemu-kvm"
+		libvirtDevDepName := "libvirt-devel"
+		if hostDistro.PackageManager == platform.APT {
+			qemuDepName = "qemu-system-x86"
+			libvirtDevDepName = "libvirt-dev"
+		}
+
 		deps = append(deps, platform.Dependency{
 			Name:        "libvirt",
 			Reason:      "Required for VM management",
@@ -76,10 +88,10 @@ func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) 
 			InstallFunc: linux.InstallGenericPackage,
 		})
 		deps = append(deps, platform.Dependency{
-			Name:        "qemu-kvm",
+			Name:        qemuDepName,
 			Reason:      "Required for VM management",
-			CheckFunc:   linux.CheckGenericPackage,
-			InstallFunc: linux.InstallGenericPackage,
+			CheckFunc:   linux.CheckQEMUKVM,
+			InstallFunc: linux.InstallQEMUKVM,
 		})
 		deps = append(deps, platform.Dependency{
 			Name:        "qemu-img",
@@ -88,7 +100,7 @@ func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) 
 			InstallFunc: linux.InstallGenericPackage,
 		})
 		deps = append(deps, platform.Dependency{
-			Name:        "libvirt-devel",
+			Name:        libvirtDevDepName,
 			Reason:      "Required for VM management",
 			CheckFunc:   linux.CheckGenericPackage,
 			InstallFunc: linux.InstallGenericPackage,
