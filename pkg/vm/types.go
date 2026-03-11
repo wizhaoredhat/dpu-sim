@@ -15,6 +15,7 @@ type VMManager struct {
 	conn       *libvirt.Connect
 	config     *config.Config
 	hostDistro *platform.Distro
+	hostSpec   archSpec
 }
 
 // NewVMManager creates a new VMManager with the given config, connecting to libvirt.
@@ -40,10 +41,17 @@ func NewVMManager(cfg *config.Config) (*VMManager, error) {
 		return nil, fmt.Errorf("config is nil")
 	}
 
+	hostSpec, err := hostArchSpec(distro.Architecture)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to determine host virtualization settings: %w", err)
+	}
+
 	return &VMManager{
 		conn:       conn,
 		config:     cfg,
 		hostDistro: distro,
+		hostSpec:   hostSpec,
 	}, nil
 }
 
