@@ -85,6 +85,11 @@ func ensureLibvirtNATFirewallBackend() error {
 		return nil
 	}
 
+	legacyChanged, err := ensureIptablesLegacyForLibvirtNAT()
+	if err != nil {
+		return err
+	}
+
 	const confPath = "/etc/libvirt/network.conf"
 
 	raw, err := os.ReadFile(confPath)
@@ -93,7 +98,7 @@ func ensureLibvirtNATFirewallBackend() error {
 	}
 
 	updated, changed := setLibvirtFirewallBackend(string(raw), "nftables")
-	if !changed {
+	if !changed && !legacyChanged {
 		return nil
 	}
 
@@ -121,8 +126,51 @@ func ensureLibvirtNATFirewallBackend() error {
 		return err
 	}
 
-	log.Info("Configured libvirt firewall backend to nftables for Debian-like host")
+	if changed {
+		log.Info("Configured libvirt firewall backend to nftables for Debian-like host")
+	}
+	if legacyChanged {
+		log.Info("Configured iptables alternatives to legacy for libvirt NAT on Debian-like host")
+	}
 	return nil
+}
+
+func ensureIptablesLegacyForLibvirtNAT() (bool, error) {
+	probe := exec.Command("iptables", "-w", "--table", "nat", "--list-rules")
+	if output, err := probe.CombinedOutput(); err == nil {
+		if !strings.Contains(string(output), "table `nat' is incompatible, use 'nft' tool") {
+			return false, nil
+		}
+	}
+
+	pairs := []struct {
+		name string
+		path string
+	}{
+		{name: "iptables", path: "/usr/sbin/iptables-legacy"},
+		{name: "ip6tables", path: "/usr/sbin/ip6tables-legacy"},
+	}
+
+	changed := false
+	for _, p := range pairs {
+		if _, err := os.Stat(p.path); err != nil {
+			continue
+		}
+
+		check := exec.Command(p.name, "--version")
+		currentOut, err := check.CombinedOutput()
+		if err == nil && strings.Contains(strings.ToLower(string(currentOut)), "legacy") {
+			continue
+		}
+
+		setCmd := exec.Command("sudo", "update-alternatives", "--set", p.name, p.path)
+		if output, err := setCmd.CombinedOutput(); err != nil {
+			return changed, fmt.Errorf("failed to set %s alternative to %s: %w, output: %s", p.name, p.path, err, string(output))
+		}
+		changed = true
+	}
+
+	return changed, nil
 }
 
 func restartLibvirtForNetworkFirewallChange() error {
