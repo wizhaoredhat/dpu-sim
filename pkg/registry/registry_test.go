@@ -115,6 +115,9 @@ func TestStartRepairsDockerFirewallAndRetriesOnDNATError(t *testing.T) {
 	if fEngine.repairCalled != 1 {
 		t.Fatalf("expected 1 repair attempt, got %d", fEngine.repairCalled)
 	}
+	if len(fEngine.removeCalledWith) != 1 || fEngine.removeCalledWith[0] != "dpu-sim-registry" {
+		t.Fatalf("expected cleanup remove before retry, got: %#v", fEngine.removeCalledWith)
+	}
 }
 
 func TestStartDoesNotRetryForPodmanOnDNATError(t *testing.T) {
@@ -135,5 +138,8 @@ func TestStartDoesNotRetryForPodmanOnDNATError(t *testing.T) {
 	}
 	if fEngine.repairCalled != 1 {
 		t.Fatalf("expected manager to call repair hook once, got %d", fEngine.repairCalled)
+	}
+	if len(fEngine.removeCalledWith) != 0 {
+		t.Fatalf("did not expect container remove without repair, got: %#v", fEngine.removeCalledWith)
 	}
 }
