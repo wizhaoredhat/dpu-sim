@@ -240,6 +240,45 @@ func TestDockerPushInsecureAllowedByCIDRPushes(t *testing.T) {
 	}
 }
 
+func TestDockerTryRepairRunContainerFailureRestartsDockerOnDNATError(t *testing.T) {
+	fx := &fakeExecutor{
+		execByCmd: map[string]execResult{
+			"sudo systemctl restart docker": {stdout: ""},
+			"docker info >/dev/null 2>&1":   {stdout: ""},
+		},
+	}
+	e := NewDockerEngine(fx)
+
+	repaired, err := e.TryRepairRunContainerFailure(context.Background(), fmt.Errorf("Unable to enable DNAT rule: iptables: No chain/target/match by that name"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repaired {
+		t.Fatalf("expected repair=true")
+	}
+
+	wantExec := []string{"sudo systemctl restart docker", "docker info >/dev/null 2>&1"}
+	if !reflect.DeepEqual(fx.execCalls, wantExec) {
+		t.Fatalf("exec calls mismatch\n got: %#v\nwant: %#v", fx.execCalls, wantExec)
+	}
+}
+
+func TestDockerTryRepairRunContainerFailureNoopOnUnrelatedError(t *testing.T) {
+	fx := &fakeExecutor{execByCmd: map[string]execResult{}}
+	e := NewDockerEngine(fx)
+
+	repaired, err := e.TryRepairRunContainerFailure(context.Background(), fmt.Errorf("some other runtime error"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repaired {
+		t.Fatalf("expected repair=false")
+	}
+	if len(fx.execCalls) != 0 {
+		t.Fatalf("expected no exec calls, got: %#v", fx.execCalls)
+	}
+}
+
 func TestRunContainerCommand(t *testing.T) {
 	fx := &fakeExecutor{}
 	e := NewPodmanEngine(fx)
