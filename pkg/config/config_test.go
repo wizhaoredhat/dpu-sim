@@ -139,12 +139,12 @@ func TestGetDeploymentMode(t *testing.T) {
 func TestGetHostDPUMappings(t *testing.T) {
 	cfg := Config{
 		VMs: []VMConfig{
-			{Name: "host-1", Type: VMHostType},
-			{Name: "dpu-1a", Type: VMDPUType, Host: "host-1"},
-			{Name: "dpu-1b", Type: VMDPUType, Host: "host-1"},
-			{Name: "host-2", Type: VMHostType},
-			{Name: "dpu-2", Type: VMDPUType, Host: "host-2"},
-			{Name: "standalone", Type: VMHostType},
+			{Name: "host-1", Type: HostType},
+			{Name: "dpu-1a", Type: DpuType, Host: "host-1"},
+			{Name: "dpu-1b", Type: DpuType, Host: "host-1"},
+			{Name: "host-2", Type: HostType},
+			{Name: "dpu-2", Type: DpuType, Host: "host-2"},
+			{Name: "standalone", Type: HostType},
 		},
 	}
 

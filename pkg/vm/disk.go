@@ -91,27 +91,27 @@ func getInterfaceNamesAndMACs(cfg *config.Config, vmConfig config.VMConfig) []if
 	}
 	numPairs := cfg.GetHostToDpuNumPairs()
 	mappings := cfg.GetHostDPUMappings()
-	if vmConfig.Type == config.VMHostType {
+	if vmConfig.Type == config.HostType {
 		for _, mapping := range mappings {
 			if mapping.Host.Name == vmConfig.Name {
 				for idx := 0; idx < numPairs; idx++ {
 					out = append(out, ifaceNameAndMAC{
 						Name: fmt.Sprintf(network.HostDataIfFmt, idx),
-						MAC:  GenerateMACForHostToDpu(vmConfig.Name, config.VMHostType, idx),
+						MAC:  GenerateMACForHostToDpu(vmConfig.Name, config.HostType, idx),
 					})
 				}
 				break
 			}
 		}
 	}
-	if vmConfig.Type == config.VMDPUType {
+	if vmConfig.Type == config.DpuType {
 		for _, mapping := range mappings {
 			for _, conn := range mapping.Connections {
 				if conn.DPU.Name == vmConfig.Name {
 					for idx := 0; idx < numPairs; idx++ {
 						out = append(out, ifaceNameAndMAC{
 							Name: fmt.Sprintf(network.DPUDataIfFmt, idx),
-							MAC:  GenerateMACForHostToDpu(vmConfig.Name, config.VMDPUType, idx),
+							MAC:  GenerateMACForHostToDpu(vmConfig.Name, config.DpuType, idx),
 						})
 					}
 					break

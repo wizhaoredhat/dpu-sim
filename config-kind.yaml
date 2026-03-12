@@ -22,7 +22,7 @@ kind:
       k8s_role: "control-plane"
       k8s_cluster: "dpu-sim-dpu-kind"
     - name: "host-1-1"
-      type: dpu-host
+      type: host
       k8s_role: "worker"
       k8s_cluster: "dpu-sim-host-kind"
     - name: "dpu-1-1"
@@ -31,7 +31,7 @@ kind:
       k8s_cluster: "dpu-sim-dpu-kind"
       host: "host-1-1"
     - name: "host-2-1"
-      type: dpu-host
+      type: host
       k8s_role: "worker"
       k8s_cluster: "dpu-sim-host-kind"
     - name: "dpu-2-1"

@@ -299,13 +299,13 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 	}
 
 	// Add host-to-DPU network interfaces. Deterministic MAC per (vm, index); udev in guest renames by MAC.
-	if vmCfg.Type == config.VMHostType {
+	if vmCfg.Type == config.HostType {
 		for _, mapping := range mappings {
 			if mapping.Host.Name == vmCfg.Name {
 				for _, conn := range mapping.Connections {
 					for idx := 0; idx < numPairs; idx++ {
 						netName := network.GetHostToDPUNetworkName(mapping.Host.Name, conn.DPU.Name, idx)
-						mac := GenerateMACForHostToDpu(vmCfg.Name, config.VMHostType, idx)
+						mac := GenerateMACForHostToDpu(vmCfg.Name, config.HostType, idx)
 						sb.WriteString("    <interface type='network'>\n")
 						sb.WriteString(fmt.Sprintf("      <mac address='%s'/>\n", mac))
 						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))
@@ -319,13 +319,13 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 		}
 	}
 
-	if vmCfg.Type == config.VMDPUType {
+	if vmCfg.Type == config.DpuType {
 		for _, mapping := range mappings {
 			for _, conn := range mapping.Connections {
 				if conn.DPU.Name == vmCfg.Name {
 					for idx := 0; idx < numPairs; idx++ {
 						netName := network.GetHostToDPUNetworkName(mapping.Host.Name, conn.DPU.Name, idx)
-						mac := GenerateMACForHostToDpu(vmCfg.Name, config.VMDPUType, idx)
+						mac := GenerateMACForHostToDpu(vmCfg.Name, config.DpuType, idx)
 						sb.WriteString("    <interface type='network'>\n")
 						sb.WriteString(fmt.Sprintf("      <mac address='%s'/>\n", mac))
 						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))

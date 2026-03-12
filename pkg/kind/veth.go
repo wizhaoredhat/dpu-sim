@@ -27,7 +27,7 @@ func (m *KindManager) SetupHostToDpuNetwork() error {
 
 	pairs := m.config.GetKindHostDPUPairs()
 	if len(pairs) == 0 {
-		log.Warn("HostToDpu network configured but no dpu-host/dpu worker pairs found in Kind node config")
+		log.Warn("HostToDpu network configured but no host/dpu worker pairs found in Kind node config")
 		return nil
 	}
 

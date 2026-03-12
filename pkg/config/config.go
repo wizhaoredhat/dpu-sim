@@ -46,24 +46,47 @@ func (c *Config) validateAndSetDefaults() error {
 		if net.Type == "" {
 			errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'type' is required", i, net.Name))
 		}
+		if c.Networks[i].NICModel == "" {
+			c.Networks[i].NICModel = "virtio"
+		}
 
 		if net.Type == HostToDpuNetworkType {
+			if net.BridgeName != "" {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'bridge_name' is not allowed for type %s", i, net.Name, net.Type))
+			}
+			if net.Gateway != "" {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'gateway' is not allowed for type %s", i, net.Name, net.Type))
+			}
+			if net.SubnetMask != "" {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'subnet_mask' is not allowed for type %s", i, net.Name, net.Type))
+			}
+			if net.DHCPStart != "" {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'dhcp_start' is not allowed for type %s", i, net.Name, net.Type))
+			}
+			if net.DHCPEnd != "" {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'dhcp_end' is not allowed for type %s", i, net.Name, net.Type))
+			}
+			if net.Mode != "" {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'mode' is not allowed for type %s", i, net.Name, net.Type))
+			}
+			if net.UseOVS {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'use_ovs' is not allowed for type %s", i, net.Name, net.Type))
+			}
+			if net.AttachTo != "" {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'attach_to' is not allowed for type %s", i, net.Name, net.Type))
+			}
 			if c.Networks[i].NumPairs <= 0 {
 				c.Networks[i].NumPairs = 1
-			}
-			if c.Networks[i].NICModel == "" {
-				c.Networks[i].NICModel = "virtio"
 			}
 		} else {
 			if net.BridgeName == "" {
 				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'bridge_name' is required", i, net.Name))
 			}
-
+			if net.NumPairs > 0 {
+				errors = append(errors, fmt.Sprintf("networks[%d] (%s): 'num_pairs' is not allowed for type %s", i, net.Name, net.Type))
+			}
 			if c.Networks[i].Mode == "" {
 				c.Networks[i].Mode = "nat"
-			}
-			if c.Networks[i].NICModel == "" {
-				c.Networks[i].NICModel = "virtio"
 			}
 			if c.Networks[i].UseOVS == false {
 				c.Networks[i].UseOVS = false
@@ -81,8 +104,8 @@ func (c *Config) validateAndSetDefaults() error {
 		}
 		if vm.Type == "" {
 			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'type' is required", i, vm.Name))
-		} else if vm.Type != VMHostType && vm.Type != VMDPUType {
-			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'type' must be '%s' or '%s', got '%s'", i, vm.Name, VMHostType, VMDPUType, vm.Type))
+		} else if vm.Type != HostType && vm.Type != DpuType {
+			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'type' must be '%s' or '%s', got '%s'", i, vm.Name, HostType, DpuType, vm.Type))
 		}
 		if vm.K8sCluster == "" {
 			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'k8s_cluster' is required", i, vm.Name))
@@ -106,8 +129,8 @@ func (c *Config) validateAndSetDefaults() error {
 			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'disk_size' must be greater than 0", i, vm.Name))
 		}
 		// If DPU type, host field should reference an existing host
-		if vm.Type == VMDPUType && vm.Host == "" {
-			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'host' is required for %s type VMs", i, vm.Name, VMDPUType))
+		if vm.Type == DpuType && vm.Host == "" {
+			errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'host' is required for %s type VMs", i, vm.Name, DpuType))
 		}
 	}
 
@@ -154,8 +177,8 @@ func (c *Config) validateAndSetDefaults() error {
 			if node.K8sCluster == "" {
 				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'k8s_cluster' is required", i, node.Name))
 			}
-			if node.Type != "" && node.Type != "dpu-host" && node.Type != "dpu" {
-				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'type' must be 'dpu-host' or 'dpu', got '%s'", i, node.Name, node.Type))
+			if node.Type != "" && node.Type != HostType && node.Type != DpuType {
+				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'type' must be 'host' or 'dpu', got '%s'", i, node.Name, node.Type))
 			}
 			if node.Type == "dpu" && node.Host == "" {
 				errors = append(errors, fmt.Sprintf("kind.nodes[%d] (%s): 'host' is required for type 'dpu'", i, node.Name))
@@ -198,7 +221,7 @@ func (c *Config) validateAndSetDefaults() error {
 		}
 		if c.Kubernetes.Clusters[i].CNI == "" {
 			errors = append(errors, fmt.Sprintf("kubernetes.clusters[%d]: 'cni' is required", i))
-		} else if c.Kubernetes.Clusters[i].CNI != "ovn-kubernetes" && c.Kubernetes.Clusters[i].CNI != "flannel" && c.Kubernetes.Clusters[i].CNI != "kindnet" {
+		} else if c.Kubernetes.Clusters[i].CNI != CNIOVNKubernetes && c.Kubernetes.Clusters[i].CNI != CNIFlannel && c.Kubernetes.Clusters[i].CNI != CNIKindnet {
 			errors = append(errors, fmt.Sprintf("kubernetes.clusters[%d]: 'cni' must be 'ovn-kubernetes', 'flannel', or 'kindnet', got '%s'", i, c.Kubernetes.Clusters[i].CNI))
 		}
 	}
@@ -211,7 +234,7 @@ func (c *Config) validateAndSetDefaults() error {
 			}
 			if container.CNI == "" {
 				errors = append(errors, fmt.Sprintf("registry.containers[%d] (%s): 'cni' is required", i, container.Name))
-			} else if container.CNI != "ovn-kubernetes" {
+			} else if CNIType(container.CNI) != CNIOVNKubernetes {
 				errors = append(errors, fmt.Sprintf("registry.containers[%d] (%s): 'cni' must be 'ovn-kubernetes', got '%s'", i, container.Name, container.CNI))
 			}
 			if container.Tag == "" {
@@ -224,12 +247,12 @@ func (c *Config) validateAndSetDefaults() error {
 	if len(c.VMs) > 0 {
 		hostNames := make(map[string]bool)
 		for _, vm := range c.VMs {
-			if vm.Type == VMHostType {
+			if vm.Type == HostType {
 				hostNames[vm.Name] = true
 			}
 		}
 		for i, vm := range c.VMs {
-			if vm.Type == VMDPUType && vm.Host != "" {
+			if vm.Type == DpuType && vm.Host != "" {
 				if !hostNames[vm.Host] {
 					errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'host' references non-existent host '%s'", i, vm.Name, vm.Host))
 				}
@@ -283,7 +306,7 @@ func (c *Config) GetHostDPUMappings() []HostDPUMapping {
 	// Build map of hosts by name for lookup
 	hosts := make(map[string]VMConfig)
 	for _, vm := range c.VMs {
-		if vm.Type == VMHostType {
+		if vm.Type == HostType {
 			hosts[vm.Name] = vm
 		}
 	}
@@ -291,7 +314,7 @@ func (c *Config) GetHostDPUMappings() []HostDPUMapping {
 	// Build map of host name -> DPU connections
 	hostConnections := make(map[string][]DPUConnection)
 	for _, vm := range c.VMs {
-		if vm.Type == VMDPUType && vm.Host != "" {
+		if vm.Type == DpuType && vm.Host != "" {
 			if _, ok := hosts[vm.Host]; ok {
 				conn := DPUConnection{
 					DPU: vm,
@@ -453,20 +476,20 @@ type KindHostDPUPair struct {
 }
 
 // GetKindHostDPUPairs returns all host-DPU container pairs for Kind mode, even if across clusters.
-// Each DPU node's "host" field references a dpu-host node; pairs use Docker container names.
+// Each DPU node's "host" field references a host node; pairs use Docker container names.
 func (c *Config) GetKindHostDPUPairs() []KindHostDPUPair {
 	if c.Kind == nil {
 		return nil
 	}
 	hostByName := make(map[string]KindNodeConfig)
 	for _, node := range c.Kind.Nodes {
-		if node.Type == "dpu-host" {
+		if node.Type == HostType {
 			hostByName[node.Name] = node
 		}
 	}
 	var pairs []KindHostDPUPair
 	for _, node := range c.Kind.Nodes {
-		if node.Type != "dpu" || node.Host == "" {
+		if node.Type != DpuType || node.Host == "" {
 			continue
 		}
 		host, ok := hostByName[node.Host]

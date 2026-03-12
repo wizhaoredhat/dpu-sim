@@ -11,8 +11,8 @@ const (
 	HostToDpuNetworkType = "HostToDpu"
 	VMDeploymentMode     = "vm"
 	KindDeploymentMode   = "kind"
-	VMHostType           = "host"
-	VMDPUType            = "dpu"
+	HostType             = "host"
+	DpuType              = "dpu"
 
 	// RegistryContainerName is the Docker container name for the local registry
 	DefaultRegistryContainerName = "dpu-sim-registry"
@@ -99,10 +99,10 @@ type KindConfig struct {
 // KindNodeConfig represents a Kind node configuration.
 type KindNodeConfig struct {
 	Name       string `yaml:"name"`                  // Name is used as a node label (dpu-sim.org/node-name) since Kind does not support node renaming.
-	Type       string `yaml:"type,omitempty"`        // "dpu-host" or "dpu" for workers
+	Type       string `yaml:"type,omitempty"`        // "host" or "dpu" for workers
 	K8sCluster string `yaml:"k8s_cluster,omitempty"` // Kubernetes cluster name
 	K8sRole    string `yaml:"k8s_role,omitempty"`    // "control-plane" or "worker"
-	Host       string `yaml:"host,omitempty"`        // for type "dpu", the name of the dpu-host node
+	Host       string `yaml:"host,omitempty"`        // for type "dpu", the name of the host node
 }
 
 // OSConfig represents operating system configuration

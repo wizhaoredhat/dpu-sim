@@ -156,8 +156,8 @@ Kind mode supports **two clusters** (host and DPU), similar to the VM approach. 
 | `name`        | Yes      | Logical node name; applied as label `dpu-sim.org/node-name` on the Kind node. |
 | `k8s_cluster` | Yes      | Cluster name from `kubernetes.clusters` this node belongs to. |
 | `k8s_role`    | Yes      | `control-plane` or `worker`. |
-| `type`        | No       | For workers: `dpu-host` (host side) or `dpu` (DPU side). Omit for control-plane. |
-| `host`        | Yes*     | For `type: dpu` only: `name` of the `dpu-host` node this DPU is paired with. |
+| `type`        | No       | For workers: `host` (host side) or `dpu` (DPU side). Omit for control-plane. |
+| `host`        | Yes*     | For `type: dpu` only: `name` of the `host` node this DPU is paired with. |
 
 Example with two clusters (host cluster and DPU cluster) and two host–DPU pairs:
 
@@ -171,7 +171,7 @@ kind:
       k8s_role: "control-plane"
       k8s_cluster: "dpu-sim-dpu-kind"
     - name: "host-1-1"
-      type: dpu-host
+      type: host
       k8s_role: "worker"
       k8s_cluster: "dpu-sim-host-kind"
     - name: "dpu-1-1"
@@ -180,7 +180,7 @@ kind:
       k8s_cluster: "dpu-sim-dpu-kind"
       host: "host-1-1"
     - name: "host-2-1"
-      type: dpu-host
+      type: host
       k8s_role: "worker"
       k8s_cluster: "dpu-sim-host-kind"
     - name: "dpu-2-1"
