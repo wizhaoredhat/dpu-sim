@@ -92,15 +92,12 @@ func (m *VMManager) generateNATNetworkXML(netCfg config.NetworkConfig) string {
 
 	sb.WriteString(fmt.Sprintf("  <ip address='%s' netmask='%s'>\n", netCfg.Gateway, netCfg.SubnetMask))
 
-	// K8s (ovn-network): no DHCP on the segment; VMs assign k8s interface IP manually
-	if netCfg.Type != config.K8sNetworkName {
-		sb.WriteString("    <dhcp>\n")
-		if netCfg.DHCPStart != "" && netCfg.DHCPEnd != "" {
-			sb.WriteString(fmt.Sprintf("      <range start='%s' end='%s'/>\n", netCfg.DHCPStart, netCfg.DHCPEnd))
-		}
-		sb.WriteString(m.buildDHCPReservations(netCfg))
-		sb.WriteString("    </dhcp>\n")
+	sb.WriteString("    <dhcp>\n")
+	if netCfg.DHCPStart != "" && netCfg.DHCPEnd != "" {
+		sb.WriteString(fmt.Sprintf("      <range start='%s' end='%s'/>\n", netCfg.DHCPStart, netCfg.DHCPEnd))
 	}
+	sb.WriteString(m.buildDHCPReservations(netCfg))
+	sb.WriteString("    </dhcp>\n")
 
 	sb.WriteString("  </ip>\n")
 
