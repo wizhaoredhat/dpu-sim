@@ -18,7 +18,7 @@ func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sI
 	case config.CNIFlannel:
 		return m.installFlannel(clusterName)
 	case config.CNIOVNKubernetes:
-		return m.installOVNKubernetes(clusterName, k8sIP, m.config.IsKindMode(), gatewayInterface)
+		return m.installOVNKubernetes(clusterName, k8sIP, gatewayInterface)
 	case config.CNIKindnet:
 		if m.config.IsKindMode() {
 			log.Info("Kindnet is the default CNI for Kind clusters, no installation needed")
