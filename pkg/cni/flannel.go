@@ -14,7 +14,17 @@ const FlannelManifestURL = "https://github.com/flannel-io/flannel/releases/lates
 func (m *CNIManager) installFlannel(clusterName string) error {
 	log.Debug("Installing Flannel CNI on cluster %s...", clusterName)
 
-	if err := m.k8sClient.ApplyManifestFromURL(FlannelManifestURL); err != nil {
+	manifest, err := downloadManifest(FlannelManifestURL)
+	if err != nil {
+		return fmt.Errorf("failed to download Flannel manifest: %w", err)
+	}
+
+	if m.shouldUseWritableCNIBinDir() {
+		manifest = rewriteCNIBinPath(manifest, writableCNIBinDir)
+		log.Info("Detected bootc/read-only root setup, patching Flannel CNI binary path to %s", writableCNIBinDir)
+	}
+
+	if err := m.k8sClient.ApplyManifest(manifest); err != nil {
 		return fmt.Errorf("failed to install Flannel: %w", err)
 	}
 
