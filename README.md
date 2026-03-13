@@ -22,7 +22,7 @@ All these DPUs have common simularities, some we can emulate better than others.
 - 🚀 **Multiple deployment modes**: VMs (libvirt) or Containers (Kind)
 - ☸️ Kubernetes (kubeadm, kubelet, kubectl) pre-installed
 - 🔀 OVN-Kubernetes or Flannel CNI support
-- 🌐 Multiple network support (NAT, Layer 2 Bridge)
+- 🌐 Multiple network support (NAT, Host-To-DPU interfaces, Layer 2 Bridge)
 - ✅ Automatic cluster setup and CNI installation
 - 🧹 Cleanup scripts for both modes
 
@@ -32,7 +32,7 @@ All these DPUs have common simularities, some we can emulate better than others.
 - 🔑 SSH key-based authentication
 - 💻 Easy VM access via SSH and console
 - 🎛️ Full VM lifecycle management (start, stop, reboot)
-- 🔀 Open vSwitch (OVS) for host-to-DPU networking
+- 🔀 Open vSwitch (OVS) for Host-To-DPU networking
 
 ### Kind Mode Features
 - ⚡ **Fast iteration** - clusters deploy in seconds
@@ -65,6 +65,7 @@ Runtime dependencies are automatically installed by dpu-sim. For example the dpu
 ✓ libvirt-devel is installed
 ✓ virt-install is installed
 ✓ genisoimage is installed
+✓ aarch64-uefi-firmware is installed
 ✓ All dependencies are available
 ```
 Seperate dependencies are checked whether the provided configuration file is deploying VM vs. Kind modes.
@@ -75,7 +76,7 @@ The dpu-sim should install all dependecies by detecting the system's Linux distr
 
 ### Required Services
 
-Although dpu-sim tries to install dependencies, the user may be required to start required services. This can potentially go away once the handles these required servers in its entirety.
+Although dpu-sim tries to install dependencies, the user may be required to start required services. This can potentially go away once dpu-sim handles these required services in its entirety.
 
 ```bash
 # Start and enable libvirt sockets
@@ -159,9 +160,14 @@ Kind mode supports **two clusters** (host and DPU), similar to the VM approach. 
 | `type`        | No       | For workers: `host` (host side) or `dpu` (DPU side). Omit for control-plane. |
 | `host`        | Yes*     | For `type: dpu` only: `name` of the `host` node this DPU is paired with. |
 
-Example with two clusters (host cluster and DPU cluster) and two host–DPU pairs:
+The following is an example with two clusters (host cluster and DPU cluster) and two host–DPU pairs. Edit `config-kind.yaml` to customize your deployment:
 
 ```yaml
+networks:
+  - name: "host-to-dpu-link"
+    type: "HostToDpu"
+    num_pairs: 16
+
 kind:
   nodes:
     - name: "control-plane-host"
@@ -200,6 +206,12 @@ kubernetes:
       pod_cidr: "10.246.0.0/16"
       service_cidr: "10.247.0.0/16"
       cni: "ovn-kubernetes"
+
+registry:
+  containers:
+    - name: "ovn-kube"
+      cni: "ovn-kubernetes"
+      tag: "ovn-kube:dpu-sim"
 ```
 
 To look up a node by its config name after deployment, use the label: `kubectl get nodes -l dpu-sim.org/node-name=host-1-1`.
@@ -219,7 +231,7 @@ networks:
     dhcp_start: "192.168.120.10"
     dhcp_end: "192.168.120.100"
     mode: "nat"
-    nic_model: "virtio"  # virtio for management network
+    nic_model: "virtio"  # virtio for networks because it is the fastest and least resource intensive
     attach_to: "any"  # Attach to all VMs: "dpu", "host", or "any"
 
   - name: "ovn-network"
@@ -243,6 +255,11 @@ networks:
     use_ovs: true  # Use Open vSwitch (supports OpenFlow, flow tables, etc.)
     attach_to: "dpu"  # Attach to all VMs: "dpu", "host", or "any"
 
+  - name: "host-to-dpu-link"
+    type: "HostToDpu"
+    num_pairs: 16
+    nic_model: "virtio"
+
 vms:
   - name: "master-1"
     type: "host"
@@ -254,7 +271,17 @@ vms:
     vcpus: 2
     disk_size: 20  # GB
 
-  - name: "host-1"
+  - name: "master-2"
+    type: "host"
+    k8s_cluster: "cluster-2"
+    k8s_role: "master"
+    k8s_node_mac: "52:54:00:00:02:11"
+    k8s_node_ip: "192.168.123.21"
+    memory: 4096  # MB
+    vcpus: 2
+    disk_size: 20  # GB
+
+  - name: "host-1-1"
     type: "host"
     k8s_cluster: "cluster-1"
     k8s_role: "worker"
@@ -264,13 +291,34 @@ vms:
     vcpus: 2
     disk_size: 20  # GB
 
-  - name: "dpu-1"
+  - name: "dpu-1-1"
     type: "dpu"
+    k8s_cluster: "cluster-2"
+    k8s_role: "worker"
+    k8s_node_mac: "52:54:00:00:02:12"
+    k8s_node_ip: "192.168.123.22"
+    host: "host-1-1"
+    memory: 2048  # MB
+    vcpus: 2
+    disk_size: 20  # GB
+
+  - name: "host-2-1"
+    type: "host"
     k8s_cluster: "cluster-1"
     k8s_role: "worker"
     k8s_node_mac: "52:54:00:00:01:13"
     k8s_node_ip: "192.168.123.13"
-    host: "host-1"
+    memory: 2048  # MB
+    vcpus: 2
+    disk_size: 20  # GB
+
+  - name: "dpu-2-1"
+    type: "dpu"
+    k8s_cluster: "cluster-2"
+    k8s_role: "worker"
+    k8s_node_mac: "52:54:00:00:02:13"
+    k8s_node_ip: "192.168.123.23"
+    host: "host-2-1"
     memory: 2048  # MB
     vcpus: 2
     disk_size: 20  # GB
@@ -293,6 +341,16 @@ kubernetes:
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
+    - name: "cluster-2"
+      pod_cidr: "10.246.0.0/16"
+      service_cidr: "10.247.0.0/16"
+      cni: "ovn-kubernetes"
+
+registry:
+  containers:
+    - name: "ovn-kube"
+      cni: "ovn-kubernetes"
+      tag: "ovn-kube:dpu-sim"
 ```
 
 ### Network Types
@@ -342,7 +400,7 @@ This makes the VMs suitable for:
 
 ### Kubernetes
 
-Kubernetes is the choice for orchestrating DPU deployment. Hence kubernetes installation and usage is assumed. Although you might choose to simulate DPUs without Kubernetes, which currently means to pass the `--skip-k8s` flag to dpu-sim.
+Kubernetes is the choice for orchestrating DPU deployment. Hence kubernetes installation and usage is assumed. Although you might choose to simulate DPUs without Kubernetes, which currently means to pass the `--skip-k8s` flag to dpu-sim (Currently only VM mode supports this).
 
 If Kubernetes is needed then by default dpu-sim will perform those operations automatically.
 
