@@ -262,13 +262,12 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "cri-o", "iproute-tc", "containernetworking-plugins"); err != nil {
 			return fmt.Errorf("failed to install CRI-O: %w", err)
 		}
-		// On Fedora, CNI plugins are installed to /usr/libexec/cni/ but CRI-O looks in /opt/cni/bin/
-		// Create symlinks so CRI-O can find them
-		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "mkdir", "-p", "/opt/cni/bin"); err != nil {
-			return fmt.Errorf("failed to create /opt/cni/bin: %w", err)
-		}
-		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "ln", "-sf", "/usr/libexec/cni/*", "/opt/cni/bin/"); err != nil {
-			return fmt.Errorf("failed to create symlinks: %w", err)
+		// On Fedora, CNI plugins are installed to /usr/libexec/cni/. Always mirror
+		// plugins into /var/lib/cni/bin and pin CRI-O plugin_dirs order so all nodes
+		// resolve plugins consistently (important for mixed writable/read-only roots).
+		// Keep /opt/cni/bin symlinks best-effort only for compatibility.
+		if err := EnsureCRIOCNIPluginPaths(cmdExec); err != nil {
+			return err
 		}
 	} else {
 		return platform.UnsupportedPackageManager(distro)
@@ -282,6 +281,63 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 	}
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "start", "crio"); err != nil {
 		return fmt.Errorf("failed to start CRI-O: %w", err)
+	}
+	return nil
+}
+
+// EnsureCRIOCNIPluginPaths ensures CRI-O can always resolve required CNI plugins
+// from a consistent, writable-first path ordering across nodes.
+func EnsureCRIOCNIPluginPaths(cmdExec platform.CommandExecutor) error {
+	if _, stderr, err := cmdExec.ExecuteWithTimeout(`set -e
+SRC=""
+if [ -d /usr/libexec/cni ] && [ -n "$(ls -A /usr/libexec/cni 2>/dev/null)" ]; then
+  SRC="/usr/libexec/cni"
+elif [ -d /opt/cni/bin ] && [ -n "$(ls -A /opt/cni/bin 2>/dev/null)" ]; then
+  SRC="/opt/cni/bin"
+fi
+
+if [ -z "$SRC" ]; then
+  echo "missing CNI plugins under /usr/libexec/cni and /opt/cni/bin" >&2
+  exit 1
+fi
+
+sudo mkdir -p /var/lib/cni/bin
+for plugin in "$SRC"/*; do
+  [ -e "$plugin" ] || continue
+  sudo cp -f "$plugin" "/var/lib/cni/bin/$(basename "$plugin")"
+done
+
+sudo mkdir -p /etc/crio/crio.conf.d
+sudo tee /etc/crio/crio.conf.d/99-dpu-sim-cni-plugin-dirs.conf >/dev/null <<'EOF'
+[crio.network]
+plugin_dirs = [
+  "/var/lib/cni/bin",
+  "/opt/cni/bin",
+  "/usr/libexec/cni",
+]
+EOF
+
+# Prevent CRI-O default bridge config from racing as primary CNI.
+if [ -f /etc/cni/net.d/100-crio-bridge.conflist ]; then
+  sudo mv /etc/cni/net.d/100-crio-bridge.conflist /etc/cni/net.d/100-crio-bridge.conflist.disabled
+fi
+
+# Clear stale bridge/IPAM state that can pin cni0 to the wrong CIDR.
+sudo ip link delete cni0 2>/dev/null || true
+sudo rm -rf /var/lib/cni/networks/crio /var/lib/cni/networks/cbr0
+
+if [ "$SRC" = "/usr/libexec/cni" ] && sudo mkdir -p /opt/cni/bin 2>/dev/null; then
+  if sudo sh -c 'touch /opt/cni/bin/.dpu-sim-write-test' 2>/dev/null; then
+    sudo rm -f /opt/cni/bin/.dpu-sim-write-test
+    for plugin in /usr/libexec/cni/*; do
+      [ -e "$plugin" ] || continue
+      sudo ln -snf "$plugin" "/opt/cni/bin/$(basename "$plugin")"
+    done
+  else
+    echo "info: /opt/cni/bin not writable; skipping symlink step" >&2
+  fi
+fi`, 1*time.Minute); err != nil {
+		return fmt.Errorf("failed to ensure CNI plugin paths: %w, stderr: %s", err, stderr)
 	}
 	return nil
 }

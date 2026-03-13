@@ -14,7 +14,17 @@ const MultusManifestURL = "https://raw.githubusercontent.com/k8snetworkplumbingw
 func (m *CNIManager) installMultus() error {
 	log.Debug("Installing Multus CNI...")
 
-	if err := m.k8sClient.ApplyManifestFromURL(MultusManifestURL); err != nil {
+	manifest, err := downloadManifest(MultusManifestURL)
+	if err != nil {
+		return fmt.Errorf("failed to download Multus manifest: %w", err)
+	}
+
+	if m.shouldUseWritableCNIBinDir() {
+		manifest = rewriteCNIBinPath(manifest, writableCNIBinDir)
+		log.Info("Detected bootc/read-only root setup, patching Multus CNI binary path to %s", writableCNIBinDir)
+	}
+
+	if err := m.k8sClient.ApplyManifest(manifest); err != nil {
 		return fmt.Errorf("failed to install Multus: %w", err)
 	}
 

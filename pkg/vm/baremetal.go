@@ -380,9 +380,25 @@ func (m *VMManager) ensureHybridNetworking(node config.BareMetalConfig, firstMas
 		return err
 	}
 
+	routeIface := node.GatewayInterface
+	if routeIface == "" {
+		routeIface = config.K8sNetworkName
+	}
+	if _, _, err := bmExec.ExecuteWithTimeout(fmt.Sprintf("ip link show %s", shellQuote(routeIface)), 15*time.Second); err != nil {
+		if routeIface != config.K8sNetworkName {
+			if _, _, k8sErr := bmExec.ExecuteWithTimeout(fmt.Sprintf("ip link show %s", shellQuote(config.K8sNetworkName)), 15*time.Second); k8sErr == nil {
+				routeIface = config.K8sNetworkName
+			} else {
+				routeIface = ""
+			}
+		} else {
+			routeIface = ""
+		}
+	}
+
 	ifaceArg := ""
-	if node.GatewayInterface != "" {
-		ifaceArg = fmt.Sprintf(" dev %s", shellQuote(node.GatewayInterface))
+	if routeIface != "" {
+		ifaceArg = fmt.Sprintf(" dev %s", shellQuote(routeIface))
 	}
 	bmScript := strings.Builder{}
 	bmScript.WriteString("set -e\n")
@@ -395,7 +411,16 @@ func (m *VMManager) ensureHybridNetworking(node config.BareMetalConfig, firstMas
 	}
 
 	if k8sNet.Gateway != "" {
-		masterScript := fmt.Sprintf("sudo ip route replace %s/32 via %s dev brk8s", shellQuote(node.MgmtIP), shellQuote(k8sNet.Gateway))
+		masterScript := fmt.Sprintf(`set -e
+DEV="brk8s"
+if ! ip link show "$DEV" >/dev/null 2>&1; then
+  DEV="%s"
+fi
+if ip link show "$DEV" >/dev/null 2>&1; then
+  sudo ip route replace %s/32 via %s dev "$DEV"
+else
+  sudo ip route replace %s/32 via %s
+fi`, config.K8sNetworkName, shellQuote(node.MgmtIP), shellQuote(k8sNet.Gateway), shellQuote(node.MgmtIP), shellQuote(k8sNet.Gateway))
 		stdout, stderr, err = firstMasterExec.ExecuteWithTimeout(masterScript, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("failed to add return route on first master for node %s: %w, stdout: %s, stderr: %s", node.Name, err, stdout, stderr)
