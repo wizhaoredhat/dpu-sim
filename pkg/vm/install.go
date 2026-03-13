@@ -83,6 +83,7 @@ func (m *VMManager) setupOVNBrExForCluster(clusterRoleMapping config.ClusterRole
 // setupK8sCluster sets up a single Kubernetes cluster
 func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping config.ClusterRoleMapping) error {
 	k8sMgr := k8s.NewK8sMachineManager(m.config)
+	bareMetalRoleMapping := m.config.GetBareMetalClusterRoleMapping()[clusterName]
 
 	clusterCfg := m.config.GetClusterConfig(clusterName)
 	if clusterCfg == nil {
@@ -93,6 +94,9 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	masterVMs := clusterRoleMapping[config.ClusterRoleMaster]
 	if len(masterVMs) == 0 {
 		return fmt.Errorf("no master nodes found for cluster %s", clusterName)
+	}
+	if len(bareMetalRoleMapping[config.ClusterRoleMaster]) > 0 {
+		return fmt.Errorf("baremetal control-plane nodes are not yet supported for cluster %s", clusterName)
 	}
 
 	cniType := clusterCfg.CNI
@@ -204,6 +208,44 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 
 	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP); err != nil {
 		return fmt.Errorf("failed to install CNI: %w", err)
+	}
+
+	bareMetalWorkers := bareMetalRoleMapping[config.ClusterRoleWorker]
+	if len(bareMetalWorkers) > 0 {
+		log.Info("=== Adopting and joining baremetal worker nodes ===")
+		for _, node := range bareMetalWorkers {
+			workerExec, err := m.ensureBareMetalSSHAccess(node)
+			if err != nil {
+				return fmt.Errorf("failed to establish SSH access to baremetal node %s: %w", node.Name, err)
+			}
+
+			if err := m.maybeApplyBootc(node, workerExec); err != nil {
+				return fmt.Errorf("failed bootc reconcile on baremetal node %s: %w", node.Name, err)
+			}
+
+			// Recreate executor in case bootc rebooted and the previous SSH session is stale.
+			workerExec = m.globalSSHExecutor(node.MgmtIP)
+			if err := workerExec.WaitUntilReady(5 * time.Minute); err != nil {
+				return fmt.Errorf("baremetal node %s not reachable after bootc processing: %w", node.Name, err)
+			}
+
+			if err := m.resetBareMetalNode(node, workerExec); err != nil {
+				return fmt.Errorf("failed to reset baremetal node %s: %w", node.Name, err)
+			}
+
+			if err := k8sMgr.InstallKubernetes(workerExec, node.Name, m.config.Kubernetes.Version); err != nil {
+				return fmt.Errorf("failed to install Kubernetes on baremetal node %s: %w", node.Name, err)
+			}
+			if err := k8sMgr.EnsureOVNBrInt(workerExec); err != nil {
+				return fmt.Errorf("failed to ensure br-int on baremetal node %s: %w", node.Name, err)
+			}
+			if err := m.setKubeletNodeIP(node, workerExec); err != nil {
+				return fmt.Errorf("failed to set kubelet node-ip on baremetal node %s: %w", node.Name, err)
+			}
+			if err := k8sMgr.JoinWorker(workerExec, node.Name, clusterInfo); err != nil {
+				return fmt.Errorf("failed to join baremetal worker node %s: %w", node.Name, err)
+			}
+		}
 	}
 
 	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)
