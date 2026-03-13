@@ -134,8 +134,75 @@ func (c *Config) validateAndSetDefaults() error {
 		}
 	}
 
+	// Validate BareMetal
+	for i, node := range c.BareMetal {
+		if node.Name == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d]: 'name' is required", i))
+		}
+		if node.Type == "" {
+			c.BareMetal[i].Type = HostType
+			node.Type = HostType
+		} else if node.Type != HostType && node.Type != DpuType {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'type' must be '%s' or '%s', got '%s'", i, node.Name, HostType, DpuType, node.Type))
+		}
+		if node.K8sCluster == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'k8s_cluster' is required", i, node.Name))
+		}
+		if node.K8sRole == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'k8s_role' is required", i, node.Name))
+		}
+		if node.MgmtIP == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'mgmt_ip' is required", i, node.Name))
+		}
+		if node.NodeIP == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'node_ip' is required", i, node.Name))
+		}
+		if node.Type == DpuType && node.Host == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'host' is required for type '%s'", i, node.Name, DpuType))
+		}
+
+		if node.BootstrapSSH != nil {
+			if node.BootstrapSSH.User == "" {
+				c.BareMetal[i].BootstrapSSH.User = c.SSH.User
+			}
+			if node.BootstrapSSH.KeyPath != "" {
+				expanded, err := expandTilde(node.BootstrapSSH.KeyPath)
+				if err != nil {
+					errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootstrap_ssh.key_path expand failed: %v", i, node.Name, err))
+				} else {
+					c.BareMetal[i].BootstrapSSH.KeyPath = expanded
+				}
+			}
+			if node.BootstrapSSH.KeyPath == "" && node.BootstrapSSH.Password == "" {
+				errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootstrap_ssh requires one of 'key_path' or 'password'", i, node.Name))
+			}
+		}
+
+		if node.Bootc != nil {
+			if node.Bootc.Enabled {
+				strategy := node.Bootc.Strategy
+				if strategy == "" {
+					strategy = "switch"
+					c.BareMetal[i].Bootc.Strategy = strategy
+				}
+				if strategy != "switch" && strategy != "upgrade" {
+					errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootc.strategy must be 'switch' or 'upgrade'", i, node.Name))
+				}
+				if strategy == "switch" && node.Bootc.ImageRef == "" {
+					errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootc.image_ref is required when bootc.strategy is 'switch'", i, node.Name))
+				}
+				if node.Bootc.Transport == "" {
+					c.BareMetal[i].Bootc.Transport = "registry"
+				}
+				if node.Bootc.SoftReboot != "" && node.Bootc.SoftReboot != "auto" && node.Bootc.SoftReboot != "required" {
+					errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootc.soft_reboot must be 'auto' or 'required'", i, node.Name))
+				}
+			}
+		}
+	}
+
 	// Validate operating system (required for VM mode)
-	if len(c.VMs) > 0 {
+	if len(c.VMs) > 0 || len(c.BareMetal) > 0 {
 		if c.OperatingSystem.ImageURL == "" && c.OperatingSystem.ImageRef == "" {
 			errors = append(errors, "VMs are defined, operating_system: one of 'image_url' or 'image_ref' is required")
 		}
@@ -254,11 +321,21 @@ func (c *Config) validateAndSetDefaults() error {
 				hostNames[vm.Name] = true
 			}
 		}
+		for _, node := range c.BareMetal {
+			if node.Type == HostType {
+				hostNames[node.Name] = true
+			}
+		}
 		for i, vm := range c.VMs {
 			if vm.Type == DpuType && vm.Host != "" {
 				if !hostNames[vm.Host] {
 					errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'host' references non-existent host '%s'", i, vm.Name, vm.Host))
 				}
+			}
+		}
+		for i, node := range c.BareMetal {
+			if node.Type == DpuType && node.Host != "" && !hostNames[node.Host] {
+				errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'host' references non-existent host '%s'", i, node.Name, node.Host))
 			}
 		}
 	}
@@ -272,7 +349,7 @@ func (c *Config) validateAndSetDefaults() error {
 
 // GetDeploymentMode determines the deployment mode based on configuration
 func (c *Config) GetDeploymentMode() (string, error) {
-	hasVMs := len(c.VMs) > 0
+	hasVMs := len(c.VMs) > 0 || len(c.BareMetal) > 0
 	hasKind := c.Kind != nil && len(c.Kind.Nodes) > 0
 
 	if hasKind && hasVMs {
@@ -351,6 +428,24 @@ func (c *Config) GetClusterRoleMapping() map[string]ClusterRoleMapping {
 		}
 
 		result[clusterName][role] = append(result[clusterName][role], vm)
+	}
+
+	return result
+}
+
+// GetBareMetalClusterRoleMapping returns a mapping of cluster names to roles and their baremetal nodes.
+func (c *Config) GetBareMetalClusterRoleMapping() map[string]BareMetalClusterRoleMapping {
+	result := make(map[string]BareMetalClusterRoleMapping)
+
+	for _, node := range c.BareMetal {
+		clusterName := node.K8sCluster
+		role := ClusterRole(node.K8sRole)
+
+		if _, ok := result[clusterName]; !ok {
+			result[clusterName] = make(BareMetalClusterRoleMapping)
+		}
+
+		result[clusterName][role] = append(result[clusterName][role], node)
 	}
 
 	return result
