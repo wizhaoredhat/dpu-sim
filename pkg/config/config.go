@@ -202,7 +202,7 @@ func (c *Config) validateAndSetDefaults() error {
 	}
 
 	// Validate operating system (required for VM mode)
-	if len(c.VMs) > 0 || len(c.BareMetal) > 0 {
+	if len(c.VMs) > 0 {
 		if c.OperatingSystem.ImageURL == "" && c.OperatingSystem.ImageRef == "" {
 			errors = append(errors, "VMs are defined, operating_system: one of 'image_url' or 'image_ref' is required")
 		}
