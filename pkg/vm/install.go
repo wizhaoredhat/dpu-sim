@@ -2,6 +2,8 @@ package vm
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/cni"
@@ -48,6 +50,36 @@ func (m *VMManager) InstallKubernetes(vmName string) error {
 		}
 	}
 	return nil
+}
+
+func kubeJoinEndpoint(joinCommand string) (string, error) {
+	parts := strings.Fields(strings.TrimSpace(joinCommand))
+	if len(parts) < 3 || parts[0] != "kubeadm" || parts[1] != "join" {
+		return "", fmt.Errorf("unexpected kubeadm join command format")
+	}
+	return parts[2], nil
+}
+
+func rewriteKubeJoinEndpoint(joinCommand, endpoint string) (string, error) {
+	parts := strings.Fields(strings.TrimSpace(joinCommand))
+	if len(parts) < 3 || parts[0] != "kubeadm" || parts[1] != "join" {
+		return "", fmt.Errorf("unexpected kubeadm join command format")
+	}
+	parts[2] = endpoint
+	return strings.Join(parts, " "), nil
+}
+
+func endpointReachable(exec platform.CommandExecutor, endpoint string) bool {
+	host, port, ok := strings.Cut(endpoint, ":")
+	if !ok || host == "" || port == "" {
+		return false
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return false
+	}
+	checkCmd := fmt.Sprintf("timeout 4 bash -lc \"cat < /dev/null > /dev/tcp/%s/%s\"", host, port)
+	_, _, err := exec.ExecuteWithTimeout(checkCmd, 8*time.Second)
+	return err == nil
 }
 
 // setupOVNBrExForCluster sets up OVN br-ex on all VMs in the cluster
@@ -144,7 +176,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	firstMasterExec := platform.NewSSHExecutor(&m.config.SSH, firstMasterMgmtIP)
 
 	log.Info("\n=== Initializing first control plane node: %s ===", firstMaster.Name)
-	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMasterExec, firstMaster.Name, firstMasterK8sIP, podCIDR, serviceCIDR)
+	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMasterExec, firstMaster.Name, firstMasterK8sIP, podCIDR, serviceCIDR, fmt.Sprintf("%s:6443", firstMasterMgmtIP), []string{firstMasterMgmtIP})
 	if err != nil {
 		return fmt.Errorf("failed to initialize control plane on %s: %w", firstMaster.Name, err)
 	}
@@ -199,6 +231,12 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	bareMetalWorkers := bareMetalRoleMapping[config.ClusterRoleWorker]
 	if len(bareMetalWorkers) > 0 {
 		log.Info("=== Adopting and joining baremetal worker nodes ===")
+		defaultJoinEndpoint, err := kubeJoinEndpoint(clusterInfo.WorkerJoinCommand)
+		if err != nil {
+			return fmt.Errorf("failed to parse worker join command endpoint: %w", err)
+		}
+		fallbackJoinEndpoint := fmt.Sprintf("%s:6443", firstMasterMgmtIP)
+
 		for _, node := range bareMetalWorkers {
 			workerExec, err := m.ensureBareMetalSSHAccess(node)
 			if err != nil {
@@ -228,7 +266,30 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 			if err := m.setKubeletNodeIP(node, workerExec); err != nil {
 				return fmt.Errorf("failed to set kubelet node-ip on baremetal node %s: %w", node.Name, err)
 			}
-			if err := k8sMgr.JoinWorker(workerExec, node.Name, clusterInfo); err != nil {
+			if err := m.ensureHybridNetworking(node, firstMasterExec); err != nil {
+				return fmt.Errorf("failed to prepare hybrid networking for baremetal node %s: %w", node.Name, err)
+			}
+
+			bareMetalJoinInfo := *clusterInfo
+			chosenJoinEndpoint := defaultJoinEndpoint
+			if !endpointReachable(workerExec, defaultJoinEndpoint) {
+				if endpointReachable(workerExec, fallbackJoinEndpoint) {
+					chosenJoinEndpoint = fallbackJoinEndpoint
+				} else {
+					return fmt.Errorf("baremetal node %s cannot reach kubeadm join endpoints %s or %s", node.Name, defaultJoinEndpoint, fallbackJoinEndpoint)
+				}
+			}
+
+			if chosenJoinEndpoint != defaultJoinEndpoint {
+				rewrittenJoinCmd, err := rewriteKubeJoinEndpoint(clusterInfo.WorkerJoinCommand, chosenJoinEndpoint)
+				if err != nil {
+					return fmt.Errorf("failed to rewrite worker join command endpoint: %w", err)
+				}
+				bareMetalJoinInfo.WorkerJoinCommand = rewrittenJoinCmd
+				log.Warn("Baremetal node %s cannot reach default join endpoint %s; falling back to %s", node.Name, defaultJoinEndpoint, chosenJoinEndpoint)
+			}
+
+			if err := k8sMgr.JoinWorker(workerExec, node.Name, &bareMetalJoinInfo); err != nil {
 				return fmt.Errorf("failed to join baremetal worker node %s: %w", node.Name, err)
 			}
 		}

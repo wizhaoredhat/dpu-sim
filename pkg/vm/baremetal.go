@@ -11,6 +11,11 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
+type hostEgressInfo struct {
+	iface string
+	ip    string
+}
+
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
@@ -105,8 +110,20 @@ func (m *VMManager) maybeApplyBootc(node config.BareMetalConfig, cmdExec platfor
 	parts := []string{"sudo", "bootc"}
 	if strategy == "upgrade" {
 		parts = append(parts, "upgrade")
+		if node.Bootc.Apply {
+			parts = append(parts, "--apply")
+			if node.Bootc.SoftReboot != "" {
+				parts = append(parts, "--soft-reboot", node.Bootc.SoftReboot)
+			}
+		}
 	} else {
 		parts = append(parts, "switch")
+		if node.Bootc.Apply {
+			parts = append(parts, "--apply")
+			if node.Bootc.SoftReboot != "" {
+				parts = append(parts, "--soft-reboot", node.Bootc.SoftReboot)
+			}
+		}
 		if node.Bootc.Transport != "" {
 			parts = append(parts, "--transport", node.Bootc.Transport)
 		}
@@ -118,13 +135,6 @@ func (m *VMManager) maybeApplyBootc(node config.BareMetalConfig, cmdExec platfor
 		}
 		if node.Bootc.ImageRef != "" {
 			parts = append(parts, node.Bootc.ImageRef)
-		}
-	}
-
-	if node.Bootc.Apply {
-		parts = append(parts, "--apply")
-		if node.Bootc.SoftReboot != "" {
-			parts = append(parts, "--soft-reboot", node.Bootc.SoftReboot)
 		}
 	}
 
@@ -240,7 +250,7 @@ func (m *VMManager) setKubeletNodeIP(node config.BareMetalConfig, cmdExec platfo
 	}
 
 	kubeletEnv := "/etc/default/kubelet"
-	if distro.IsRHELLike() || distro.ID == "fedora" {
+	if distro.IsFedoraLike() {
 		kubeletEnv = "/etc/sysconfig/kubelet"
 	}
 
@@ -256,6 +266,140 @@ func (m *VMManager) setKubeletNodeIP(node config.BareMetalConfig, cmdExec platfo
 	stdout, stderr, err := cmdExec.ExecuteWithTimeout(script.String(), 2*time.Minute)
 	if err != nil {
 		return fmt.Errorf("failed to set kubelet node-ip on %s: %w, stdout: %s, stderr: %s", node.Name, err, stdout, stderr)
+	}
+
+	return nil
+}
+
+func (m *VMManager) detectHostEgressTo(ip string) (*hostEgressInfo, error) {
+	local := platform.NewLocalExecutor()
+	cmd := fmt.Sprintf("ip -4 route get %s | awk '{for(i=1;i<=NF;i++){if($i==\"dev\")dev=$(i+1); if($i==\"src\")src=$(i+1)}} END{print dev,src}'", shellQuote(ip))
+	stdout, stderr, err := local.ExecuteWithTimeout(cmd, 30*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect host egress route to %s: %w, stderr: %s", ip, err, stderr)
+	}
+
+	fields := strings.Fields(strings.TrimSpace(stdout))
+	if len(fields) < 2 {
+		return nil, fmt.Errorf("failed to parse host egress route to %s from output %q", ip, stdout)
+	}
+
+	return &hostEgressInfo{iface: fields[0], ip: fields[1]}, nil
+}
+
+func ensureForwardRule(local *platform.LocalExecutor, inIface, outIface, src, dst string) error {
+	script := strings.Builder{}
+	script.WriteString("set -e\n")
+	script.WriteString("sudo iptables -C FORWARD")
+	if inIface != "" {
+		script.WriteString(" -i " + shellQuote(inIface))
+	}
+	if outIface != "" {
+		script.WriteString(" -o " + shellQuote(outIface))
+	}
+	if src != "" {
+		script.WriteString(" -s " + shellQuote(src))
+	}
+	if dst != "" {
+		script.WriteString(" -d " + shellQuote(dst))
+	}
+	script.WriteString(" -j ACCEPT || sudo iptables -I FORWARD 1")
+	if inIface != "" {
+		script.WriteString(" -i " + shellQuote(inIface))
+	}
+	if outIface != "" {
+		script.WriteString(" -o " + shellQuote(outIface))
+	}
+	if src != "" {
+		script.WriteString(" -s " + shellQuote(src))
+	}
+	if dst != "" {
+		script.WriteString(" -d " + shellQuote(dst))
+	}
+	script.WriteString(" -j ACCEPT\n")
+
+	stdout, stderr, err := local.ExecuteWithTimeout(script.String(), 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to ensure FORWARD rule in=%s out=%s src=%s dst=%s: %w, stdout: %s, stderr: %s", inIface, outIface, src, dst, err, stdout, stderr)
+	}
+
+	return nil
+}
+
+func (m *VMManager) ensureHybridNetworking(node config.BareMetalConfig, firstMasterExec platform.CommandExecutor) error {
+	mgmtNet := m.config.GetNetworkByType(config.MgmtNetworkName)
+	k8sNet := m.config.GetNetworkByType(config.K8sNetworkName)
+	if mgmtNet == nil || k8sNet == nil {
+		return fmt.Errorf("missing mgmt/k8s network definitions for baremetal integration")
+	}
+
+	mgmtSubnet := mgmtNet.GetSubnetCIDR()
+	k8sSubnet := k8sNet.GetSubnetCIDR()
+	if mgmtSubnet == "" || k8sSubnet == "" {
+		return fmt.Errorf("failed to derive mgmt/k8s subnet CIDRs from configuration")
+	}
+
+	egress, err := m.detectHostEgressTo(node.MgmtIP)
+	if err != nil {
+		return err
+	}
+
+	local := platform.NewLocalExecutor()
+	if _, _, err := local.ExecuteWithTimeout("sudo sysctl -w net.ipv4.ip_forward=1", 15*time.Second); err != nil {
+		return fmt.Errorf("failed to enable net.ipv4.ip_forward on host: %w", err)
+	}
+
+	if err := ensureForwardRule(local, egress.iface, mgmtNet.BridgeName, "", mgmtSubnet); err != nil {
+		return err
+	}
+	if err := ensureForwardRule(local, mgmtNet.BridgeName, egress.iface, mgmtSubnet, ""); err != nil {
+		return err
+	}
+	if err := ensureForwardRule(local, egress.iface, k8sNet.BridgeName, "", k8sSubnet); err != nil {
+		return err
+	}
+	if err := ensureForwardRule(local, k8sNet.BridgeName, egress.iface, k8sSubnet, ""); err != nil {
+		return err
+	}
+
+	// Also allow explicit host forwarding between this baremetal node and the
+	// cluster k8s subnet regardless of ingress interface naming/topology.
+	// This prevents libvirt/firewalld chains from rejecting packets sourced from
+	// external baremetal subnets (for example 172.22.0.0/16) destined to VM k8s
+	// network addresses (for example 192.168.123.0/24).
+	nodeCIDR := fmt.Sprintf("%s/32", node.MgmtIP)
+	if err := ensureForwardRule(local, "", "", nodeCIDR, k8sSubnet); err != nil {
+		return err
+	}
+	if err := ensureForwardRule(local, "", "", k8sSubnet, nodeCIDR); err != nil {
+		return err
+	}
+
+	bmExec, err := m.ensureBareMetalSSHAccess(node)
+	if err != nil {
+		return err
+	}
+
+	ifaceArg := ""
+	if node.GatewayInterface != "" {
+		ifaceArg = fmt.Sprintf(" dev %s", shellQuote(node.GatewayInterface))
+	}
+	bmScript := strings.Builder{}
+	bmScript.WriteString("set -e\n")
+	bmScript.WriteString(fmt.Sprintf("sudo ip route replace %s via %s%s\n", shellQuote(mgmtSubnet), shellQuote(egress.ip), ifaceArg))
+	bmScript.WriteString(fmt.Sprintf("sudo ip route replace %s via %s%s\n", shellQuote(k8sSubnet), shellQuote(egress.ip), ifaceArg))
+
+	stdout, stderr, err := bmExec.ExecuteWithTimeout(bmScript.String(), 1*time.Minute)
+	if err != nil {
+		return fmt.Errorf("failed to program routes on baremetal node %s: %w, stdout: %s, stderr: %s", node.Name, err, stdout, stderr)
+	}
+
+	if k8sNet.Gateway != "" {
+		masterScript := fmt.Sprintf("sudo ip route replace %s/32 via %s dev brk8s", shellQuote(node.MgmtIP), shellQuote(k8sNet.Gateway))
+		stdout, stderr, err = firstMasterExec.ExecuteWithTimeout(masterScript, 30*time.Second)
+		if err != nil {
+			return fmt.Errorf("failed to add return route on first master for node %s: %w, stdout: %s, stderr: %s", node.Name, err, stdout, stderr)
+		}
 	}
 
 	return nil
