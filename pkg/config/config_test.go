@@ -94,6 +94,14 @@ func TestGetDeploymentMode(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Baremetal mode",
+			config: Config{
+				BareMetal: []BareMetalConfig{{Name: "dh4", Type: HostType, K8sCluster: "cluster-1", K8sRole: string(ClusterRoleWorker), MgmtIP: "172.22.1.4", NodeIP: "172.22.1.4"}},
+			},
+			expected:    VMDeploymentMode,
+			expectError: false,
+		},
+		{
 			name: "Kind mode",
 			config: Config{
 				Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "k"}}},
@@ -351,4 +359,60 @@ func TestValidateOperatingSystemRejectsURLAndRefTogether(t *testing.T) {
 	err := cfg.validateAndSetDefaults()
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "'image_url' and 'image_ref' are mutually exclusive"))
+}
+
+func TestValidateBareMetalConfig(t *testing.T) {
+	cfg := Config{
+		BareMetal: []BareMetalConfig{
+			{
+				Name:       "dh4",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleWorker),
+				MgmtIP:     "172.22.1.4",
+				NodeIP:     "172.22.1.4",
+			},
+		},
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIOVNKubernetes}}},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+}
+
+func TestValidateBareMetalBootcSwitchRequiresImageRef(t *testing.T) {
+	cfg := Config{
+		BareMetal: []BareMetalConfig{
+			{
+				Name:       "dh4",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleWorker),
+				MgmtIP:     "172.22.1.4",
+				NodeIP:     "172.22.1.4",
+				Bootc: &BareMetalBootcConfig{
+					Enabled:  true,
+					Strategy: "switch",
+				},
+			},
+		},
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIOVNKubernetes}}},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bootc.image_ref is required")
+}
+
+func TestGetBareMetalClusterRoleMapping(t *testing.T) {
+	cfg := Config{
+		BareMetal: []BareMetalConfig{
+			{Name: "dh4", Type: HostType, K8sCluster: "cluster-1", K8sRole: string(ClusterRoleWorker), MgmtIP: "172.22.1.4", NodeIP: "172.22.1.4"},
+			{Name: "dh5", Type: HostType, K8sCluster: "cluster-1", K8sRole: string(ClusterRoleWorker), MgmtIP: "172.22.1.5", NodeIP: "172.22.1.5"},
+		},
+	}
+
+	m := cfg.GetBareMetalClusterRoleMapping()
+	require.Contains(t, m, "cluster-1")
+	assert.Len(t, m["cluster-1"][ClusterRoleWorker], 2)
 }

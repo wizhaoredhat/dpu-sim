@@ -36,6 +36,7 @@ const (
 type Config struct {
 	Networks        []NetworkConfig  `yaml:"networks"`
 	VMs             []VMConfig       `yaml:"vms"`
+	BareMetal       []BareMetalConfig `yaml:"baremetal,omitempty"`
 	Kind            *KindConfig      `yaml:"kind,omitempty"`
 	OperatingSystem OSConfig         `yaml:"operating_system"`
 	SSH             SSHConfig        `yaml:"ssh"`
@@ -76,6 +77,34 @@ type NetworkConfig struct {
 	UseOVS     bool   `yaml:"use_ovs,omitempty"`
 	AttachTo   string `yaml:"attach_to,omitempty"`
 	NumPairs   int    `yaml:"num_pairs,omitempty"`
+}
+
+// BareMetalConfig represents a bare metal configuration
+type BareMetalConfig struct {
+	Name             string               `yaml:"name"`
+	Type             string               `yaml:"type,omitempty"`
+	K8sCluster       string               `yaml:"k8s_cluster,omitempty"`
+	K8sRole          string               `yaml:"k8s_role,omitempty"`
+	MgmtIP           string               `yaml:"mgmt_ip,omitempty"`
+	NodeIP           string               `yaml:"node_ip,omitempty"`
+	Host             string               `yaml:"host,omitempty"`
+	GatewayInterface string               `yaml:"gateway_interface,omitempty"`
+	ProtectedIfaces  []string             `yaml:"protected_interfaces,omitempty"`
+	BootstrapSSH     *SSHConfig           `yaml:"bootstrap_ssh,omitempty"`
+	Bootc            *BareMetalBootcConfig `yaml:"bootc,omitempty"`
+}
+
+// BareMetalBootcConfig controls optional bootc reconciliation for adopted nodes.
+type BareMetalBootcConfig struct {
+	Enabled                   bool   `yaml:"enabled,omitempty"`
+	Strategy                  string `yaml:"strategy,omitempty"`
+	ImageRef                  string `yaml:"image_ref,omitempty"`
+	Transport                 string `yaml:"transport,omitempty"`
+	Apply                     bool   `yaml:"apply,omitempty"`
+	SoftReboot                string `yaml:"soft_reboot,omitempty"`
+	Retain                    bool   `yaml:"retain,omitempty"`
+	EnforceContainerSigpolicy bool   `yaml:"enforce_container_sigpolicy,omitempty"`
+	WaitAfterReboot           string `yaml:"wait_after_reboot,omitempty"`
 }
 
 // VMConfig represents a virtual machine configuration
@@ -170,6 +199,9 @@ const (
 
 // ClusterRoleMapping maps roles (master/worker) to their VM configurations
 type ClusterRoleMapping map[ClusterRole][]VMConfig
+
+// BareMetalClusterRoleMapping maps roles (master/worker) to baremetal configurations.
+type BareMetalClusterRoleMapping map[ClusterRole][]BareMetalConfig
 
 // GetSubnetCIDR returns the subnet in CIDR notation (e.g., "192.168.120.0/24")
 // derived from the gateway and subnet mask
