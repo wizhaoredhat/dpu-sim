@@ -91,198 +91,230 @@ func (m *CNIManager) patchCoreDNS(dnsServer string) error {
 	return nil
 }
 
-// runDaemonsetScript runs the OVN-Kubernetes daemonset.sh script to generate manifests
-func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface string) error {
-	daemonsetScript := filepath.Join(ovnkRepoPath, "dist", "images", "daemonset.sh")
+// installOVNKubernetes installs OVN-Kubernetes CNI using Helm charts with
+// the single-node-zone interconnect architecture.
+func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gatewayInterface string) error {
+	clusterCfg := m.config.GetClusterConfig(clusterName)
+	if clusterCfg == nil {
+		return fmt.Errorf("cluster configuration not found for cluster %s", clusterName)
+	}
+	podCIDR := clusterCfg.PodCIDR
+	serviceCIDR := clusterCfg.ServiceCIDR
+	apiServerURL := "https://" + k8sIP + ":6443"
 
-	if _, err := os.Stat(daemonsetScript); os.IsNotExist(err) {
-		return fmt.Errorf("daemonset.sh script not found at %s", daemonsetScript)
+	log.Info("Installing OVN-Kubernetes via Helm: Pod CIDR: %s, Service CIDR: %s, API Server: %s", podCIDR, serviceCIDR, apiServerURL)
+
+	if err := m.patchCoreDNS("8.8.8.8"); err != nil {
+		return fmt.Errorf("failed to patch CoreDNS: %w", err)
 	}
 
-	if err := os.Chmod(daemonsetScript, 0755); err != nil {
-		return fmt.Errorf("failed to make daemonset.sh executable: %w", err)
-	}
+	localExec := platform.NewLocalExecutor()
 
-	args := []string{
-		fmt.Sprintf("--image=%s", ovnImage),
-		fmt.Sprintf("--net-cidr=%s", podCIDR),
-		fmt.Sprintf("--svc-cidr=%s", serviceCIDR),
-		fmt.Sprintf("--k8s-apiserver=%s", apiServerURL),
-		fmt.Sprintf("--gateway-options=--gateway-interface=%s", gatewayInterface),
-		"--image-pull-policy=Always",
-		"--gateway-mode=shared",
-		"--dummy-gateway-bridge=false",
-		"--enable-ipsec=false",
-		"--hybrid-enabled=false",
-		"--disable-snat-multiple-gws=false",
-		"--disable-forwarding=false",
-		"--ovn-encap-port=",
-		"--disable-pkt-mtu-check=false",
-		"--ovn-empty-lb-events=false",
-		"--multicast-enabled=false",
-		"--ovn-master-count=1",
-		"--ovn-unprivileged-mode=no",
-		"--master-loglevel=5",
-		"--node-loglevel=5",
-		"--dbchecker-loglevel=5",
-		"--ovn-loglevel-northd=-vconsole:info -vfile:info",
-		"--ovn-loglevel-nb=-vconsole:info -vfile:info",
-		"--ovn-loglevel-sb=-vconsole:info -vfile:info",
-		"--ovn-loglevel-controller=-vconsole:info",
-		"--ovnkube-libovsdb-client-logfile=",
-		"--ovnkube-config-duration-enable=true",
-		"--admin-network-policy-enable=true",
-		"--egress-ip-enable=true",
-		"--egress-ip-healthcheck-port=9107",
-		"--egress-firewall-enable=true",
-		"--egress-qos-enable=true",
-		"--egress-service-enable=true",
-		"--v4-join-subnet=100.64.0.0/16",
-		"--v6-join-subnet=fd98::/64",
-		"--v4-masquerade-subnet=169.254.0.0/17",
-		"--v6-masquerade-subnet=fd69::/112",
-		"--v4-transit-subnet=100.88.0.0/16",
-		"--v6-transit-subnet=fd97::/64",
-		"--ex-gw-network-interface=",
-		"--multi-network-enable=false",
-		"--network-segmentation-enable=false",
-		"--preconfigured-udn-addresses-enable=false",
-		"--route-advertisements-enable=false",
-		"--advertise-default-network=false",
-		"--advertised-udn-isolation-mode=strict",
-		"--ovnkube-metrics-scale-enable=false",
-		"--compact-mode=false",
-		"--enable-multi-external-gateway=true",
-		"--enable-ovnkube-identity=true",
-		"--enable-persistent-ips=true",
-		"--network-qos-enable=false",
-		"--mtu=1400",
-		"--enable-dnsnameresolver=false",
-		"--enable-observ=false",
-	}
-
-	log.Info("Running daemonset.sh to generate manifests...")
-	cmd := exec.Command(daemonsetScript, args...)
-	cmd.Dir = filepath.Dir(daemonsetScript)
-
-	output, err := cmd.CombinedOutput()
+	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
 	if err != nil {
-		return fmt.Errorf("daemonset.sh failed stdout: %s, stderr: %s", output, err)
+		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
-	log.Info("✓ daemonset.sh completed successfully")
-	log.Debug("daemonset.sh output: %s", output)
+	if err := BuildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
+		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+	}
+
+	ovnImage := DefaultOVNImage
+	regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
+	if regContainer != nil {
+		ovnImage = m.config.GetRegistryImageRef(regContainer.Tag)
+		log.Info("Using local registry image for OVN-Kubernetes Helm deployment: %s", ovnImage)
+	}
+
+	if err := m.labelNodesForSingleNodeZones(); err != nil {
+		return fmt.Errorf("failed to label nodes for zones: %w", err)
+	}
+
+	if err := m.labelOVNMasterNodes(clusterName); err != nil {
+		return fmt.Errorf("failed to label master nodes: %w", err)
+	}
+
+	if err := m.runHelmInstall(ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface); err != nil {
+		return fmt.Errorf("failed to run helm install: %w", err)
+	}
+
+	if err := m.installExternalCRDs(); err != nil {
+		return fmt.Errorf("failed to install external CRDs: %w", err)
+	}
+
+	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
+		log.Warn("Warning: OVN-Kubernetes pods may not be ready: %v", err)
+	} else {
+		log.Info("✓ OVN-Kubernetes pods are ready, installed via Helm successfully!")
+	}
+
+	if err := m.k8sClient.DeleteDaemonSet("kube-system", "kube-proxy"); err != nil {
+		return fmt.Errorf("failed to delete kube-proxy DaemonSet: %w", err)
+	}
+
 	return nil
 }
 
-// applyOVNKubernetesManifests applies the OVN-Kubernetes manifests generated by daemonset.sh
-func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string, clusterName string) error {
-	yamlDir := filepath.Join(ovnPath, "dist", "yaml")
+// runHelmInstall executes `helm install` for OVN-Kubernetes using the
+// single-node-zone values file with configuration overrides. The --set flags
+// mirror the options from ovn-kubernetes/contrib/kind-helm.sh's
+// create_ovn_kubernetes function.
+func (m *CNIManager) runHelmInstall(ovnkRepoPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface string) error {
+	chartPath := filepath.Join(ovnkRepoPath, "helm", "ovn-kubernetes")
+	valuesFile := "values-single-node-zone.yaml"
 
-	// Check if yaml directory exists
-	if _, err := os.Stat(yamlDir); os.IsNotExist(err) {
-		return fmt.Errorf("YAML directory not found at %s", yamlDir)
+	imageRepo, imageTag := splitImageRef(ovnImage)
+
+	args := []string{
+		"install", "ovn-kubernetes", ".",
+		"-f", valuesFile,
+		"--set", fmt.Sprintf("k8sAPIServer=%s", apiServerURL),
+		"--set", fmt.Sprintf("podNetwork=%s", podCIDR),
+		"--set", fmt.Sprintf("serviceNetwork=%s", serviceCIDR),
+		"--set", "mtu=1400",
+		"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
+		"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
+		"--set", "global.image.pullPolicy=Always",
+		"--set", fmt.Sprintf("global.gatewayOpts=--gateway-interface=%s", gatewayInterface),
+		"--set", "global.enableAdminNetworkPolicy=true",
+		"--set", "global.enableEgressIp=true",
+		"--set", "global.egressIpHealthCheckPort=9107",
+		"--set", "global.enableEgressFirewall=true",
+		"--set", "global.enableEgressQos=true",
+		"--set", "global.enableEgressService=true",
+		"--set", "global.enableMultiExternalGateway=true",
+		"--set", "global.enableOvnKubeIdentity=true",
+		"--set", "global.enablePersistentIPs=true",
 	}
 
-	// CRD manifests to apply first
-	crdManifests := []string{
-		"k8s.ovn.org_egressfirewalls.yaml",
-		"k8s.ovn.org_egressips.yaml",
-		"k8s.ovn.org_egressqoses.yaml",
-		"k8s.ovn.org_egressservices.yaml",
-		"k8s.ovn.org_adminpolicybasedexternalroutes.yaml",
-		"k8s.ovn.org_networkqoses.yaml",
-		"k8s.ovn.org_userdefinednetworks.yaml",
-		"k8s.ovn.org_clusteruserdefinednetworks.yaml",
-		"k8s.ovn.org_routeadvertisements.yaml",
-		"k8s.ovn.org_clusternetworkconnects.yaml",
+	if !m.config.NeedsOVSNodeDaemonSet() {
+		args = append(args, "--set", "tags.ovs-node=false")
 	}
 
-	// External CRDs (ANP & BANP)
+	log.Info("Running helm install for OVN-Kubernetes (chart: %s, values: %s)...", chartPath, valuesFile)
+	log.Debug("Helm args: %v", args)
+
+	cmd := exec.Command("helm", args...)
+	cmd.Dir = chartPath
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("helm install failed: %s\n%s", err, string(output))
+	}
+
+	log.Info("✓ Helm install completed successfully")
+	log.Debug("Helm output: %s", string(output))
+	return nil
+}
+
+// labelNodesForSingleNodeZones labels each node with its own zone name for
+// interconnect mode. In single-node-zone IC, every node is its own zone,
+// matching the label_ovn_single_node_zones.
+func (m *CNIManager) labelNodesForSingleNodeZones() error {
+	log.Info("Labeling nodes for single-node-zone interconnect...")
+
+	nodes, err := m.k8sClient.GetNodes()
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	for _, node := range nodes {
+		labels := map[string]string{
+			"k8s.ovn.org/zone-name": node.Name,
+		}
+		if err := m.k8sClient.LabelNode(node.Name, labels); err != nil {
+			return fmt.Errorf("failed to label node %s with zone: %w", node.Name, err)
+		}
+		log.Debug("✓ Labeled node %s with zone %s", node.Name, node.Name)
+	}
+
+	log.Info("✓ All nodes labeled for single-node-zone interconnect")
+	return nil
+}
+
+// installExternalCRDs applies the external ANP and BANP CRDs required by
+// OVN-Kubernetes. These are not bundled in the Helm chart and must be applied
+// separately. Matches install_online_ovn_kubernetes_crds in kind-helm.sh.
+func (m *CNIManager) installExternalCRDs() error {
+	log.Info("Applying external CRD manifests (ANP/BANP)...")
+
 	externalCRDs := []string{
 		"https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_adminnetworkpolicies.yaml",
 		"https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_baselineadminnetworkpolicies.yaml",
 	}
 
-	// Setup and RBAC manifests
-	setupManifests := []string{
-		// ovn-setup.yaml creates the ovn-kubernetes namespace and RBAC resources (no pods are created)
-		"ovn-setup.yaml",
-		// Create all RBAC resources and service accounts
-		"rbac-ovnkube-identity.yaml",
-		"rbac-ovnkube-cluster-manager.yaml",
-		"rbac-ovnkube-master.yaml",
-		"rbac-ovnkube-node.yaml",
-		"rbac-ovnkube-db.yaml",
-	}
-
-	deploymentManifests := []string{
-		// ovnkube-identity.yaml creates the ovnkube-identity deployment which approves pending CSRs
-		"ovnkube-identity.yaml",
-	}
-
-	if m.config.NeedsOVSNodeDaemonSet() {
-		deploymentManifests = append(deploymentManifests, "ovs-node.yaml")
-	}
-	deploymentManifests = append(deploymentManifests, "ovnkube-db.yaml")
-	deploymentManifests = append(deploymentManifests, "ovnkube-master.yaml")
-	deploymentManifests = append(deploymentManifests, "ovnkube-node.yaml")
-
-	log.Info("Applying OVN-Kubernetes CRD manifests...")
-	for _, manifest := range crdManifests {
-		manifestPath := filepath.Join(yamlDir, manifest)
-		content, err := os.ReadFile(manifestPath)
-		if err != nil {
-			return fmt.Errorf("failed to read manifest %s: %w", manifest, err)
-		}
-		if err := m.k8sClient.ApplyManifest(content); err != nil {
-			return fmt.Errorf("failed to apply manifest %s: %w", manifest, err)
-		}
-		log.Debug("✓ Applied CRD manifest %s", manifest)
-	}
-
-	log.Info("Applying external CRD manifests...")
 	for _, url := range externalCRDs {
 		if err := m.k8sClient.ApplyManifestFromURL(url); err != nil {
 			return fmt.Errorf("failed to apply external CRD from %s: %w", url, err)
 		}
+		log.Debug("✓ Applied external CRD from %s", url)
 	}
 
-	// Invalidate discovery cache after applying CRDs so the client can discover new resource types
 	m.k8sClient.InvalidateDiscoveryCache()
+	log.Info("✓ External CRDs applied successfully")
+	return nil
+}
 
-	log.Info("Applying OVN-Kubernetes setup manifests...")
-	for _, manifest := range setupManifests {
-		manifestPath := filepath.Join(yamlDir, manifest)
-		content, err := os.ReadFile(manifestPath)
-		if err != nil {
-			return fmt.Errorf("failed to read manifest %s: %w", manifest, err)
-		}
-		if err := m.k8sClient.ApplyManifest(content); err != nil {
-			return fmt.Errorf("failed to apply manifest %s: %w", manifest, err)
-		}
-		log.Info("✓ Applied setup manifest %s", manifest)
+// redeployOVNKubernetes re-deploys OVN-Kubernetes by running helm upgrade
+// with --reuse-values so the original install configuration is preserved.
+// Only the image is updated to pick up the newly built container.
+func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
+	log.Info("Redeploying OVN-Kubernetes via Helm on cluster %s...", clusterName)
+
+	localExec := platform.NewLocalExecutor()
+
+	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
+	if err != nil {
+		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
-	// Label master nodes for OVN HA
-	if err := m.labelOVNMasterNodes(clusterName); err != nil {
-		return fmt.Errorf("failed to label master nodes: %w", err)
+	chartPath := filepath.Join(ovnKPath, "helm", "ovn-kubernetes")
+
+	ovnImage := DefaultOVNImage
+	regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
+	if regContainer != nil {
+		ovnImage = m.config.GetRegistryImageRef(regContainer.Tag)
+	}
+	imageRepo, imageTag := splitImageRef(ovnImage)
+
+	args := []string{
+		"upgrade", "ovn-kubernetes", ".",
+		"--reuse-values",
+		"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
+		"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
 	}
 
-	log.Info("Applying OVN-Kubernetes deployment manifests...")
-	for _, manifest := range deploymentManifests {
-		manifestPath := filepath.Join(yamlDir, manifest)
-		content, err := os.ReadFile(manifestPath)
-		if err != nil {
-			return fmt.Errorf("failed to read manifest %s: %w", manifest, err)
-		}
-		if err := m.k8sClient.ApplyManifest(content); err != nil {
-			return fmt.Errorf("failed to apply manifest %s: %w", manifest, err)
-		}
-		log.Info("✓ Applied deployment manifest %s", manifest)
+	log.Info("Running helm upgrade for OVN-Kubernetes...")
+	cmd := exec.Command("helm", args...)
+	cmd.Dir = chartPath
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("helm upgrade failed: %s\n%s", err, string(output))
+	}
+
+	log.Info("✓ Helm upgrade completed successfully")
+	log.Debug("Helm upgrade output: %s", string(output))
+
+	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
+		log.Warn("Warning: OVN-Kubernetes pods may not be ready after Helm upgrade: %v", err)
+	} else {
+		log.Info("✓ OVN-Kubernetes pods are ready after Helm redeploy on cluster %s", clusterName)
 	}
 
 	return nil
+}
+
+// splitImageRef splits a container image reference (e.g.
+// "ghcr.io/ovn-kubernetes/ovn-kube-fedora:master") into its repository and tag
+// components. If no tag is present, "latest" is used.
+func splitImageRef(image string) (repo, tag string) {
+	lastColon := strings.LastIndex(image, ":")
+	lastSlash := strings.LastIndex(image, "/")
+	if lastColon > lastSlash && lastColon >= 0 {
+		return image[:lastColon], image[lastColon+1:]
+	}
+	return image, "latest"
 }
 
 // labelOVNMasterNodes labels only the master nodes (from config) for OVN HA deployment
@@ -309,97 +341,6 @@ func (m *CNIManager) labelOVNMasterNodes(clusterName string) error {
 	return nil
 }
 
-// redeployOVNKubernetes re-applies manifests and then deletes pods by label to
-// force recreation
-func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
-	log.Info("Redeploying OVN-Kubernetes on cluster %s...", clusterName)
-
-	localExec := platform.NewLocalExecutor()
-	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
-	if err != nil {
-		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
-	}
-
-	if err := m.applyOVNKubernetesManifests(ovnKPath, clusterName); err != nil {
-		return fmt.Errorf("failed to re-apply OVN-Kubernetes manifests: %w", err)
-	}
-
-	ovnPodLabels := []string{"ovnkube-db", "ovnkube-master", "ovnkube-node", "ovnkube-identity"}
-	for _, name := range ovnPodLabels {
-		if err := m.k8sClient.DeletePodsByLabel("ovn-kubernetes", "name="+name); err != nil {
-			log.Warn("Warning: failed to delete pods with label name=%s: %v", name, err)
-		}
-	}
-
-	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
-		log.Warn("Warning: OVN-Kubernetes pods may not be ready after redeploy: %v", err)
-	} else {
-		log.Info("✓ OVN-Kubernetes pods are ready after redeploy on cluster %s", clusterName)
-	}
-
-	return nil
-}
-
-// installOVNKubernetes installs OVN-Kubernetes CNI using the local source code
-func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gatewayInterface string) error {
-	clusterCfg := m.config.GetClusterConfig(clusterName)
-	if clusterCfg == nil {
-		return fmt.Errorf("cluster configuration not found for cluster %s", clusterName)
-	}
-	podCIDR := clusterCfg.PodCIDR
-	serviceCIDR := clusterCfg.ServiceCIDR
-	apiServerURL := "https://" + k8sIP + ":6443"
-
-	log.Info("For OVN-Kubernetes installation, using Pod CIDR: %s, Service CIDR: %s, API Server URL: %s", podCIDR, serviceCIDR, apiServerURL)
-
-	if err := m.patchCoreDNS("8.8.8.8"); err != nil {
-		return fmt.Errorf("failed to patch CoreDNS: %w", err)
-	}
-
-	localExec := platform.NewLocalExecutor()
-
-	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
-	if err != nil {
-		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
-	}
-
-	// Always build the OVN-Kubernetes image from source.
-	if err := BuildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
-		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
-	}
-
-	// If a local registry is configured for OVN-Kubernetes, use the registry
-	// image reference in daemonset manifests (the image was already built and
-	// pushed by registry.Manager.SetupAll). Otherwise fall back to the
-	// default upstream image.
-	ovnImage := DefaultOVNImage
-	regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
-	if regContainer != nil {
-		ovnImage = m.config.GetRegistryImageRef(regContainer.Tag)
-		log.Info("Using local registry image for OVN-Kubernetes daemonsets: %s", ovnImage)
-	}
-
-	if err := m.runDaemonsetScript(ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface); err != nil {
-		return fmt.Errorf("failed to run daemonset.sh: %w", err)
-	}
-
-	if err := m.applyOVNKubernetesManifests(ovnKPath, clusterName); err != nil {
-		return fmt.Errorf("failed to apply OVN-Kubernetes manifests: %w", err)
-	}
-
-	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
-		log.Warn("Warning: OVN-Kubernetes pods may not be ready: %v", err)
-	} else {
-		log.Info("✓ OVN-Kubernetes pods are ready, installed successfully!")
-	}
-
-	if err := m.k8sClient.DeleteDaemonSet("kube-system", "kube-proxy"); err != nil {
-		return fmt.Errorf("failed to delete kube-proxy DaemonSet: %w", err)
-	}
-
-	return nil
-}
-
 // getProjectRoot returns the root directory of the dpu-sim project
 func getProjectRoot() (string, error) {
 	// Get the directory of the current source file
@@ -422,14 +363,13 @@ func getOVNKubernetesPath() (string, error) {
 	return filepath.Join(projectRoot, "ovn-kubernetes"), nil
 }
 
-// isOVNKubernetesPopulated checks if the ovn-kubernetes directory contains actual content
-// An uninitialized submodule directory exists but is empty
+// isOVNKubernetesPopulated checks if the ovn-kubernetes directory contains actual content.
+// An uninitialized submodule directory exists but is empty.
 func isOVNKubernetesPopulated(cmdExec platform.CommandExecutor, ovnPath string) bool {
-	// Daemonset.sh is a dependency, check for its existence
-	daemonsetScript := filepath.Join(ovnPath, "dist", "images", "daemonset.sh")
-	exists, err := cmdExec.FileExists(daemonsetScript)
+	helmChart := filepath.Join(ovnPath, "helm", "ovn-kubernetes", "Chart.yaml")
+	exists, err := cmdExec.FileExists(helmChart)
 	if err != nil {
-		log.Error("Failed to check if daemonset.sh exists: %v", err)
+		log.Error("Failed to check if Helm chart exists: %v", err)
 		return false
 	}
 	return exists
@@ -518,6 +458,7 @@ func EnsureOVNKubernetesSource(cmdExec platform.CommandExecutor) (string, error)
 	return ovnPath, nil
 }
 
+// BuildOVNKubernetesImage builds the OVN-Kubernetes container image from the local
 // BuildOVNKubernetesImage builds the OVN-Kubernetes container image from the local
 // source code using the Dockerfile.fedora in ovn-kubernetes/dist/images/.
 // imageName specifies the tag for the built image (e.g., "ovn-kube-fedora:latest").
@@ -816,4 +757,291 @@ func resolveGitRef(cmdExec platform.CommandExecutor, repo, ref string) (string, 
 		return ref, nil
 	}
 	return parts[0], nil
+}
+
+// Deprecated: daemonset.sh-based deployment
+//
+// The functions below implement the legacy daemonset.sh manifest-generation
+// approach. They are retained as reference code for anyone who needs to
+// understand or restore the old deployment flow. The primary path now uses
+// Helm charts (see installOVNKubernetes / redeployOVNKubernetes above).
+// ---------------------------------------------------------------------------
+
+// installOVNKubernetesDaemonset installs OVN-Kubernetes CNI by running
+// daemonset.sh to generate YAML manifests and applying them directly.
+//
+// Deprecated: kept as reference. Use installOVNKubernetes (Helm) instead.
+func (m *CNIManager) installOVNKubernetesDaemonset(clusterName string, k8sIP string, gatewayInterface string) error {
+	clusterCfg := m.config.GetClusterConfig(clusterName)
+	if clusterCfg == nil {
+		return fmt.Errorf("cluster configuration not found for cluster %s", clusterName)
+	}
+	podCIDR := clusterCfg.PodCIDR
+	serviceCIDR := clusterCfg.ServiceCIDR
+	apiServerURL := "https://" + k8sIP + ":6443"
+
+	log.Info("For OVN-Kubernetes installation, using Pod CIDR: %s, Service CIDR: %s, API Server URL: %s", podCIDR, serviceCIDR, apiServerURL)
+
+	if err := m.patchCoreDNS("8.8.8.8"); err != nil {
+		return fmt.Errorf("failed to patch CoreDNS: %w", err)
+	}
+
+	localExec := platform.NewLocalExecutor()
+
+	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
+	if err != nil {
+		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
+	}
+
+	if err := BuildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
+		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+	}
+
+	ovnImage := DefaultOVNImage
+	regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
+	if regContainer != nil {
+		ovnImage = m.config.GetRegistryImageRef(regContainer.Tag)
+		log.Info("Using local registry image for OVN-Kubernetes daemonsets: %s", ovnImage)
+	}
+
+	if err := m.runDaemonsetScript(ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface); err != nil {
+		return fmt.Errorf("failed to run daemonset.sh: %w", err)
+	}
+
+	if err := m.applyOVNKubernetesManifests(ovnKPath, clusterName); err != nil {
+		return fmt.Errorf("failed to apply OVN-Kubernetes manifests: %w", err)
+	}
+
+	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
+		log.Warn("Warning: OVN-Kubernetes pods may not be ready: %v", err)
+	} else {
+		log.Info("✓ OVN-Kubernetes pods are ready, installed successfully!")
+	}
+
+	if err := m.k8sClient.DeleteDaemonSet("kube-system", "kube-proxy"); err != nil {
+		return fmt.Errorf("failed to delete kube-proxy DaemonSet: %w", err)
+	}
+
+	return nil
+}
+
+// runDaemonsetScript runs the OVN-Kubernetes daemonset.sh script to generate manifests.
+//
+// Deprecated: kept as reference. The Helm path does not use daemonset.sh.
+func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface string) error {
+	daemonsetScript := filepath.Join(ovnkRepoPath, "dist", "images", "daemonset.sh")
+
+	if _, err := os.Stat(daemonsetScript); os.IsNotExist(err) {
+		return fmt.Errorf("daemonset.sh script not found at %s", daemonsetScript)
+	}
+
+	if err := os.Chmod(daemonsetScript, 0755); err != nil {
+		return fmt.Errorf("failed to make daemonset.sh executable: %w", err)
+	}
+
+	args := []string{
+		fmt.Sprintf("--image=%s", ovnImage),
+		fmt.Sprintf("--net-cidr=%s", podCIDR),
+		fmt.Sprintf("--svc-cidr=%s", serviceCIDR),
+		fmt.Sprintf("--k8s-apiserver=%s", apiServerURL),
+		fmt.Sprintf("--gateway-options=--gateway-interface=%s", gatewayInterface),
+		"--image-pull-policy=Always",
+		"--gateway-mode=shared",
+		"--dummy-gateway-bridge=false",
+		"--enable-ipsec=false",
+		"--hybrid-enabled=false",
+		"--disable-snat-multiple-gws=false",
+		"--disable-forwarding=false",
+		"--ovn-encap-port=",
+		"--disable-pkt-mtu-check=false",
+		"--ovn-empty-lb-events=false",
+		"--multicast-enabled=false",
+		"--ovn-master-count=1",
+		"--ovn-unprivileged-mode=no",
+		"--master-loglevel=5",
+		"--node-loglevel=5",
+		"--dbchecker-loglevel=5",
+		"--ovn-loglevel-northd=-vconsole:info -vfile:info",
+		"--ovn-loglevel-nb=-vconsole:info -vfile:info",
+		"--ovn-loglevel-sb=-vconsole:info -vfile:info",
+		"--ovn-loglevel-controller=-vconsole:info",
+		"--ovnkube-libovsdb-client-logfile=",
+		"--ovnkube-config-duration-enable=true",
+		"--admin-network-policy-enable=true",
+		"--egress-ip-enable=true",
+		"--egress-ip-healthcheck-port=9107",
+		"--egress-firewall-enable=true",
+		"--egress-qos-enable=true",
+		"--egress-service-enable=true",
+		"--v4-join-subnet=100.64.0.0/16",
+		"--v6-join-subnet=fd98::/64",
+		"--v4-masquerade-subnet=169.254.0.0/17",
+		"--v6-masquerade-subnet=fd69::/112",
+		"--v4-transit-subnet=100.88.0.0/16",
+		"--v6-transit-subnet=fd97::/64",
+		"--ex-gw-network-interface=",
+		"--multi-network-enable=false",
+		"--network-segmentation-enable=false",
+		"--preconfigured-udn-addresses-enable=false",
+		"--route-advertisements-enable=false",
+		"--advertise-default-network=false",
+		"--advertised-udn-isolation-mode=strict",
+		"--ovnkube-metrics-scale-enable=false",
+		"--compact-mode=false",
+		"--enable-multi-external-gateway=true",
+		"--enable-ovnkube-identity=true",
+		"--enable-persistent-ips=true",
+		"--network-qos-enable=false",
+		"--mtu=1400",
+		"--enable-dnsnameresolver=false",
+		"--enable-observ=false",
+	}
+
+	log.Info("Running daemonset.sh to generate manifests...")
+	cmd := exec.Command(daemonsetScript, args...)
+	cmd.Dir = filepath.Dir(daemonsetScript)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("daemonset.sh failed stdout: %s, stderr: %s", output, err)
+	}
+
+	log.Info("✓ daemonset.sh completed successfully")
+	log.Debug("daemonset.sh output: %s", output)
+	return nil
+}
+
+// applyOVNKubernetesManifests applies the OVN-Kubernetes manifests generated by daemonset.sh.
+//
+// Deprecated: kept as reference. The Helm path uses helm install instead.
+func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string, clusterName string) error {
+	yamlDir := filepath.Join(ovnPath, "dist", "yaml")
+
+	if _, err := os.Stat(yamlDir); os.IsNotExist(err) {
+		return fmt.Errorf("YAML directory not found at %s", yamlDir)
+	}
+
+	crdManifests := []string{
+		"k8s.ovn.org_egressfirewalls.yaml",
+		"k8s.ovn.org_egressips.yaml",
+		"k8s.ovn.org_egressqoses.yaml",
+		"k8s.ovn.org_egressservices.yaml",
+		"k8s.ovn.org_adminpolicybasedexternalroutes.yaml",
+		"k8s.ovn.org_networkqoses.yaml",
+		"k8s.ovn.org_userdefinednetworks.yaml",
+		"k8s.ovn.org_clusteruserdefinednetworks.yaml",
+		"k8s.ovn.org_routeadvertisements.yaml",
+		"k8s.ovn.org_clusternetworkconnects.yaml",
+	}
+
+	externalCRDs := []string{
+		"https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_adminnetworkpolicies.yaml",
+		"https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_baselineadminnetworkpolicies.yaml",
+	}
+
+	setupManifests := []string{
+		"ovn-setup.yaml",
+		"rbac-ovnkube-identity.yaml",
+		"rbac-ovnkube-cluster-manager.yaml",
+		"rbac-ovnkube-master.yaml",
+		"rbac-ovnkube-node.yaml",
+		"rbac-ovnkube-db.yaml",
+	}
+
+	deploymentManifests := []string{
+		"ovnkube-identity.yaml",
+	}
+
+	if m.config.NeedsOVSNodeDaemonSet() {
+		deploymentManifests = append(deploymentManifests, "ovs-node.yaml")
+	}
+	deploymentManifests = append(deploymentManifests, "ovnkube-db.yaml")
+	deploymentManifests = append(deploymentManifests, "ovnkube-master.yaml")
+	deploymentManifests = append(deploymentManifests, "ovnkube-node.yaml")
+
+	log.Info("Applying OVN-Kubernetes CRD manifests...")
+	for _, manifest := range crdManifests {
+		manifestPath := filepath.Join(yamlDir, manifest)
+		content, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return fmt.Errorf("failed to read manifest %s: %w", manifest, err)
+		}
+		if err := m.k8sClient.ApplyManifest(content); err != nil {
+			return fmt.Errorf("failed to apply manifest %s: %w", manifest, err)
+		}
+		log.Debug("✓ Applied CRD manifest %s", manifest)
+	}
+
+	log.Info("Applying external CRD manifests...")
+	for _, url := range externalCRDs {
+		if err := m.k8sClient.ApplyManifestFromURL(url); err != nil {
+			return fmt.Errorf("failed to apply external CRD from %s: %w", url, err)
+		}
+	}
+
+	m.k8sClient.InvalidateDiscoveryCache()
+
+	log.Info("Applying OVN-Kubernetes setup manifests...")
+	for _, manifest := range setupManifests {
+		manifestPath := filepath.Join(yamlDir, manifest)
+		content, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return fmt.Errorf("failed to read manifest %s: %w", manifest, err)
+		}
+		if err := m.k8sClient.ApplyManifest(content); err != nil {
+			return fmt.Errorf("failed to apply manifest %s: %w", manifest, err)
+		}
+		log.Info("✓ Applied setup manifest %s", manifest)
+	}
+
+	if err := m.labelOVNMasterNodes(clusterName); err != nil {
+		return fmt.Errorf("failed to label master nodes: %w", err)
+	}
+
+	log.Info("Applying OVN-Kubernetes deployment manifests...")
+	for _, manifest := range deploymentManifests {
+		manifestPath := filepath.Join(yamlDir, manifest)
+		content, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return fmt.Errorf("failed to read manifest %s: %w", manifest, err)
+		}
+		if err := m.k8sClient.ApplyManifest(content); err != nil {
+			return fmt.Errorf("failed to apply manifest %s: %w", manifest, err)
+		}
+		log.Info("✓ Applied deployment manifest %s", manifest)
+	}
+
+	return nil
+}
+
+// redeployOVNKubernetesDaemonset re-applies daemonset.sh manifests and deletes
+// pods by label to force recreation.
+//
+// Deprecated: kept as reference. Use redeployOVNKubernetes (Helm) instead.
+func (m *CNIManager) redeployOVNKubernetesDaemonset(clusterName string) error {
+	log.Info("Redeploying OVN-Kubernetes on cluster %s...", clusterName)
+
+	localExec := platform.NewLocalExecutor()
+	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
+	if err != nil {
+		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
+	}
+
+	if err := m.applyOVNKubernetesManifests(ovnKPath, clusterName); err != nil {
+		return fmt.Errorf("failed to re-apply OVN-Kubernetes manifests: %w", err)
+	}
+
+	ovnPodLabels := []string{"ovnkube-db", "ovnkube-master", "ovnkube-node", "ovnkube-identity"}
+	for _, name := range ovnPodLabels {
+		if err := m.k8sClient.DeletePodsByLabel("ovn-kubernetes", "name="+name); err != nil {
+			log.Warn("Warning: failed to delete pods with label name=%s: %v", name, err)
+		}
+	}
+
+	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
+		log.Warn("Warning: OVN-Kubernetes pods may not be ready after redeploy: %v", err)
+	} else {
+		log.Info("✓ OVN-Kubernetes pods are ready after redeploy on cluster %s", clusterName)
+	}
+	return nil
 }
