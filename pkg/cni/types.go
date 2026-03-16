@@ -2,6 +2,7 @@ package cni
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
@@ -38,7 +39,12 @@ func NewCNIManagerWithKubeconfigFile(cfg *config.Config, kubeconfigPath string) 
 		return nil, fmt.Errorf("failed to create Kubernetes client from kubeconfig file: kubeconfig file path is empty")
 	}
 
-	k8sClient, err := k8s.NewClientFromFile(kubeconfigPath)
+	absPath, err := filepath.Abs(kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve kubeconfig path %s: %w", kubeconfigPath, err)
+	}
+
+	k8sClient, err := k8s.NewClientFromFile(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes client from kubeconfig file: %w", err)
 	}
@@ -46,7 +52,7 @@ func NewCNIManagerWithKubeconfigFile(cfg *config.Config, kubeconfigPath string) 
 	return &CNIManager{
 		config:         cfg,
 		k8sClient:      k8sClient,
-		kubeconfigPath: kubeconfigPath,
+		kubeconfigPath: absPath,
 	}, nil
 }
 
@@ -57,12 +63,16 @@ func (m *CNIManager) SetKubeconfigFile(kubeconfigPath string) error {
 	if kubeconfigPath == "" {
 		return fmt.Errorf("kubeconfig file path is empty")
 	}
-	k8sClient, err := k8s.NewClientFromFile(kubeconfigPath)
+	absPath, err := filepath.Abs(kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve kubeconfig path %s: %w", kubeconfigPath, err)
+	}
+	k8sClient, err := k8s.NewClientFromFile(absPath)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes client from kubeconfig file: %w", err)
 	}
 	m.k8sClient = k8sClient
-	m.kubeconfigPath = kubeconfigPath
+	m.kubeconfigPath = absPath
 	return nil
 }
 
