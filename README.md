@@ -484,7 +484,7 @@ When a `registry` section is present, dpu-sim automatically:
 4. **Configures nodes to pull from the registry**:
    - **Kind mode**: Containerd on each node is configured to redirect `localhost:5000` pulls to the registry container on the Docker network
    - **VM mode**: CRI-O on each VM is configured to pull from the host's management network gateway IP (e.g. `192.168.120.1:5000`) over HTTP
-5. **Uses the registry image** in CNI daemonset manifests instead of the upstream image from `ghcr.io`
+5. **Uses the registry image** in CNI Helm manifests instead of the upstream image from `ghcr.io`
 
 #### Rebuilding and Redeploying CNI Images
 
@@ -611,10 +611,41 @@ Deployment mode: vm
 ✓ libvirt-devel is installed
 ✓ virt-install is installed
 ✓ genisoimage is installed
+✓ aarch64-uefi-firmware is installed
 ✓ All dependencies are available
 
 === Cleaning up K8s ===
-✓ Kubeconfig file removed: kubeconfig/cluster-1.kubeconfig
+
+=== Setting up Local Container Registry ===
+Starting local container registry...
+Registry container dpu-sim-registry is already running
+Using cached OVN-Kubernetes image ovn-kube:dpu-sim-a0aee420b71ed553
+Tagging ovn-kube:dpu-sim -> localhost:5000/ovn-kube:dpu-sim
+Pushing localhost:5000/ovn-kube:dpu-sim to local registry...
+Getting image source signatures
+Copying blob b6099ea2ca79 skipped: already exists
+Copying blob a18bb338fdf0 skipped: already exists
+Copying blob e045ad279873 skipped: already exists
+Copying blob 9053dfc32224 skipped: already exists
+Copying blob 4e85d09b008b skipped: already exists
+Copying blob 700ace930faf skipped: already exists
+Copying blob 7ff09adb94dc skipped: already exists
+Copying blob 72794559b97f skipped: already exists
+Copying blob 4193b4f92033 skipped: already exists
+Copying blob ce8da18e86b5 skipped: already exists
+Copying blob f64cb6185bfd skipped: already exists
+Copying blob c68cde450fb6 skipped: already exists
+Copying blob c2711023c9d9 skipped: already exists
+Copying blob 31f89951ebb5 skipped: already exists
+Copying blob 6b42ea3d3704 skipped: already exists
+Copying blob 7edb4289d085 skipped: already exists
+Copying blob 70d34a23c00a skipped: already exists
+Copying blob 81a5ef580ffd skipped: already exists
+Copying blob 494fc9abf297 skipped: already exists
+Copying config 7618d98e77 done   |
+Writing manifest to image destination
+Pushed localhost:5000/ovn-kube:dpu-sim to local registry
+Registry setup complete
 
 ╔═══════════════════════════════════════════════╗
 ║       VM-Based Deployment Workflow            ║
@@ -622,24 +653,136 @@ Deployment mode: vm
 === Cleaning up VMs ===
 ✓ Deleted disk: /var/lib/libvirt/images/master-1.qcow2
 ✓ Deleted cloud-init ISO: /var/lib/libvirt/images/master-1-cloud-init.iso
+✓ UEFI NVRAM for master-1 does not exist, skipping deletion
 ✓ Cleaned up VM: master-1
-✓ Deleted disk: /var/lib/libvirt/images/host-1.qcow2
-✓ Deleted cloud-init ISO: /var/lib/libvirt/images/host-1-cloud-init.iso
-✓ Cleaned up VM: host-1
-✓ Deleted disk: /var/lib/libvirt/images/dpu-1.qcow2
-✓ Deleted cloud-init ISO: /var/lib/libvirt/images/dpu-1-cloud-init.iso
-✓ Cleaned up VM: dpu-1
+✓ Deleted disk: /var/lib/libvirt/images/master-2.qcow2
+✓ Deleted cloud-init ISO: /var/lib/libvirt/images/master-2-cloud-init.iso
+✓ UEFI NVRAM for master-2 does not exist, skipping deletion
+✓ Cleaned up VM: master-2
+✓ Deleted disk: /var/lib/libvirt/images/host-1-1.qcow2
+✓ Deleted cloud-init ISO: /var/lib/libvirt/images/host-1-1-cloud-init.iso
+✓ UEFI NVRAM for host-1-1 does not exist, skipping deletion
+✓ Cleaned up VM: host-1-1
+✓ Deleted disk: /var/lib/libvirt/images/dpu-1-1.qcow2
+✓ Deleted cloud-init ISO: /var/lib/libvirt/images/dpu-1-1-cloud-init.iso
+✓ UEFI NVRAM for dpu-1-1 does not exist, skipping deletion
+✓ Cleaned up VM: dpu-1-1
+✓ Deleted disk: /var/lib/libvirt/images/host-2-1.qcow2
+✓ Deleted cloud-init ISO: /var/lib/libvirt/images/host-2-1-cloud-init.iso
+✓ UEFI NVRAM for host-2-1 does not exist, skipping deletion
+✓ Cleaned up VM: host-2-1
+✓ Deleted disk: /var/lib/libvirt/images/dpu-2-1.qcow2
+✓ Deleted cloud-init ISO: /var/lib/libvirt/images/dpu-2-1-cloud-init.iso
+✓ UEFI NVRAM for dpu-2-1 does not exist, skipping deletion
+✓ Cleaned up VM: dpu-2-1
 === Cleaning up Networks ===
 ✓ Removed network mgmt-network
 ✓ Removed network ovn-network
-✓ Removed host-to-DPU network h2d-host-1-dpu-1 (bridge: h2d-83d76b0d2f2)
+✓ Removed network data-l2-network
+✓ Removed network host-to-dpu-link
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-0 (bridge: h2d-7dd9fa8cc81)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-1 (bridge: h2d-72a38f6e39d)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-2 (bridge: h2d-e146469843c)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-3 (bridge: h2d-55c3625f3c5)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-4 (bridge: h2d-eaee54af833)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-5 (bridge: h2d-f435117044a)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-6 (bridge: h2d-7f9cef517ca)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-7 (bridge: h2d-7250ad47547)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-8 (bridge: h2d-e6421a32fa0)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-9 (bridge: h2d-9f889e5deea)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-10 (bridge: h2d-c74e760f1d7)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-11 (bridge: h2d-ee17a44b384)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-12 (bridge: h2d-115518888ad)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-13 (bridge: h2d-b0a8c670e1e)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-14 (bridge: h2d-60a21b9d47c)
+✓ Removed host-to-DPU network h2d-host-1-1-dpu-1-1-15 (bridge: h2d-b229d56859f)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-0 (bridge: h2d-1adf8a8aaac)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-1 (bridge: h2d-b476efa8ac2)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-2 (bridge: h2d-5e4c942e9e6)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-3 (bridge: h2d-7d8702733f0)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-4 (bridge: h2d-d366284102d)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-5 (bridge: h2d-3fec93e2c83)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-6 (bridge: h2d-003b75ea8eb)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-7 (bridge: h2d-2896f1a79ab)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-8 (bridge: h2d-942f2023422)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-9 (bridge: h2d-e71b414d84b)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-10 (bridge: h2d-0e31d195178)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-11 (bridge: h2d-53b0f14fbd0)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-12 (bridge: h2d-61ee66b294b)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-13 (bridge: h2d-0fb7afedde8)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-14 (bridge: h2d-b2230805515)
+✓ Removed host-to-DPU network h2d-host-2-1-dpu-2-1-15 (bridge: h2d-2abde8ad9d6)
 
 === Deploying VMs ===
 === Creating Networks ===
 ✓ Created network: mgmt-network
 ✓ Created network: ovn-network
-✓ Created OVS bridge: h2d-83d76b0d2f2
-✓ Created host-to-DPU network: h2d-host-1-dpu-1 (bridge: h2d-83d76b0d2f2)
+✓ Created OVS bridge: ovs-data
+✓ Created network: data-l2-network
+✓ Created OVS bridge: h2d-1adf8a8aaac
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-0 (bridge: h2d-1adf8a8aaac)
+✓ Created OVS bridge: h2d-b476efa8ac2
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-1 (bridge: h2d-b476efa8ac2)
+✓ Created OVS bridge: h2d-5e4c942e9e6
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-2 (bridge: h2d-5e4c942e9e6)
+✓ Created OVS bridge: h2d-7d8702733f0
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-3 (bridge: h2d-7d8702733f0)
+✓ Created OVS bridge: h2d-d366284102d
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-4 (bridge: h2d-d366284102d)
+✓ Created OVS bridge: h2d-3fec93e2c83
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-5 (bridge: h2d-3fec93e2c83)
+✓ Created OVS bridge: h2d-003b75ea8eb
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-6 (bridge: h2d-003b75ea8eb)
+✓ Created OVS bridge: h2d-2896f1a79ab
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-7 (bridge: h2d-2896f1a79ab)
+✓ Created OVS bridge: h2d-942f2023422
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-8 (bridge: h2d-942f2023422)
+✓ Created OVS bridge: h2d-e71b414d84b
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-9 (bridge: h2d-e71b414d84b)
+✓ Created OVS bridge: h2d-0e31d195178
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-10 (bridge: h2d-0e31d195178)
+✓ Created OVS bridge: h2d-53b0f14fbd0
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-11 (bridge: h2d-53b0f14fbd0)
+✓ Created OVS bridge: h2d-61ee66b294b
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-12 (bridge: h2d-61ee66b294b)
+✓ Created OVS bridge: h2d-0fb7afedde8
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-13 (bridge: h2d-0fb7afedde8)
+✓ Created OVS bridge: h2d-b2230805515
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-14 (bridge: h2d-b2230805515)
+✓ Created OVS bridge: h2d-2abde8ad9d6
+✓ Created host-to-DPU network: h2d-host-2-1-dpu-2-1-15 (bridge: h2d-2abde8ad9d6)
+✓ Created OVS bridge: h2d-7dd9fa8cc81
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-0 (bridge: h2d-7dd9fa8cc81)
+✓ Created OVS bridge: h2d-72a38f6e39d
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-1 (bridge: h2d-72a38f6e39d)
+✓ Created OVS bridge: h2d-e146469843c
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-2 (bridge: h2d-e146469843c)
+✓ Created OVS bridge: h2d-55c3625f3c5
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-3 (bridge: h2d-55c3625f3c5)
+✓ Created OVS bridge: h2d-eaee54af833
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-4 (bridge: h2d-eaee54af833)
+✓ Created OVS bridge: h2d-f435117044a
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-5 (bridge: h2d-f435117044a)
+✓ Created OVS bridge: h2d-7f9cef517ca
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-6 (bridge: h2d-7f9cef517ca)
+✓ Created OVS bridge: h2d-7250ad47547
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-7 (bridge: h2d-7250ad47547)
+✓ Created OVS bridge: h2d-e6421a32fa0
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-8 (bridge: h2d-e6421a32fa0)
+✓ Created OVS bridge: h2d-9f889e5deea
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-9 (bridge: h2d-9f889e5deea)
+✓ Created OVS bridge: h2d-c74e760f1d7
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-10 (bridge: h2d-c74e760f1d7)
+✓ Created OVS bridge: h2d-ee17a44b384
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-11 (bridge: h2d-ee17a44b384)
+✓ Created OVS bridge: h2d-115518888ad
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-12 (bridge: h2d-115518888ad)
+✓ Created OVS bridge: h2d-b0a8c670e1e
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-13 (bridge: h2d-b0a8c670e1e)
+✓ Created OVS bridge: h2d-60a21b9d47c
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-14 (bridge: h2d-60a21b9d47c)
+✓ Created OVS bridge: h2d-b229d56859f
+✓ Created host-to-DPU network: h2d-host-1-1-dpu-1-1-15 (bridge: h2d-b229d56859f)
 ✓ All networks created successfully
 === Creating All VMs ===
 === Creating VM: master-1 ===
@@ -647,193 +790,249 @@ Deployment mode: vm
 ✓ Created disk for master-1: /var/lib/libvirt/images/master-1.qcow2
 ✓ Created cloud-init ISO: /var/lib/libvirt/images/master-1-cloud-init.iso
 ✓ Created and started VM: master-1
-=== Creating VM: host-1 ===
+=== Creating VM: master-2 ===
 ✓ Image already exists at /var/lib/libvirt/images/Fedora-x86_64.qcow2, skipping download
-✓ Created disk for host-1: /var/lib/libvirt/images/host-1.qcow2
-✓ Created cloud-init ISO: /var/lib/libvirt/images/host-1-cloud-init.iso
-✓ Created and started VM: host-1
-=== Creating VM: dpu-1 ===
+✓ Created disk for master-2: /var/lib/libvirt/images/master-2.qcow2
+✓ Created cloud-init ISO: /var/lib/libvirt/images/master-2-cloud-init.iso
+✓ Created and started VM: master-2
+=== Creating VM: host-1-1 ===
 ✓ Image already exists at /var/lib/libvirt/images/Fedora-x86_64.qcow2, skipping download
-✓ Created disk for dpu-1: /var/lib/libvirt/images/dpu-1.qcow2
-✓ Created cloud-init ISO: /var/lib/libvirt/images/dpu-1-cloud-init.iso
-✓ Created and started VM: dpu-1
+✓ Created disk for host-1-1: /var/lib/libvirt/images/host-1-1.qcow2
+✓ Created cloud-init ISO: /var/lib/libvirt/images/host-1-1-cloud-init.iso
+✓ Created and started VM: host-1-1
+=== Creating VM: dpu-1-1 ===
+✓ Image already exists at /var/lib/libvirt/images/Fedora-x86_64.qcow2, skipping download
+✓ Created disk for dpu-1-1: /var/lib/libvirt/images/dpu-1-1.qcow2
+✓ Created cloud-init ISO: /var/lib/libvirt/images/dpu-1-1-cloud-init.iso
+✓ Created and started VM: dpu-1-1
+=== Creating VM: host-2-1 ===
+✓ Image already exists at /var/lib/libvirt/images/Fedora-x86_64.qcow2, skipping download
+✓ Created disk for host-2-1: /var/lib/libvirt/images/host-2-1.qcow2
+✓ Created cloud-init ISO: /var/lib/libvirt/images/host-2-1-cloud-init.iso
+✓ Created and started VM: host-2-1
+=== Creating VM: dpu-2-1 ===
+✓ Image already exists at /var/lib/libvirt/images/Fedora-x86_64.qcow2, skipping download
+✓ Created disk for dpu-2-1: /var/lib/libvirt/images/dpu-2-1.qcow2
+✓ Created cloud-init ISO: /var/lib/libvirt/images/dpu-2-1-cloud-init.iso
+✓ Created and started VM: dpu-2-1
 ✓ All VMs created successfully
 
 === Waiting for VMs to boot and get IPs ===
 Waiting for master-1 to get an IP address...
-✓ master-1 IP: 192.168.120.62
+✓ master-1 IP: 192.168.120.51
 Waiting for SSH on master-1...
 ✓ SSH ready on master-1
-Waiting for host-1 to get an IP address...
-✓ host-1 IP: 192.168.120.36
-Waiting for SSH on host-1...
-✓ SSH ready on host-1
-Waiting for dpu-1 to get an IP address...
-✓ dpu-1 IP: 192.168.120.77
-Waiting for SSH on dpu-1...
-✓ SSH ready on dpu-1
+Waiting for master-2 to get an IP address...
+✓ master-2 IP: 192.168.120.24
+Waiting for SSH on master-2...
+✓ SSH ready on master-2
+Waiting for host-1-1 to get an IP address...
+✓ host-1-1 IP: 192.168.120.25
+Waiting for SSH on host-1-1...
+✓ SSH ready on host-1-1
+Waiting for dpu-1-1 to get an IP address...
+✓ dpu-1-1 IP: 192.168.120.94
+Waiting for SSH on dpu-1-1...
+✓ SSH ready on dpu-1-1
+Waiting for host-2-1 to get an IP address...
+✓ host-2-1 IP: 192.168.120.69
+Waiting for SSH on host-2-1...
+✓ SSH ready on host-2-1
+Waiting for dpu-2-1 to get an IP address...
+✓ dpu-2-1 IP: 192.168.120.85
+Waiting for SSH on dpu-2-1...
+✓ SSH ready on dpu-2-1
 
 === Installing Kubernetes and CNI ===
 === Installing Kubernetes on VM-based deployment ===
---- Installing Kubernetes on master-1 (192.168.120.62) ---
-Installing Kubernetes on master-1 (ssh://root@192.168.120.62)...
+--- Installing Kubernetes on master-1 (192.168.120.51) ---
+Installing Kubernetes on master-1 (ssh://root@192.168.120.51)...
 ✓ Hostname set to master-1
 ✓ Detected Linux distribution: fedora 43 (package manager: dnf, architecture: x86_64)
 ✓ Disable firewalld is installed
 Installing missing dependencies: Swap Off, K8s Kernel Modules, crio, openvswitch, NetworkManager-ovs, Kubelet Tools
-Installing Swap Off for fedora on ssh://root@192.168.120.62...
+Installing Swap Off for fedora on ssh://root@192.168.120.51...
 ✓ Swap Off installed
-Installing K8s Kernel Modules for fedora on ssh://root@192.168.120.62...
+Installing K8s Kernel Modules for fedora on ssh://root@192.168.120.51...
 ✓ K8s Kernel Modules installed
-Installing crio for fedora on ssh://root@192.168.120.62...
+Installing crio for fedora on ssh://root@192.168.120.51...
 ✓ crio installed
-Installing openvswitch for fedora on ssh://root@192.168.120.62...
+Installing openvswitch for fedora on ssh://root@192.168.120.51...
 ✓ openvswitch installed
-Installing NetworkManager-ovs for fedora on ssh://root@192.168.120.62...
+Installing NetworkManager-ovs for fedora on ssh://root@192.168.120.51...
 ✓ NetworkManager-ovs installed
-Installing Kubelet Tools for fedora on ssh://root@192.168.120.62...
+Installing Kubelet Tools for fedora on ssh://root@192.168.120.51...
 ✓ Kubelet Tools installed
 ✓ All dependencies are available
 ✓ Kubernetes 1.33 installed on master-1
---- Installing Kubernetes on host-1 (192.168.120.36) ---
-Installing Kubernetes on host-1 (ssh://root@192.168.120.36)...
-✓ Hostname set to host-1
+--- Installing Kubernetes on master-2 (192.168.120.24) ---
+Installing Kubernetes on master-2 (ssh://root@192.168.120.24)...
+✓ Hostname set to master-2
 ✓ Detected Linux distribution: fedora 43 (package manager: dnf, architecture: x86_64)
 ✓ Disable firewalld is installed
 Installing missing dependencies: Swap Off, K8s Kernel Modules, crio, openvswitch, NetworkManager-ovs, Kubelet Tools
-Installing Swap Off for fedora on ssh://root@192.168.120.36...
+Installing Swap Off for fedora on ssh://root@192.168.120.24...
 ✓ Swap Off installed
-Installing K8s Kernel Modules for fedora on ssh://root@192.168.120.36...
+Installing K8s Kernel Modules for fedora on ssh://root@192.168.120.24...
 ✓ K8s Kernel Modules installed
-Installing crio for fedora on ssh://root@192.168.120.36...
+Installing crio for fedora on ssh://root@192.168.120.24...
 ✓ crio installed
-Installing openvswitch for fedora on ssh://root@192.168.120.36...
+Installing openvswitch for fedora on ssh://root@192.168.120.24...
 ✓ openvswitch installed
-Installing NetworkManager-ovs for fedora on ssh://root@192.168.120.36...
+Installing NetworkManager-ovs for fedora on ssh://root@192.168.120.24...
 ✓ NetworkManager-ovs installed
-Installing Kubelet Tools for fedora on ssh://root@192.168.120.36...
+Installing Kubelet Tools for fedora on ssh://root@192.168.120.24...
 ✓ Kubelet Tools installed
 ✓ All dependencies are available
-✓ Kubernetes 1.33 installed on host-1
---- Installing Kubernetes on dpu-1 (192.168.120.77) ---
-Installing Kubernetes on dpu-1 (ssh://root@192.168.120.77)...
-✓ Hostname set to dpu-1
+✓ Kubernetes 1.33 installed on master-2
+--- Installing Kubernetes on host-1-1 (192.168.120.25) ---
+Installing Kubernetes on host-1-1 (ssh://root@192.168.120.25)...
+✓ Hostname set to host-1-1
 ✓ Detected Linux distribution: fedora 43 (package manager: dnf, architecture: x86_64)
 ✓ Disable firewalld is installed
 Installing missing dependencies: Swap Off, K8s Kernel Modules, crio, openvswitch, NetworkManager-ovs, Kubelet Tools
-Installing Swap Off for fedora on ssh://root@192.168.120.77...
+Installing Swap Off for fedora on ssh://root@192.168.120.25...
 ✓ Swap Off installed
-Installing K8s Kernel Modules for fedora on ssh://root@192.168.120.77...
+Installing K8s Kernel Modules for fedora on ssh://root@192.168.120.25...
 ✓ K8s Kernel Modules installed
-Installing crio for fedora on ssh://root@192.168.120.77...
+Installing crio for fedora on ssh://root@192.168.120.25...
 ✓ crio installed
-Installing openvswitch for fedora on ssh://root@192.168.120.77...
+Installing openvswitch for fedora on ssh://root@192.168.120.25...
 ✓ openvswitch installed
-Installing NetworkManager-ovs for fedora on ssh://root@192.168.120.77...
+Installing NetworkManager-ovs for fedora on ssh://root@192.168.120.25...
 ✓ NetworkManager-ovs installed
-Installing Kubelet Tools for fedora on ssh://root@192.168.120.77...
+Installing Kubelet Tools for fedora on ssh://root@192.168.120.25...
 ✓ Kubelet Tools installed
 ✓ All dependencies are available
-✓ Kubernetes 1.33 installed on dpu-1
+✓ Kubernetes 1.33 installed on host-1-1
+--- Installing Kubernetes on dpu-1-1 (192.168.120.94) ---
+Installing Kubernetes on dpu-1-1 (ssh://root@192.168.120.94)...
+✓ Hostname set to dpu-1-1
+✓ Detected Linux distribution: fedora 43 (package manager: dnf, architecture: x86_64)
+✓ Disable firewalld is installed
+Installing missing dependencies: Swap Off, K8s Kernel Modules, crio, openvswitch, NetworkManager-ovs, Kubelet Tools
+Installing Swap Off for fedora on ssh://root@192.168.120.94...
+✓ Swap Off installed
+Installing K8s Kernel Modules for fedora on ssh://root@192.168.120.94...
+✓ K8s Kernel Modules installed
+Installing crio for fedora on ssh://root@192.168.120.94...
+✓ crio installed
+Installing openvswitch for fedora on ssh://root@192.168.120.94...
+✓ openvswitch installed
+Installing NetworkManager-ovs for fedora on ssh://root@192.168.120.94...
+✓ NetworkManager-ovs installed
+Installing Kubelet Tools for fedora on ssh://root@192.168.120.94...
+✓ Kubelet Tools installed
+✓ All dependencies are available
+✓ Kubernetes 1.33 installed on dpu-1-1
+--- Installing Kubernetes on host-2-1 (192.168.120.69) ---
+Installing Kubernetes on host-2-1 (ssh://root@192.168.120.69)...
+✓ Hostname set to host-2-1
+✓ Detected Linux distribution: fedora 43 (package manager: dnf, architecture: x86_64)
+✓ Disable firewalld is installed
+Installing missing dependencies: Swap Off, K8s Kernel Modules, crio, openvswitch, NetworkManager-ovs, Kubelet Tools
+Installing Swap Off for fedora on ssh://root@192.168.120.69...
+✓ Swap Off installed
+Installing K8s Kernel Modules for fedora on ssh://root@192.168.120.69...
+✓ K8s Kernel Modules installed
+Installing crio for fedora on ssh://root@192.168.120.69...
+✓ crio installed
+Installing openvswitch for fedora on ssh://root@192.168.120.69...
+✓ openvswitch installed
+Installing NetworkManager-ovs for fedora on ssh://root@192.168.120.69...
+✓ NetworkManager-ovs installed
+Installing Kubelet Tools for fedora on ssh://root@192.168.120.69...
+✓ Kubelet Tools installed
+✓ All dependencies are available
+✓ Kubernetes 1.33 installed on host-2-1
+--- Installing Kubernetes on dpu-2-1 (192.168.120.85) ---
+Installing Kubernetes on dpu-2-1 (ssh://root@192.168.120.85)...
+✓ Hostname set to dpu-2-1
+✓ Detected Linux distribution: fedora 43 (package manager: dnf, architecture: x86_64)
+✓ Disable firewalld is installed
+Installing missing dependencies: Swap Off, K8s Kernel Modules, crio, openvswitch, NetworkManager-ovs, Kubelet Tools
+Installing Swap Off for fedora on ssh://root@192.168.120.85...
+✓ Swap Off installed
+Installing K8s Kernel Modules for fedora on ssh://root@192.168.120.85...
+✓ K8s Kernel Modules installed
+Installing crio for fedora on ssh://root@192.168.120.85...
+✓ crio installed
+Installing openvswitch for fedora on ssh://root@192.168.120.85...
+✓ openvswitch installed
+Installing NetworkManager-ovs for fedora on ssh://root@192.168.120.85...
+✓ NetworkManager-ovs installed
+Installing Kubelet Tools for fedora on ssh://root@192.168.120.85...
+✓ Kubelet Tools installed
+✓ All dependencies are available
+✓ Kubernetes 1.33 installed on dpu-2-1
 
 === Setting up Kubernetes cluster cluster-1 ===
---- Setting up OVN br-ex on 192.168.120.62 (ssh://root@192.168.120.62) ---
-Mgmt Interface information: Interface: enp1s0 (index: 2)
-  State: UP
-  MAC: 52:54:00:dd:a4:6c
-  MTU: 1500
-  Link Type: ether
-  Flags: [BROADCAST MULTICAST UP LOWER_UP]
-  Addresses:
-    - 192.168.120.62/24 (inet, scope: global)
-    - fe80::5054:ff:fedd:a46c/64 (inet6, scope: link)
-K8s Interface information: Interface: enp2s0 (index: 3)
-  State: UP
-  MAC: 52:54:00:00:01:11
-  MTU: 1500
-  Link Type: ether
-  Flags: [BROADCAST MULTICAST UP LOWER_UP]
-  Addresses:
-    - 192.168.123.11/24 (inet, scope: global)
-    - fe80::5054:ff:fe00:111/64 (inet6, scope: link)
---- Setting up OVN br-ex on 192.168.120.36 (ssh://root@192.168.120.36) ---
-Mgmt Interface information: Interface: enp1s0 (index: 2)
-  State: UP
-  MAC: 52:54:00:54:1c:7b
-  MTU: 1500
-  Link Type: ether
-  Flags: [BROADCAST MULTICAST UP LOWER_UP]
-  Addresses:
-    - 192.168.120.36/24 (inet, scope: global)
-    - fe80::5054:ff:fe54:1c7b/64 (inet6, scope: link)
-K8s Interface information: Interface: enp2s0 (index: 3)
-  State: UP
-  MAC: 52:54:00:00:01:12
-  MTU: 1500
-  Link Type: ether
-  Flags: [BROADCAST MULTICAST UP LOWER_UP]
-  Addresses:
-    - 192.168.123.12/24 (inet, scope: global)
-    - fe80::5054:ff:fe00:112/64 (inet6, scope: link)
---- Setting up OVN br-ex on 192.168.120.77 (ssh://root@192.168.120.77) ---
-Mgmt Interface information: Interface: enp1s0 (index: 2)
-  State: UP
-  MAC: 52:54:00:32:e2:06
-  MTU: 1500
-  Link Type: ether
-  Flags: [BROADCAST MULTICAST UP LOWER_UP]
-  Addresses:
-    - 192.168.120.77/24 (inet, scope: global)
-    - fe80::5054:ff:fe32:e206/64 (inet6, scope: link)
-K8s Interface information: Interface: enp2s0 (index: 3)
-  State: UP
-  MAC: 52:54:00:00:01:13
-  MTU: 1500
-  Link Type: ether
-  Flags: [BROADCAST MULTICAST UP LOWER_UP]
-  Addresses:
-    - 192.168.123.13/24 (inet, scope: global)
-    - fe80::5054:ff:fe00:113/64 (inet6, scope: link)
 
 === Initializing first control plane node: master-1 ===
-Initializing control plane on master-1 (ssh://root@192.168.120.62)...
+Initializing control plane on master-1 (ssh://root@192.168.120.51)...
 K8s IP: 192.168.123.11 Pod CIDR: 10.244.0.0/16, Service CIDR: 10.245.0.0/16
-Setting up kubectl on master-1 (ssh://root@192.168.120.62)...
+Setting up kubectl on master-1 (ssh://root@192.168.120.51)...
 ✓ Control plane initialized on master-1
-Worker join command: kubeadm join 192.168.123.11:6443 --token q9t6nf.78gs3khhyijayi6i --discovery-token-ca-cert-hash sha256:d29e8e5e7071d93ab7cf5766ca0b062139e23fe816a0200cd1bbed11942d02c0
-Control plane join command: kubeadm join 192.168.123.11:6443 --token q9t6nf.78gs3khhyijayi6i --discovery-token-ca-cert-hash sha256:d29e8e5e7071d93ab7cf5766ca0b062139e23fe816a0200cd1bbed11942d02c0 --control-plane --certificate-key cd9798ce677b9122d32117d8d10f71cc2e39f7596887b3215d28b62fb2e0f107
+Worker join command: kubeadm join 192.168.123.11:6443 --token tynsk1.y7yqc67h3nohn38p --discovery-token-ca-cert-hash sha256:2392da0edf79d8cc06c666016800a8923c808bdf7ab2740e910cdf99701bb264
+Control plane join command: kubeadm join 192.168.123.11:6443 --token tynsk1.y7yqc67h3nohn38p --discovery-token-ca-cert-hash sha256:2392da0edf79d8cc06c666016800a8923c808bdf7ab2740e910cdf99701bb264 --control-plane --certificate-key c8dbf7978fb92dc593f10e2ac125443d925e134cc58565fbbbee77ffdac46a0a
 API server endpoint: https://192.168.123.11:6443
 ✓ Kubeconfig saved to: kubeconfig/cluster-1.kubeconfig
 
 === Installing ovn-kubernetes CNI on cluster cluster-1 ===
-For OVN-Kubernetes installation, using Pod CIDR: 10.244.0.0/16, Service CIDR: 10.245.0.0/16, API Server URL: https://192.168.123.11:6443
+Installing OVN-Kubernetes via Helm: Pod CIDR: 10.244.0.0/16, Service CIDR: 10.245.0.0/16, API Server: https://192.168.123.11:6443
 Patching CoreDNS configmap for OVN-Kubernetes compatibility, dns server: 8.8.8.8
 ✓ CoreDNS configmap patched successfully
-Running daemonset.sh to generate manifests...
-✓ daemonset.sh completed successfully
-Applying OVN-Kubernetes CRD manifests...
-Applying external CRD manifests...
-Applying OVN-Kubernetes setup manifests...
-✓ Applied setup manifest ovn-setup.yaml
-✓ Applied setup manifest rbac-ovnkube-identity.yaml
-✓ Applied setup manifest rbac-ovnkube-cluster-manager.yaml
-✓ Applied setup manifest rbac-ovnkube-master.yaml
-✓ Applied setup manifest rbac-ovnkube-node.yaml
-✓ Applied setup manifest rbac-ovnkube-db.yaml
+Using cached OVN-Kubernetes image ovn-kube-fedora:dpu-sim-a0aee420b71ed553
+Using local registry image for OVN-Kubernetes Helm deployment: 192.168.120.1:5000/ovn-kube:dpu-sim
+Labeling nodes for single-node-zone interconnect...
+✓ All nodes labeled for single-node-zone interconnect
 ✓ Master nodes labeled for OVN-Kubernetes HA
-Applying OVN-Kubernetes deployment manifests...
-✓ Applied deployment manifest ovnkube-identity.yaml
-✓ Applied deployment manifest ovnkube-db.yaml
-✓ Applied deployment manifest ovnkube-master.yaml
-✓ Applied deployment manifest ovnkube-node.yaml
+Running helm install for OVN-Kubernetes (chart: /root/dpu-sim/ovn-kubernetes/helm/ovn-kubernetes, values: values-single-node-zone.yaml)...
+✓ Helm install completed successfully
+Applying external CRD manifests (ANP/BANP)...
+✓ External CRDs applied successfully
 Waiting for all pods in namespace: ovn-kubernetes to be ready...
 ✓ All Pods in namespace: ovn-kubernetes are ready
-✓ OVN-Kubernetes pods are ready, installed successfully!
+✓ OVN-Kubernetes pods are ready, installed via Helm successfully!
 ✓ Deleted DaemonSet kube-system/kube-proxy
 === Joining worker nodes ===
-✓ Worker node joined to Kubernetes cluster: host-1
-✓ Worker node joined to Kubernetes cluster: dpu-1
+✓ Worker node joined to Kubernetes cluster: host-1-1
+✓ Worker node joined to Kubernetes cluster: host-2-1
 ✓ Kubernetes cluster cluster-1 setup complete
+
+=== Setting up Kubernetes cluster cluster-2 ===
+
+=== Initializing first control plane node: master-2 ===
+Initializing control plane on master-2 (ssh://root@192.168.120.24)...
+K8s IP: 192.168.123.21 Pod CIDR: 10.246.0.0/16, Service CIDR: 10.247.0.0/16
+Setting up kubectl on master-2 (ssh://root@192.168.120.24)...
+✓ Control plane initialized on master-2
+Worker join command: kubeadm join 192.168.123.21:6443 --token 8767y8.zzkx2knvdjdtp6ju --discovery-token-ca-cert-hash sha256:970fd73cdf8aec7c1200fb11c7633a74c5742bf6dea9cea1b58949dd62e6307e
+Control plane join command: kubeadm join 192.168.123.21:6443 --token 8767y8.zzkx2knvdjdtp6ju --discovery-token-ca-cert-hash sha256:970fd73cdf8aec7c1200fb11c7633a74c5742bf6dea9cea1b58949dd62e6307e --control-plane --certificate-key 5d39589144310897db083c3fe95d12d6c44746cfa578398325ad407811004e2b
+API server endpoint: https://192.168.123.21:6443
+✓ Kubeconfig saved to: kubeconfig/cluster-2.kubeconfig
+
+=== Installing ovn-kubernetes CNI on cluster cluster-2 ===
+Installing OVN-Kubernetes via Helm: Pod CIDR: 10.246.0.0/16, Service CIDR: 10.247.0.0/16, API Server: https://192.168.123.21:6443
+Patching CoreDNS configmap for OVN-Kubernetes compatibility, dns server: 8.8.8.8
+✓ CoreDNS configmap patched successfully
+Using cached OVN-Kubernetes image ovn-kube-fedora:dpu-sim-a0aee420b71ed553
+Using local registry image for OVN-Kubernetes Helm deployment: 192.168.120.1:5000/ovn-kube:dpu-sim
+Labeling nodes for single-node-zone interconnect...
+✓ All nodes labeled for single-node-zone interconnect
+✓ Master nodes labeled for OVN-Kubernetes HA
+Running helm install for OVN-Kubernetes (chart: /root/dpu-sim/ovn-kubernetes/helm/ovn-kubernetes, values: values-single-node-zone.yaml)...
+✓ Helm install completed successfully
+Applying external CRD manifests (ANP/BANP)...
+✓ External CRDs applied successfully
+Waiting for all pods in namespace: ovn-kubernetes to be ready...
+✓ All Pods in namespace: ovn-kubernetes are ready
+✓ OVN-Kubernetes pods are ready, installed via Helm successfully!
+✓ Deleted DaemonSet kube-system/kube-proxy
+=== Joining worker nodes ===
+✓ Worker node joined to Kubernetes cluster: dpu-1-1
+✓ Worker node joined to Kubernetes cluster: dpu-2-1
+✓ Kubernetes cluster cluster-2 setup complete
 
 ╔═══════════════════════════════════════════════╗
 ║         Deployment Completed Successfully!    ║
@@ -849,9 +1048,10 @@ Your DPU simulation environment is ready:
 Useful commands:
   vmctl list                    # List all VMs
   vmctl ssh <vm-name>           # SSH into a VM
-  kubectl --kubeconfig kubeconfig/<cluster>.kubeconfig get nodes
+  kubectl --kubeconfig kubeconfig/cluster-1.kubeconfig get nodes
+  kubectl --kubeconfig kubeconfig/cluster-2.kubeconfig get nodes
 
-Kubeconfig files: kubeconfig
+Kubeconfig directory: kubeconfig
 For more information, see README.md
 ```
 
@@ -891,7 +1091,6 @@ Deployment mode: kind
 === Checking Dependencies ===
 ✓ Detected Linux distribution: rhel 9.6 (package manager: dnf, architecture: x86_64)
 ✓ wget is installed
-
 ✓ pip3 is installed
 ✓ jinjanator is installed
 ✓ git is installed
@@ -902,110 +1101,159 @@ Deployment mode: kind
 ✓ All dependencies are available
 
 === Cleaning up K8s ===
-✓ Kubeconfig file removed: kubeconfig/dpu-sim-kind.kubeconfig
+✓ Kubeconfig file removed: kubeconfig/dpu-sim-dpu-kind.kubeconfig
+✓ Kubeconfig file removed: kubeconfig/dpu-sim-host-kind.kubeconfig
+
+=== Setting up Local Container Registry ===
+Starting local container registry...
+Registry container dpu-sim-registry is already running
+Using cached OVN-Kubernetes image ovn-kube:dpu-sim-d56f4ef8c6196df5
+Tagging ovn-kube:dpu-sim -> localhost:5000/ovn-kube:dpu-sim
+Pushing localhost:5000/ovn-kube:dpu-sim to local registry...
+Getting image source signatures
+Copying blob bd9ddc54bea9 skipped: already exists
+Copying blob 4e85d09b008b skipped: already exists
+Copying blob f4401750440f skipped: already exists
+Copying blob 4b6ea26202b1 skipped: already exists
+Copying blob f3fb97b9254b skipped: already exists
+Copying blob b6099ea2ca79 skipped: already exists
+Copying blob b3b92927a3d1 skipped: already exists
+Copying blob 5c2d07f0c5e8 skipped: already exists
+Copying blob c3ad7b174a88 skipped: already exists
+Copying blob 7dc0f2d3331e skipped: already exists
+Copying blob 6fd44274f445 skipped: already exists
+Copying blob 58ca6ce0a39b skipped: already exists
+Copying blob a2d0252ed857 skipped: already exists
+Copying blob cc577348e02b skipped: already exists
+Copying blob 452dbfba6698 skipped: already exists
+Copying blob 2a28b27abe91 skipped: already exists
+Copying blob 64b4ff24ee9d skipped: already exists
+Copying blob d144dfb53d21 skipped: already exists
+Copying blob 6bef6fc09ddc skipped: already exists
+Copying config 022d0a0f6b done   |
+Writing manifest to image destination
+Pushed localhost:5000/ovn-kube:dpu-sim to local registry
+Registry setup complete
 
 ╔═══════════════════════════════════════════════╗
 ║      Kind-Based Deployment Workflow           ║
 ╚═══════════════════════════════════════════════╝
 
 === Cleaning up existing kind clusters ===
-Deleting Kind cluster: dpu-sim-kind
-✓ Deleted Kind cluster: dpu-sim-kind
+Deleting Kind cluster: dpu-sim-host-kind
+✓ Deleted Kind cluster: dpu-sim-host-kind
+Deleting Kind cluster: dpu-sim-dpu-kind
+✓ Deleted Kind cluster: dpu-sim-dpu-kind
+
+=== Ensuring Kind host prerequisites ===
+✓ Detected Linux distribution: rhel 9.6 (package manager: dnf, architecture: x86_64)
+✓ Inotify Limits is installed
+✓ All dependencies are available
 
 === Deploying Kind clusters ===
 
 === Creating Kind Clusters ===
-Creating Kind cluster: dpu-sim-kind
-✓ Created Kind cluster: dpu-sim-kind
-✓ Kubeconfig saved to: kubeconfig/dpu-sim-kind.kubeconfig
+Creating Kind cluster: dpu-sim-host-kind
+✓ Created Kind cluster: dpu-sim-host-kind
+✓ Kubeconfig saved to: kubeconfig/dpu-sim-host-kind.kubeconfig
+Creating Kind cluster: dpu-sim-dpu-kind
+✓ Created Kind cluster: dpu-sim-dpu-kind
+✓ Kubeconfig saved to: kubeconfig/dpu-sim-dpu-kind.kubeconfig
+Registry IP on kind network: 10.89.0.125
 
-Cluster: dpu-sim-kind
+Cluster: dpu-sim-host-kind
   Status: running
   Nodes:
-    - dpu-sim-kind-control-plane (control-plane) [NotReady]
-    - dpu-sim-kind-worker (worker) [NotReady]
-    - dpu-sim-kind-worker2 (worker) [NotReady]
+    - dpu-sim-host-kind-control-plane (control-plane) [Unknown]
+    - dpu-sim-host-kind-worker2 (worker) [Unknown]
+    - dpu-sim-host-kind-worker (worker) [Unknown]
 ✓ Detected Linux distribution: debian 12 (package manager: apt, architecture: x86_64)
 Installing missing dependencies: IPv6
-Installing IPv6 for debian on docker://dpu-sim-kind-control-plane...
+Installing IPv6 for debian on docker://dpu-sim-host-kind-control-plane...
 ✓ IPv6 installed
 ✓ All dependencies are available
 ✓ Detected Linux distribution: debian 12 (package manager: apt, architecture: x86_64)
 Installing missing dependencies: IPv6
-Installing IPv6 for debian on docker://dpu-sim-kind-worker...
+Installing IPv6 for debian on docker://dpu-sim-host-kind-worker2...
 ✓ IPv6 installed
 ✓ All dependencies are available
 ✓ Detected Linux distribution: debian 12 (package manager: apt, architecture: x86_64)
 Installing missing dependencies: IPv6
-Installing IPv6 for debian on docker://dpu-sim-kind-worker2...
+Installing IPv6 for debian on docker://dpu-sim-host-kind-worker...
 ✓ IPv6 installed
 ✓ All dependencies are available
+
+Cluster: dpu-sim-dpu-kind
+  Status: running
+  Nodes:
+    - dpu-sim-dpu-kind-control-plane (control-plane) [NotReady]
+    - dpu-sim-dpu-kind-worker2 (worker) [NotReady]
+    - dpu-sim-dpu-kind-worker (worker) [NotReady]
+✓ Detected Linux distribution: debian 12 (package manager: apt, architecture: x86_64)
+Installing missing dependencies: IPv6
+Installing IPv6 for debian on docker://dpu-sim-dpu-kind-control-plane...
+✓ IPv6 installed
+✓ All dependencies are available
+✓ Detected Linux distribution: debian 12 (package manager: apt, architecture: x86_64)
+Installing missing dependencies: IPv6
+Installing IPv6 for debian on docker://dpu-sim-dpu-kind-worker2...
+✓ IPv6 installed
+✓ All dependencies are available
+✓ Detected Linux distribution: debian 12 (package manager: apt, architecture: x86_64)
+Installing missing dependencies: IPv6
+Installing IPv6 for debian on docker://dpu-sim-dpu-kind-worker...
+✓ IPv6 installed
+✓ All dependencies are available
+Setting up veth topology for pair 0: dpu-sim-host-kind-worker <-> dpu-sim-dpu-kind-worker (16 data channels)
+Setting up veth topology for pair 1: dpu-sim-host-kind-worker2 <-> dpu-sim-dpu-kind-worker2 (16 data channels)
+✓ Veth topology created for 2 host-DPU pairs (16 data channels each)
 
 === Installing CNI ===
 
 === Installing CNI on Kind clusters ===
 
---- Installing CNI on cluster dpu-sim-kind ---
-Pulling image ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master...
-Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg.
-Trying to pull ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master...
-Getting image source signatures
-Copying blob d153d8a925e7 skipped: already exists
-Copying blob a6951c5915c1 skipped: already exists
-Copying blob face38820b68 skipped: already exists
-Copying blob 6ef53945944f skipped: already exists
-Copying blob fdf401b6ab97 skipped: already exists
-Copying blob f4e66d6497fe skipped: already exists
-Copying blob 5bbdd5d536e2 skipped: already exists
-Copying blob 323f405d2067 skipped: already exists
-Copying blob cf6f6c0342d3 skipped: already exists
-Copying blob a47b6925e710 skipped: already exists
-Copying blob cffe8ba4d37d skipped: already exists
-Copying blob 5316e83967f7 skipped: already exists
-Copying blob 30711b0192a3 skipped: already exists
-Copying blob 4f4fb700ef54 skipped: already exists
-Copying blob c5b5a69d5870 skipped: already exists
-Copying blob 779a2c0f7fcb skipped: already exists
-Copying blob cd14aa180a1b skipped: already exists
-Copying blob 66cab4415f1d skipped: already exists
-Copying blob df11fa02b635 skipped: already exists
-Copying config bf057c168f done   |
-Writing manifest to image destination
-bf057c168f88c40eedaa1dea9966d7d880cfae752595d210642aa22adf9068f3
-✓ Pulled image: ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master
-Loading image ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master into cluster dpu-sim-kind...
-enabling experimental podman provider
-Image: "ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master" with ID "bf057c168f88c40eedaa1dea9966d7d880cfae752595d210642aa22adf9068f3" not yet present on node "dpu-sim-kind-control-plane", loading...
-Image: "ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master" with ID "bf057c168f88c40eedaa1dea9966d7d880cfae752595d210642aa22adf9068f3" not yet present on node "dpu-sim-kind-worker", loading...
-Image: "ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master" with ID "bf057c168f88c40eedaa1dea9966d7d880cfae752595d210642aa22adf9068f3" not yet present on node "dpu-sim-kind-worker2", loading...
-✓ Loaded image: ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master
-Internal API server IP for cluster dpu-sim-kind: 10.89.0.84
+--- Installing CNI on cluster dpu-sim-host-kind ---
+Using local registry image for OVN-Kubernetes (tag: ovn-kube:dpu-sim)
+Internal API server IP for cluster dpu-sim-host-kind: 10.89.0.6
 
-=== Installing ovn-kubernetes CNI on cluster dpu-sim-kind ===
-For OVN-Kubernetes installation, using Pod CIDR: 10.244.0.0/16, Service CIDR: 10.245.0.0/16, API Server URL: https://10.89.0.84:6443
+=== Installing ovn-kubernetes CNI on cluster dpu-sim-host-kind ===
+Installing OVN-Kubernetes via Helm: Pod CIDR: 10.244.0.0/16, Service CIDR: 10.245.0.0/16, API Server: https://10.89.0.6:6443
 Patching CoreDNS configmap for OVN-Kubernetes compatibility, dns server: 8.8.8.8
 ✓ CoreDNS configmap patched successfully
-Running daemonset.sh to generate manifests...
-✓ daemonset.sh completed successfully
-Applying OVN-Kubernetes CRD manifests...
-Applying external CRD manifests...
-Applying OVN-Kubernetes setup manifests...
-✓ Applied setup manifest ovn-setup.yaml
-✓ Applied setup manifest rbac-ovnkube-identity.yaml
-✓ Applied setup manifest rbac-ovnkube-cluster-manager.yaml
-✓ Applied setup manifest rbac-ovnkube-master.yaml
-✓ Applied setup manifest rbac-ovnkube-node.yaml
-✓ Applied setup manifest rbac-ovnkube-db.yaml
+Using cached OVN-Kubernetes image ovn-kube-fedora:dpu-sim-d56f4ef8c6196df5
+Using local registry image for OVN-Kubernetes Helm deployment: localhost:5000/ovn-kube:dpu-sim
+Labeling nodes for single-node-zone interconnect...
+✓ All nodes labeled for single-node-zone interconnect
 ✓ Master nodes labeled for OVN-Kubernetes HA
-Applying OVN-Kubernetes deployment manifests...
-✓ Applied deployment manifest ovnkube-identity.yaml
-✓ Applied deployment manifest ovs-node.yaml
-✓ Applied deployment manifest ovnkube-db.yaml
-✓ Applied deployment manifest ovnkube-master.yaml
-✓ Applied deployment manifest ovnkube-node.yaml
+Running helm install for OVN-Kubernetes (chart: /root/dpu-sim/ovn-kubernetes/helm/ovn-kubernetes, values: values-single-node-zone.yaml)...
+✓ Helm install completed successfully
+Applying external CRD manifests (ANP/BANP)...
+✓ External CRDs applied successfully
 Waiting for all pods in namespace: ovn-kubernetes to be ready...
 ✓ All Pods in namespace: ovn-kubernetes are ready
-✓ OVN-Kubernetes pods are ready, installed successfully!
+✓ OVN-Kubernetes pods are ready, installed via Helm successfully!
+DaemonSet kube-system/kube-proxy does not exist, skipping deletion
+
+--- Installing CNI on cluster dpu-sim-dpu-kind ---
+Using local registry image for OVN-Kubernetes (tag: ovn-kube:dpu-sim)
+Internal API server IP for cluster dpu-sim-dpu-kind: 10.89.0.11
+
+=== Installing ovn-kubernetes CNI on cluster dpu-sim-dpu-kind ===
+Installing OVN-Kubernetes via Helm: Pod CIDR: 10.246.0.0/16, Service CIDR: 10.247.0.0/16, API Server: https://10.89.0.11:6443
+Patching CoreDNS configmap for OVN-Kubernetes compatibility, dns server: 8.8.8.8
+✓ CoreDNS configmap patched successfully
+Using cached OVN-Kubernetes image ovn-kube-fedora:dpu-sim-d56f4ef8c6196df5
+Using local registry image for OVN-Kubernetes Helm deployment: localhost:5000/ovn-kube:dpu-sim
+Labeling nodes for single-node-zone interconnect...
+✓ All nodes labeled for single-node-zone interconnect
+✓ Master nodes labeled for OVN-Kubernetes HA
+Running helm install for OVN-Kubernetes (chart: /root/dpu-sim/ovn-kubernetes/helm/ovn-kubernetes, values: values-single-node-zone.yaml)...
+✓ Helm install completed successfully
+Applying external CRD manifests (ANP/BANP)...
+✓ External CRDs applied successfully
+Waiting for all pods in namespace: ovn-kubernetes to be ready...
+✓ All Pods in namespace: ovn-kubernetes are ready
+✓ OVN-Kubernetes pods are ready, installed via Helm successfully!
 DaemonSet kube-system/kube-proxy does not exist, skipping deletion
 
 ✓ CNI installation complete on Kind clusters
@@ -1022,9 +1270,10 @@ Your DPU simulation environment is ready:
 
 Useful commands:
   kind get clusters             # List all clusters
-  kubectl --kubeconfig kubeconfig/<cluster>.kubeconfig get nodes
+  kubectl --kubeconfig kubeconfig/dpu-sim-host-kind.kubeconfig get nodes
+  kubectl --kubeconfig kubeconfig/dpu-sim-dpu-kind.kubeconfig get nodes
 
-Kubeconfig files: kubeconfig
+Kubeconfig directory: kubeconfig
 For more information, see README.md
 ```
 
@@ -1064,44 +1313,95 @@ kube-system    kube-scheduler-master-1            1/1     Running   0          1
 
 - OVN-Kubernetes and other containers are running, for example:
 ```bash
-$ kubectl get pods -o wide -A
-NAMESPACE        NAME                               READY   STATUS    RESTARTS   AGE     IP               NODE       NOMINATED NODE   READINESS GATES
-kube-system      coredns-674b8bbfcf-c7ccg           1/1     Running   0          2m26s   10.85.0.2        master-1   <none>           <none>
-kube-system      coredns-674b8bbfcf-k2pkk           1/1     Running   0          2m26s   10.85.0.3        master-1   <none>           <none>
-kube-system      etcd-master-1                      1/1     Running   0          2m32s   192.168.120.62   master-1   <none>           <none>
-kube-system      kube-apiserver-master-1            1/1     Running   0          2m32s   192.168.120.62   master-1   <none>           <none>
-kube-system      kube-controller-manager-master-1   1/1     Running   0          2m33s   192.168.120.62   master-1   <none>           <none>
-kube-system      kube-scheduler-master-1            1/1     Running   0          2m32s   192.168.120.62   master-1   <none>           <none>
-ovn-kubernetes   ovnkube-db-69bc9dff88-5lf94        2/2     Running   0          2m9s    192.168.120.62   master-1   <none>           <none>
-ovn-kubernetes   ovnkube-identity-p7pw4             1/1     Running   0          2m10s   192.168.120.62   master-1   <none>           <none>
-ovn-kubernetes   ovnkube-master-84f8dbf89-9m2bn     2/2     Running   0          2m8s    192.168.120.62   master-1   <none>           <none>
-ovn-kubernetes   ovnkube-node-2j8jz                 1/3     Running   0          36s     192.168.120.36   host-1     <none>           <none>
-ovn-kubernetes   ovnkube-node-7n2qp                 3/3     Running   0          2m8s    192.168.120.62   master-1   <none>           <none>
-ovn-kubernetes   ovnkube-node-qbskf                 1/3     Running   0          33s     192.168.120.77   dpu-1      <none>           <none>
+$ export KUBECONFIG=./kubeconfig/cluster-1.kubeconfig
+$ oc get nodes
+NAME       STATUS   ROLES           AGE   VERSION
+host-1-1   Ready    <none>          30m   v1.33.9
+host-2-1   Ready    <none>          30m   v1.33.9
+master-1   Ready    control-plane   31m   v1.33.9
+$ oc get pods -A -o wide
+NAMESPACE        NAME                                     READY   STATUS    RESTARTS   AGE   IP               NODE       NOMINATED NODE   READINESS GATES
+kube-system      coredns-674b8bbfcf-7mqxb                 1/1     Running   0          31m   10.85.0.3        master-1   <none>           <none>
+kube-system      coredns-674b8bbfcf-plbkl                 1/1     Running   0          31m   10.85.0.2        master-1   <none>           <none>
+kube-system      etcd-master-1                            1/1     Running   0          31m   192.168.120.51   master-1   <none>           <none>
+kube-system      kube-apiserver-master-1                  1/1     Running   0          31m   192.168.120.51   master-1   <none>           <none>
+kube-system      kube-controller-manager-master-1         1/1     Running   0          31m   192.168.120.51   master-1   <none>           <none>
+kube-system      kube-scheduler-master-1                  1/1     Running   0          31m   192.168.120.51   master-1   <none>           <none>
+ovn-kubernetes   ovnkube-control-plane-669fb74fd5-cqbnk   1/1     Running   0          31m   192.168.120.51   master-1   <none>           <none>
+ovn-kubernetes   ovnkube-identity-rfhvn                   1/1     Running   0          31m   192.168.120.51   master-1   <none>           <none>
+ovn-kubernetes   ovnkube-node-2m2h8                       6/6     Running   0          30m   192.168.120.69   host-2-1   <none>           <none>
+ovn-kubernetes   ovnkube-node-65qps                       6/6     Running   0          30m   192.168.120.25   host-1-1   <none>           <none>
+ovn-kubernetes   ovnkube-node-xwbrm                       6/6     Running   0          31m   192.168.120.51   master-1   <none>           <none>
+$ export KUBECONFIG=./kubeconfig/cluster-2.kubeconfig
+$ oc get nodes
+NAME       STATUS   ROLES           AGE   VERSION
+dpu-1-1    Ready    <none>          28m   v1.33.9
+dpu-2-1    Ready    <none>          28m   v1.33.9
+master-2   Ready    control-plane   30m   v1.33.9
+$ oc get pods -A -o wide
+NAMESPACE        NAME                                     READY   STATUS    RESTARTS   AGE   IP               NODE       NOMINATED NODE   READINESS GATES
+kube-system      coredns-674b8bbfcf-5s592                 1/1     Running   0          30m   10.85.0.3        master-2   <none>           <none>
+kube-system      coredns-674b8bbfcf-sctlw                 1/1     Running   0          30m   10.85.0.2        master-2   <none>           <none>
+kube-system      etcd-master-2                            1/1     Running   0          30m   192.168.120.24   master-2   <none>           <none>
+kube-system      kube-apiserver-master-2                  1/1     Running   0          30m   192.168.120.24   master-2   <none>           <none>
+kube-system      kube-controller-manager-master-2         1/1     Running   0          30m   192.168.120.24   master-2   <none>           <none>
+kube-system      kube-scheduler-master-2                  1/1     Running   0          30m   192.168.120.24   master-2   <none>           <none>
+ovn-kubernetes   ovnkube-control-plane-669fb74fd5-l6c2c   1/1     Running   0          30m   192.168.120.24   master-2   <none>           <none>
+ovn-kubernetes   ovnkube-identity-894gh                   1/1     Running   0          30m   192.168.120.24   master-2   <none>           <none>
+ovn-kubernetes   ovnkube-node-7vvs2                       6/6     Running   0          28m   192.168.120.85   dpu-2-1    <none>           <none>
+ovn-kubernetes   ovnkube-node-ph2zc                       6/6     Running   0          30m   192.168.120.24   master-2   <none>           <none>
+ovn-kubernetes   ovnkube-node-xcghq                       6/6     Running   0          28m   192.168.120.94   dpu-1-1    <none>           <none>
+
 ```
 
 - On kind with OVN-Kubernetes, it looks like this:
 ```bash
-$ kubectl get pods -A -o wide
-NAMESPACE            NAME                                                 READY   STATUS    RESTARTS   AGE     IP           NODE                         NOMINATED NODE   READINESS GATES
-kube-system          coredns-7d764666f9-5vj9p                             1/1     Running   0          8m43s   10.244.2.4   dpu-sim-kind-worker2         <none>           <none>
-kube-system          coredns-7d764666f9-z8pxf                             1/1     Running   0          8m43s   10.244.2.3   dpu-sim-kind-worker2         <none>           <none>
-kube-system          etcd-dpu-sim-kind-control-plane                      1/1     Running   0          8m50s   10.89.0.84   dpu-sim-kind-control-plane   <none>           <none>
-kube-system          kube-apiserver-dpu-sim-kind-control-plane            1/1     Running   0          8m50s   10.89.0.84   dpu-sim-kind-control-plane   <none>           <none>
-kube-system          kube-controller-manager-dpu-sim-kind-control-plane   1/1     Running   0          8m50s   10.89.0.84   dpu-sim-kind-control-plane   <none>           <none>
-kube-system          kube-scheduler-dpu-sim-kind-control-plane            1/1     Running   0          8m50s   10.89.0.84   dpu-sim-kind-control-plane   <none>           <none>
-local-path-storage   local-path-provisioner-67b8995b4b-w27g7              1/1     Running   0          8m43s   10.244.2.5   dpu-sim-kind-worker2         <none>           <none>
-ovn-kubernetes       ovnkube-db-74b65f65b9-sfmg6                          2/2     Running   0          7m57s   10.89.0.85   dpu-sim-kind-worker          <none>           <none>
-ovn-kubernetes       ovnkube-identity-76bmx                               1/1     Running   0          7m58s   10.89.0.83   dpu-sim-kind-worker2         <none>           <none>
-ovn-kubernetes       ovnkube-identity-hldd5                               1/1     Running   0          7m58s   10.89.0.85   dpu-sim-kind-worker          <none>           <none>
-ovn-kubernetes       ovnkube-identity-qd6bg                               1/1     Running   0          7m58s   10.89.0.84   dpu-sim-kind-control-plane   <none>           <none>
-ovn-kubernetes       ovnkube-master-7f6dd4ffcc-dpmhs                      2/2     Running   0          7m57s   10.89.0.83   dpu-sim-kind-worker2         <none>           <none>
-ovn-kubernetes       ovnkube-node-5g558                                   3/3     Running   0          7m56s   10.89.0.84   dpu-sim-kind-control-plane   <none>           <none>
-ovn-kubernetes       ovnkube-node-rvk5q                                   3/3     Running   0          7m56s   10.89.0.83   dpu-sim-kind-worker2         <none>           <none>
-ovn-kubernetes       ovnkube-node-xp9rd                                   3/3     Running   0          7m56s   10.89.0.85   dpu-sim-kind-worker          <none>           <none>
-ovn-kubernetes       ovs-node-9l4sm                                       1/1     Running   0          7m58s   10.89.0.85   dpu-sim-kind-worker          <none>           <none>
-ovn-kubernetes       ovs-node-vmv8f                                       1/1     Running   0          7m58s   10.89.0.83   dpu-sim-kind-worker2         <none>           <none>
-ovn-kubernetes       ovs-node-zjvrq                                       1/1     Running   0          7m58s   10.89.0.84   dpu-sim-kind-control-plane   <none>           <none>
+$ export KUBECONFIG=./kubeconfig/dpu-sim-host-kind.kubeconfig
+$ oc get nodes
+NAME                              STATUS   ROLES           AGE   VERSION
+dpu-sim-host-kind-control-plane   Ready    control-plane   39m   v1.35.0
+dpu-sim-host-kind-worker          Ready    <none>          39m   v1.35.0
+dpu-sim-host-kind-worker2         Ready    <none>          39m   v1.35.0
+$ oc get pods -A -o wide
+NAMESPACE            NAME                                                      READY   STATUS    RESTARTS   AGE   IP           NODE                              NOMINATED NODE   READINESS GATES
+kube-system          coredns-7d764666f9-89kdk                                  1/1     Running   0          39m   10.244.2.4   dpu-sim-host-kind-worker          <none>           <none>
+kube-system          coredns-7d764666f9-w4vb7                                  1/1     Running   0          39m   10.244.2.3   dpu-sim-host-kind-worker          <none>           <none>
+kube-system          etcd-dpu-sim-host-kind-control-plane                      1/1     Running   0          39m   10.89.0.6    dpu-sim-host-kind-control-plane   <none>           <none>
+kube-system          kube-apiserver-dpu-sim-host-kind-control-plane            1/1     Running   0          39m   10.89.0.6    dpu-sim-host-kind-control-plane   <none>           <none>
+kube-system          kube-controller-manager-dpu-sim-host-kind-control-plane   1/1     Running   0          39m   10.89.0.6    dpu-sim-host-kind-control-plane   <none>           <none>
+kube-system          kube-scheduler-dpu-sim-host-kind-control-plane            1/1     Running   0          39m   10.89.0.6    dpu-sim-host-kind-control-plane   <none>           <none>
+local-path-storage   local-path-provisioner-67b8995b4b-kq54q                   1/1     Running   0          39m   10.244.2.5   dpu-sim-host-kind-worker          <none>           <none>
+ovn-kubernetes       ovnkube-control-plane-699dfd94-rrd25                      1/1     Running   0          38m   10.89.0.6    dpu-sim-host-kind-control-plane   <none>           <none>
+ovn-kubernetes       ovnkube-identity-x4xsq                                    1/1     Running   0          38m   10.89.0.6    dpu-sim-host-kind-control-plane   <none>           <none>
+ovn-kubernetes       ovnkube-node-8c5g2                                        6/6     Running   0          38m   10.89.0.7    dpu-sim-host-kind-worker2         <none>           <none>
+ovn-kubernetes       ovnkube-node-pzlvm                                        6/6     Running   0          38m   10.89.0.8    dpu-sim-host-kind-worker          <none>           <none>
+ovn-kubernetes       ovnkube-node-qmh9z                                        6/6     Running   0          38m   10.89.0.6    dpu-sim-host-kind-control-plane   <none>           <none>
+ovn-kubernetes       ovs-node-bb2j5                                            1/1     Running   0          38m   10.89.0.6    dpu-sim-host-kind-control-plane   <none>           <none>
+ovn-kubernetes       ovs-node-lsssr                                            1/1     Running   0          38m   10.89.0.7    dpu-sim-host-kind-worker2         <none>           <none>
+ovn-kubernetes       ovs-node-xcghl                                            1/1     Running   0          38m   10.89.0.8    dpu-sim-host-kind-worker          <none>           <none>
+$ export KUBECONFIG=./kubeconfig/dpu-sim-dpu-kind.kubeconfig
+$ oc get nodes
+NAME                             STATUS   ROLES           AGE   VERSION
+dpu-sim-dpu-kind-control-plane   Ready    control-plane   38m   v1.35.0
+dpu-sim-dpu-kind-worker          Ready    <none>          38m   v1.35.0
+dpu-sim-dpu-kind-worker2         Ready    <none>          38m   v1.35.0
+$ oc get pods -A -o wide
+NAMESPACE            NAME                                                     READY   STATUS    RESTARTS   AGE   IP           NODE                             NOMINATED NODE   READINESS GATES
+kube-system          coredns-7d764666f9-2c4ml                                 1/1     Running   0          38m   10.246.1.5   dpu-sim-dpu-kind-worker          <none>           <none>
+kube-system          coredns-7d764666f9-8g8jn                                 1/1     Running   0          38m   10.246.1.3   dpu-sim-dpu-kind-worker          <none>           <none>
+kube-system          etcd-dpu-sim-dpu-kind-control-plane                      1/1     Running   0          38m   10.89.0.11   dpu-sim-dpu-kind-control-plane   <none>           <none>
+kube-system          kube-apiserver-dpu-sim-dpu-kind-control-plane            1/1     Running   0          38m   10.89.0.11   dpu-sim-dpu-kind-control-plane   <none>           <none>
+kube-system          kube-controller-manager-dpu-sim-dpu-kind-control-plane   1/1     Running   0          38m   10.89.0.11   dpu-sim-dpu-kind-control-plane   <none>           <none>
+kube-system          kube-scheduler-dpu-sim-dpu-kind-control-plane            1/1     Running   0          38m   10.89.0.11   dpu-sim-dpu-kind-control-plane   <none>           <none>
+local-path-storage   local-path-provisioner-67b8995b4b-67phd                  1/1     Running   0          38m   10.246.1.4   dpu-sim-dpu-kind-worker          <none>           <none>
+ovn-kubernetes       ovnkube-control-plane-699dfd94-j49km                     1/1     Running   0          36m   10.89.0.11   dpu-sim-dpu-kind-control-plane   <none>           <none>
+ovn-kubernetes       ovnkube-identity-ktjb8                                   1/1     Running   0          36m   10.89.0.11   dpu-sim-dpu-kind-control-plane   <none>           <none>
+ovn-kubernetes       ovnkube-node-pw7nn                                       6/6     Running   0          36m   10.89.0.9    dpu-sim-dpu-kind-worker2         <none>           <none>
+ovn-kubernetes       ovnkube-node-s75s7                                       6/6     Running   0          36m   10.89.0.10   dpu-sim-dpu-kind-worker          <none>           <none>
+ovn-kubernetes       ovnkube-node-z9bbl                                       6/6     Running   0          36m   10.89.0.11   dpu-sim-dpu-kind-control-plane   <none>           <none>
+ovn-kubernetes       ovs-node-bzkkt                                           1/1     Running   0          36m   10.89.0.11   dpu-sim-dpu-kind-control-plane   <none>           <none>
+ovn-kubernetes       ovs-node-mzmkz                                           1/1     Running   0          36m   10.89.0.10   dpu-sim-dpu-kind-worker          <none>           <none>
+ovn-kubernetes       ovs-node-xzf5h                                           1/1     Running   0          36m   10.89.0.9    dpu-sim-dpu-kind-worker2         <none>           <none>
 ```
 
 #### Kuberenetes Use Cases with DPU Simulation
@@ -1394,9 +1694,12 @@ Wait 1-2 minutes for VMs to boot. Check VM status:
 $ ./bin/vmctl list
 VM Name              State           IP Address      vCPUs    Memory
 --------------------------------------------------------------------------------
-master-1             Running         192.168.120.74  2        4096MB
-host-1               Running         192.168.120.66  2        2048MB
-dpu-1                Running         192.168.120.69  2        2048MB
+master-1             Running         192.168.120.51  2        4096MB
+master-2             Running         192.168.120.24  2        4096MB
+host-1-1             Running         192.168.120.25  2        2048MB
+dpu-1-1              Running         192.168.120.94  2        2048MB
+host-2-1             Running         192.168.120.69  2        2048MB
+dpu-2-1              Running         192.168.120.85  2        2048MB
 ```
 
 ### Cannot connect via SSH
@@ -1626,7 +1929,7 @@ sudo ovs-vsctl add-port br0 eth1
                        ▼                          │              │                    │
            ┌────────────────────────┐             │              └─────────┬──────────┘
            │ cniMgr.InstallCNI()    │             │                        │
-           │ - Apply manifests      │             │                        ▼
+           │ - Helm Install         │             │                        ▼
            │ - Wait for pods ready  │             │            ┌────────────────────────┐
            │ - Delete kube-proxy    │             │            │ GetInternalAPIServerIP │
            │   (if OVN-K8s)         │             │            │ (docker inspect)       │
@@ -1635,7 +1938,7 @@ sudo ovs-vsctl add-port br0 eth1
            ┌────────────────────────┐             │                        ▼
            │ Join other masters &   │             │            ┌────────────────────────┐
            │ workers via kubeadm    │             │            │ cniMgr.InstallCNI()    │
-           └───────────┬────────────┘             │            │ - Apply manifests      │
+           └───────────┬────────────┘             │            │ - Helm Install         │
                        │                          │            │ - Wait for pods ready  │
                        │                          │            │ - Delete kube-proxy    │
                        │                          │            │   (if OVN-K8s)         │
