@@ -176,7 +176,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	firstMasterExec := platform.NewSSHExecutor(&m.config.SSH, firstMasterMgmtIP)
 
 	log.Info("\n=== Initializing first control plane node: %s ===", firstMaster.Name)
-	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMasterExec, firstMaster.Name, firstMasterK8sIP, podCIDR, serviceCIDR, fmt.Sprintf("%s:6443", firstMasterMgmtIP), []string{firstMasterMgmtIP})
+	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMasterExec, firstMaster.Name, firstMasterMgmtIP, podCIDR, serviceCIDR, fmt.Sprintf("%s:6443", firstMasterMgmtIP), []string{firstMasterMgmtIP, firstMasterK8sIP})
 	if err != nil {
 		return fmt.Errorf("failed to initialize control plane on %s: %w", firstMaster.Name, err)
 	}
@@ -202,32 +202,6 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	}
 
 	// Join worker nodes to the cluster
-	workerVMs := clusterRoleMapping[config.ClusterRoleWorker]
-	if len(workerVMs) > 0 {
-		log.Info("=== Joining worker nodes ===")
-		for _, workerVM := range workerVMs {
-			workerMgmtIP, err := m.GetVMMgmtIP(workerVM.Name)
-			if err != nil {
-				return fmt.Errorf("failed to get mgmt IP for %s: %w", workerVM.Name, err)
-			}
-
-			workerExec := platform.NewSSHExecutor(&m.config.SSH, workerMgmtIP)
-			if err := k8sMgr.JoinWorker(workerExec, workerVM.Name, clusterInfo); err != nil {
-				return fmt.Errorf("failed to join worker node %s: %w", workerVM.Name, err)
-			}
-		}
-	}
-
-	kubeconfigPath := k8s.GetKubeconfigPath(clusterName, m.config.Kubernetes.KubeconfigDir)
-	cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to create CNI manager: %w", err)
-	}
-
-	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP); err != nil {
-		return fmt.Errorf("failed to install CNI: %w", err)
-	}
-
 	bareMetalWorkers := bareMetalRoleMapping[config.ClusterRoleWorker]
 	if len(bareMetalWorkers) > 0 {
 		log.Info("=== Adopting and joining baremetal worker nodes ===")
@@ -295,6 +269,31 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		}
 	}
 
+	workerVMs := clusterRoleMapping[config.ClusterRoleWorker]
+	if len(workerVMs) > 0 {
+		log.Info("=== Joining worker nodes ===")
+		for _, workerVM := range workerVMs {
+			workerMgmtIP, err := m.GetVMMgmtIP(workerVM.Name)
+			if err != nil {
+				return fmt.Errorf("failed to get mgmt IP for %s: %w", workerVM.Name, err)
+			}
+
+			workerExec := platform.NewSSHExecutor(&m.config.SSH, workerMgmtIP)
+			if err := k8sMgr.JoinWorker(workerExec, workerVM.Name, clusterInfo); err != nil {
+				return fmt.Errorf("failed to join worker node %s: %w", workerVM.Name, err)
+			}
+		}
+	}
+
+	kubeconfigPath := k8s.GetKubeconfigPath(clusterName, m.config.Kubernetes.KubeconfigDir)
+	cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to create CNI manager: %w", err)
+	}
+
+	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP); err != nil {
+		return fmt.Errorf("failed to install CNI: %w", err)
+	}
 	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)
 	return nil
 }
