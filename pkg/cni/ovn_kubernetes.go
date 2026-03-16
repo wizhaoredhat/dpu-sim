@@ -187,6 +187,10 @@ func (m *CNIManager) runHelmInstall(ovnkRepoPath, apiServerURL, podCIDR, service
 		"--set", "global.enablePersistentIPs=true",
 	}
 
+	if m.kubeconfigPath != "" {
+		args = append(args, "--kubeconfig", m.kubeconfigPath)
+	}
+
 	if !m.config.NeedsOVSNodeDaemonSet() {
 		args = append(args, "--set", "tags.ovs-node=false")
 	}
@@ -282,6 +286,10 @@ func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
 		"--reuse-values",
 		"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
 		"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
+	}
+
+	if m.kubeconfigPath != "" {
+		args = append(args, "--kubeconfig", m.kubeconfigPath)
 	}
 
 	log.Info("Running helm upgrade for OVN-Kubernetes...")

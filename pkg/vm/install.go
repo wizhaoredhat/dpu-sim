@@ -144,7 +144,8 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("failed to save kubeconfig for cluster %s: %w", clusterName, err)
 	}
 
-	cniMgr, err := cni.NewCNIManagerWithKubeconfig(m.config, clusterInfo.Kubeconfig)
+	kubeconfigPath := k8s.GetKubeconfigPath(clusterName, m.config.Kubernetes.KubeconfigDir)
+	cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to create CNI manager: %w", err)
 	}

@@ -83,12 +83,8 @@ func (m *KindManager) InstallCNI() error {
 			}
 		}
 
-		kubeconfigContent, err := m.GetKubeconfigContent(clusterCfg.Name)
-		if err != nil {
-			return fmt.Errorf("failed to get kubeconfig for cluster %s: %w", clusterCfg.Name, err)
-		}
-
-		cniMgr, err := cni.NewCNIManagerWithKubeconfig(m.config, kubeconfigContent)
+		kubeconfigPath := k8s.GetKubeconfigPath(clusterCfg.Name, m.config.Kubernetes.GetKubeconfigDir())
+		cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath)
 		if err != nil {
 			return fmt.Errorf("failed to create CNI manager: %w", err)
 		}
