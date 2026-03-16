@@ -287,6 +287,15 @@ func (m *VMManager) detectHostEgressTo(ip string) (*hostEgressInfo, error) {
 	return &hostEgressInfo{iface: fields[0], ip: fields[1]}, nil
 }
 
+func getRouteDevice(cmdExec platform.CommandExecutor, ip string) (string, error) {
+	cmd := fmt.Sprintf("ip -4 route get %s | awk '{for(i=1;i<=NF;i++){if($i==\"dev\"){print $(i+1); exit}}}'", shellQuote(ip))
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(cmd, 30*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("failed to detect route device to %s: %w, stderr: %s", ip, err, stderr)
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
 func ensureForwardRule(local *platform.LocalExecutor, inIface, outIface, src, dst string) error {
 	script := strings.Builder{}
 	script.WriteString("set -e\n")
@@ -380,18 +389,9 @@ func (m *VMManager) ensureHybridNetworking(node config.BareMetalConfig, firstMas
 		return err
 	}
 
-	routeIface := node.GatewayInterface
-	if routeIface == "" {
-		routeIface = config.K8sNetworkName
-	}
-	if _, _, err := bmExec.ExecuteWithTimeout(fmt.Sprintf("ip link show %s", shellQuote(routeIface)), 15*time.Second); err != nil {
-		if routeIface != config.K8sNetworkName {
-			if _, _, k8sErr := bmExec.ExecuteWithTimeout(fmt.Sprintf("ip link show %s", shellQuote(config.K8sNetworkName)), 15*time.Second); k8sErr == nil {
-				routeIface = config.K8sNetworkName
-			} else {
-				routeIface = ""
-			}
-		} else {
+	routeIface := strings.TrimSpace(node.GatewayInterface)
+	if routeIface != "" {
+		if _, _, err := bmExec.ExecuteWithTimeout(fmt.Sprintf("ip link show %s", shellQuote(routeIface)), 15*time.Second); err != nil {
 			routeIface = ""
 		}
 	}
@@ -410,7 +410,21 @@ func (m *VMManager) ensureHybridNetworking(node config.BareMetalConfig, firstMas
 		return fmt.Errorf("failed to program routes on baremetal node %s: %w, stdout: %s, stderr: %s", node.Name, err, stdout, stderr)
 	}
 
+	shouldAddMasterRoute := false
 	if k8sNet.Gateway != "" {
+		routeDev, err := getRouteDevice(firstMasterExec, node.MgmtIP)
+		if err != nil {
+			log.Warn("Could not inspect first-master route to %s, adding explicit /32 return route via %s: %v", node.MgmtIP, k8sNet.Gateway, err)
+			shouldAddMasterRoute = true
+		} else if routeDev == "" {
+			log.Warn("First master has no detected route device to %s, adding explicit /32 return route via %s", node.MgmtIP, k8sNet.Gateway)
+			shouldAddMasterRoute = true
+		} else {
+			log.Info("Skipping first-master /32 route for baremetal node %s because route to %s already resolves via device %s", node.Name, node.MgmtIP, routeDev)
+		}
+	}
+
+	if shouldAddMasterRoute {
 		masterScript := fmt.Sprintf(`set -e
 DEV="brk8s"
 if ! ip link show "$DEV" >/dev/null 2>&1; then
