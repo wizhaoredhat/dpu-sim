@@ -308,6 +308,10 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP); err != nil {
 		return fmt.Errorf("failed to install CNI: %w", err)
 	}
+
+	if err := cniMgr.InstallAddons(clusterCfg.Addons, clusterName); err != nil {
+		return fmt.Errorf("failed to install addons: %w", err)
+	}
 	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)
 	return nil
 }

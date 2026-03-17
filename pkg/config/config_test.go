@@ -289,6 +289,98 @@ func TestValidateOperatingSystemAllowsImageRef(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestValidateMultusNotPrimaryCNI(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: "multus"},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "'cni' must be"))
+}
+
+func TestValidateMultusAndPrimaryCNI(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIFlannel, Addons: []AddonType{AddonMultus}},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+	addons := cfg.GetClusterConfig("cluster-1").Addons
+	require.Contains(t, addons, AddonMultus)
+}
+
+func TestValidateCertManagerAddon(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIFlannel, Addons: []AddonType{AddonCertManager}},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+	addons := cfg.GetClusterConfig("cluster-1").Addons
+	require.Contains(t, addons, AddonCertManager)
+}
+
+func TestValidateWhereaboutsAddon(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIFlannel, Addons: []AddonType{AddonWhereabouts}},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+	addons := cfg.GetClusterConfig("cluster-1").Addons
+	require.Contains(t, addons, AddonWhereabouts)
+}
+
+func TestValidateUnknownAddonFails(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIFlannel, Addons: []AddonType{"unknown-addon"}},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "unsupported addon"))
+}
+
+func TestValidateAddonsDeduplicatesPreservingOrder(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{
+					Name:   "cluster-1",
+					CNI:    CNIFlannel,
+					Addons: []AddonType{AddonMultus, AddonCertManager, AddonWhereabouts, AddonMultus, AddonCertManager, AddonWhereabouts},
+				},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+	addons := cfg.GetClusterConfig("cluster-1").Addons
+	require.Equal(t, []AddonType{AddonMultus, AddonCertManager, AddonWhereabouts}, addons)
+}
+
 func TestValidateOperatingSystemRequiresURLOrRef(t *testing.T) {
 	cfg := Config{
 		Networks: []NetworkConfig{
@@ -415,4 +507,68 @@ func TestGetBareMetalClusterRoleMapping(t *testing.T) {
 	m := cfg.GetBareMetalClusterRoleMapping()
 	require.Contains(t, m, "cluster-1")
 	assert.Len(t, m["cluster-1"][ClusterRoleWorker], 2)
+}
+
+func TestRegistryEnablementModes(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name            string
+		cfg             Config
+		enabledExpected bool
+		hasRegistry     bool
+	}{
+		{
+			name:            "registry absent",
+			cfg:             Config{},
+			enabledExpected: false,
+			hasRegistry:     false,
+		},
+		{
+			name:            "registry present defaults enabled",
+			cfg:             Config{Registry: &RegistryConfig{}},
+			enabledExpected: true,
+			hasRegistry:     false,
+		},
+		{
+			name:            "registry explicitly disabled",
+			cfg:             Config{Registry: &RegistryConfig{Enabled: &falseVal}},
+			enabledExpected: false,
+			hasRegistry:     false,
+		},
+		{
+			name:            "registry explicitly enabled",
+			cfg:             Config{Registry: &RegistryConfig{Enabled: &trueVal}},
+			enabledExpected: true,
+			hasRegistry:     false,
+		},
+		{
+			name: "registry with container entries",
+			cfg: Config{Registry: &RegistryConfig{Containers: []RegistryContainerConfig{{
+				Name: "ovn-kube",
+				CNI:  string(CNIOVNKubernetes),
+				Tag:  "ovn-kube:dpu-sim",
+			}}}},
+			enabledExpected: true,
+			hasRegistry:     true,
+		},
+		{
+			name: "registry disabled with container entries",
+			cfg: Config{Registry: &RegistryConfig{Enabled: &falseVal, Containers: []RegistryContainerConfig{{
+				Name: "ovn-kube",
+				CNI:  string(CNIOVNKubernetes),
+				Tag:  "ovn-kube:dpu-sim",
+			}}}},
+			enabledExpected: false,
+			hasRegistry:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.enabledExpected, tt.cfg.IsRegistryEnabled())
+			assert.Equal(t, tt.hasRegistry, tt.cfg.HasRegistry())
+		})
+	}
 }

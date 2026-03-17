@@ -12,6 +12,7 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/log"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -370,6 +371,48 @@ func (c *K8sClient) WaitForPodsReady(namespace, labelSelector string, timeout ti
 			}
 		}
 	}
+}
+
+// WaitForDeploymentAvailable waits for a deployment to report Available=True.
+func (c *K8sClient) WaitForDeploymentAvailable(namespace, name string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	log.Info("Waiting for deployment %s/%s to be available...", namespace, name)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for deployment %s/%s to be available", namespace, name)
+		case <-ticker.C:
+			deployment, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				log.Warn("Warning: failed to get deployment %s/%s: %v", namespace, name, err)
+				continue
+			}
+
+			if deployment.Status.ObservedGeneration < deployment.Generation {
+				continue
+			}
+
+			if isDeploymentAvailable(deployment) {
+				log.Info("✓ Deployment %s/%s is available", namespace, name)
+				return nil
+			}
+		}
+	}
+}
+
+func isDeploymentAvailable(deployment *appsv1.Deployment) bool {
+	for _, condition := range deployment.Status.Conditions {
+		if condition.Type == appsv1.DeploymentAvailable && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 // GetNodes returns all nodes in the cluster
