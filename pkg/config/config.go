@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wizhao/dpu-sim/pkg/log"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -294,6 +296,15 @@ func (c *Config) validateAndSetDefaults() error {
 		} else if c.Kubernetes.Clusters[i].CNI != CNIOVNKubernetes && c.Kubernetes.Clusters[i].CNI != CNIFlannel && c.Kubernetes.Clusters[i].CNI != CNIKindnet {
 			errors = append(errors, fmt.Sprintf("kubernetes.clusters[%d]: 'cni' must be 'ovn-kubernetes', 'flannel', or 'kindnet', got '%s'", i, c.Kubernetes.Clusters[i].CNI))
 		}
+
+		normalizedAddons, duplicates, addonErrs := validateAndNormalizeAddons(cluster.Addons)
+		for _, err := range addonErrs {
+			errors = append(errors, fmt.Sprintf("kubernetes.clusters[%d] (%s): %s", i, cluster.Name, err))
+		}
+		for _, dup := range duplicates {
+			log.Warn("kubernetes.clusters[%d] (%s): duplicate addon %q found, keeping first occurrence", i, cluster.Name, dup)
+		}
+		c.Kubernetes.Clusters[i].Addons = normalizedAddons
 	}
 
 	// Validate registry configuration
@@ -345,6 +356,33 @@ func (c *Config) validateAndSetDefaults() error {
 	}
 
 	return nil
+}
+
+func validateAndNormalizeAddons(addons []AddonType) ([]AddonType, []AddonType, []string) {
+	seen := make(map[AddonType]struct{}, len(addons))
+	normalized := make([]AddonType, 0, len(addons))
+	duplicates := make([]AddonType, 0)
+	var errs []string
+
+	for idx, addon := range addons {
+		switch addon {
+		case AddonMultus, AddonCertManager, AddonWhereabouts:
+			// valid
+		default:
+			errs = append(errs, fmt.Sprintf("addons[%d]: unsupported addon %q", idx, addon))
+			continue
+		}
+
+		if _, exists := seen[addon]; exists {
+			duplicates = append(duplicates, addon)
+			continue
+		}
+
+		seen[addon] = struct{}{}
+		normalized = append(normalized, addon)
+	}
+
+	return normalized, duplicates, errs
 }
 
 // GetDeploymentMode determines the deployment mode based on configuration

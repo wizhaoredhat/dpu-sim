@@ -31,6 +31,59 @@ func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sI
 	}
 }
 
+func (m *CNIManager) InstallAddon(addonType config.AddonType, clusterName string) error {
+	log.Info("\n=== Installing addon %s on cluster %s ===", addonType, clusterName)
+
+	switch addonType {
+	case config.AddonMultus:
+		return m.installMultus()
+	case config.AddonCertManager:
+		return m.installCertManager(clusterName)
+	case config.AddonWhereabouts:
+		return m.installWhereabouts(clusterName)
+	default:
+		return fmt.Errorf("unsupported addon type: %s", addonType)
+	}
+}
+
+func (m *CNIManager) InstallAddons(addons []config.AddonType, clusterName string) error {
+	orderedAddons := resolveAddonInstallOrder(addons)
+	for _, addon := range orderedAddons {
+		if err := m.InstallAddon(addon, clusterName); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func resolveAddonInstallOrder(addons []config.AddonType) []config.AddonType {
+	ordered := make([]config.AddonType, 0, len(addons)+1)
+	hasMultus := false
+	hasWhereabouts := false
+
+	for _, addon := range addons {
+		if addon == config.AddonMultus {
+			hasMultus = true
+		}
+		if addon == config.AddonWhereabouts {
+			hasWhereabouts = true
+		}
+	}
+
+	injectedWhereabouts := false
+	for _, addon := range addons {
+		if addon == config.AddonMultus && hasMultus && !hasWhereabouts && !injectedWhereabouts {
+			log.Info("Whereabouts addon was not configured explicitly; installing it automatically before multus")
+			ordered = append(ordered, config.AddonWhereabouts)
+			injectedWhereabouts = true
+		}
+		ordered = append(ordered, addon)
+	}
+
+	return ordered
+}
+
 // BuildCNIImage builds a container image for the given registry container
 // config. This is intended to be used as a registry.BuildFunc. It dispatches
 // to the appropriate CNI-specific build logic and returns the local image name.

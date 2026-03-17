@@ -49,3 +49,9 @@ func rewriteCNIBinPath(manifest []byte, hostPath string) []byte {
 	content = strings.ReplaceAll(content, "/opt/cni/bin", hostPath)
 	return []byte(content)
 }
+
+func rewriteCNIHostPathOnly(manifest []byte, hostPath string) []byte {
+	content := string(manifest)
+	content = strings.ReplaceAll(content, "path: /opt/cni/bin", fmt.Sprintf("path: %s", hostPath))
+	return []byte(content)
+}

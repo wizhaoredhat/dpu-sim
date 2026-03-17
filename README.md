@@ -202,6 +202,10 @@ kubernetes:
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
+      addons:
+        - "multus"
+        - "whereabouts"
+        - "cert-manager"
     - name: "dpu-sim-dpu-kind"
       pod_cidr: "10.246.0.0/16"
       service_cidr: "10.247.0.0/16"
@@ -341,6 +345,10 @@ kubernetes:
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
+      addons:
+        - "multus"
+        - "whereabouts"
+        - "cert-manager"
     - name: "cluster-2"
       pod_cidr: "10.246.0.0/16"
       service_cidr: "10.247.0.0/16"
@@ -415,6 +423,7 @@ Everything Kubernetes related is in the `kubernetes` section. By default version
 - **pod_cidr**: Default is 10.244.0.0/16. This is the custom pod network CIDR
 - **service_cidr**: Default is 10.245.0.0/16. This is the custom service CIDR.
 - **cni**: Selects which CNI should be used in the cluster such as ovn-kubernetes
+- **addons**: Optional ordered list of additional components to install (currently `multus`, `whereabouts`, `cert-manager`)
 
 Multiple cluster configuration example:
 ```yaml
@@ -426,6 +435,10 @@ kubernetes:
       pod_cidr: "10.244.0.0/16" # First cluster pod network
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
+      addons:
+        - "multus"
+        - "whereabouts"
+        - "cert-manager"
     - name: "cluster-2"
       pod_cidr: "10.246.0.0/16" # Second cluster pod network
       service_cidr: "10.247.0.0/16"
@@ -1620,6 +1633,7 @@ Deployment mode: vm
 │   ├── flannel.go        # Functions to install Flannel CNI
 │   ├── install.go        # Delagates CNI installation
 │   ├── multus.go         # Functions to install Multus CNI
+│   ├── whereabouts.go    # Functions to install Whereabouts IPAM addon
 │   ├── ovn_kubernetes.go # Functions to install OVN-Kubernetes CNI
 │   ├── types.go          # Types related to CNI
 ├── pkg/config
