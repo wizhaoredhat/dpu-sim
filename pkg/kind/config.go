@@ -104,7 +104,7 @@ nodeRegistration:
 	// per-host registry configuration from /etc/containerd/certs.d/.
 	// The actual host config files are written after cluster creation
 	// via ConfigureRegistryOnNodes.
-	if m.config.HasRegistry() {
+	if m.config.IsRegistryEnabled() {
 		cluster.ContainerdConfigPatches = append(cluster.ContainerdConfigPatches,
 			`[plugins."io.containerd.cri.v1.images".registry]
   config_path = "/etc/containerd/certs.d"`)

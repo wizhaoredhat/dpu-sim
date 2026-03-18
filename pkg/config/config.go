@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/log"
@@ -309,6 +310,18 @@ func (c *Config) validateAndSetDefaults() error {
 
 	// Validate registry configuration
 	if c.Registry != nil {
+		for i, endpoint := range c.Registry.InsecureEndpoints {
+			normalized := strings.TrimSpace(endpoint)
+			c.Registry.InsecureEndpoints[i] = normalized
+			if normalized == "" {
+				errors = append(errors, fmt.Sprintf("registry.insecure_endpoints[%d]: value must not be empty", i))
+				continue
+			}
+			if err := validateRegistryEndpoint(normalized); err != nil {
+				errors = append(errors, fmt.Sprintf("registry.insecure_endpoints[%d]: %v", i, err))
+			}
+		}
+
 		for i, container := range c.Registry.Containers {
 			if container.Name == "" {
 				errors = append(errors, fmt.Sprintf("registry.containers[%d]: 'name' is required", i))
@@ -383,6 +396,24 @@ func validateAndNormalizeAddons(addons []AddonType) ([]AddonType, []AddonType, [
 	}
 
 	return normalized, duplicates, errs
+}
+
+func validateRegistryEndpoint(endpoint string) error {
+	if strings.Contains(endpoint, "://") {
+		return fmt.Errorf("must be in host:port format without URL scheme")
+	}
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fmt.Errorf("must be a valid host:port endpoint")
+	}
+	if host == "" {
+		return fmt.Errorf("host is required")
+	}
+	portNum, err := strconv.Atoi(port)
+	if err != nil || portNum < 1 || portNum > 65535 {
+		return fmt.Errorf("port must be an integer between 1 and 65535")
+	}
+	return nil
 }
 
 // GetDeploymentMode determines the deployment mode based on configuration
@@ -834,6 +865,51 @@ func (c *Config) GetNetworkByName(name string) *NetworkConfig {
 // HasRegistry returns true if the configuration includes a local registry
 func (c *Config) HasRegistry() bool {
 	return c.Registry != nil && len(c.Registry.Containers) > 0
+}
+
+// IsRegistryEnabled returns true when local registry management is enabled.
+//
+// Behavior:
+//   - false when no registry section is present
+//   - true when registry section is present and enabled is unset
+//   - value of registry.enabled when explicitly set
+func (c *Config) IsRegistryEnabled() bool {
+	if c.Registry == nil {
+		return false
+	}
+	if c.Registry.Enabled == nil {
+		return true
+	}
+	return *c.Registry.Enabled
+}
+
+// GetRegistryInsecureEndpoints returns the node-side registry endpoints
+// that should be configured as insecure HTTP registries.
+//
+// Behavior:
+//   - when registry.insecure_endpoints is set, return that list
+//   - otherwise fall back to GetRegistryNodeEndpoint()
+func (c *Config) GetRegistryInsecureEndpoints() []string {
+	if c.Registry != nil && len(c.Registry.InsecureEndpoints) > 0 {
+		out := make([]string, 0, len(c.Registry.InsecureEndpoints))
+		seen := make(map[string]struct{}, len(c.Registry.InsecureEndpoints))
+		for _, endpoint := range c.Registry.InsecureEndpoints {
+			normalized := strings.TrimSpace(endpoint)
+			if normalized == "" {
+				continue
+			}
+			if _, exists := seen[normalized]; exists {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			out = append(out, normalized)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	return []string{c.GetRegistryNodeEndpoint()}
 }
 
 // GetRegistryContainerForCNI returns the registry container config for a

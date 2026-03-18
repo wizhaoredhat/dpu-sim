@@ -58,8 +58,11 @@ type Config struct {
 type RegistryConfig struct {
 	// Enabled controls whether dpu-sim should manage the local registry.
 	// Defaults to true when the registry section is present.
-	Enabled    *bool                     `yaml:"enabled,omitempty"`
-	Containers []RegistryContainerConfig `yaml:"containers"`
+	Enabled *bool `yaml:"enabled,omitempty"`
+	// InsecureEndpoints is the list of registry endpoints (host:port)
+	// that nodes should treat as insecure HTTP registries.
+	InsecureEndpoints []string                  `yaml:"insecure_endpoints,omitempty"`
+	Containers        []RegistryContainerConfig `yaml:"containers"`
 }
 
 // RegistryContainerConfig represents a container image to build and push

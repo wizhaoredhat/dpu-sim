@@ -346,12 +346,16 @@ fi`, 1*time.Minute); err != nil {
 // registry over HTTP from cluster nodes.
 func ConfigureCRIOLocalRegistry(cmdExec platform.CommandExecutor, cfg *config.Config) error {
 	// No-op when no local registry is configured.
-	if !cfg.HasRegistry() {
+	if !cfg.IsRegistryEnabled() {
 		return nil
 	}
 
-	nodeEndpoint := cfg.GetRegistryNodeEndpoint()
-	registryConf := fmt.Sprintf("[[registry]]\nlocation = \"%s\"\ninsecure = true\n", nodeEndpoint)
+	endpoints := cfg.GetRegistryInsecureEndpoints()
+	var blocks []string
+	for _, endpoint := range endpoints {
+		blocks = append(blocks, fmt.Sprintf("[[registry]]\nlocation = \"%s\"\ninsecure = true\n", endpoint))
+	}
+	registryConf := strings.Join(blocks, "\n")
 	if err := cmdExec.WriteFile("/etc/containers/registries.conf.d/dpu-sim-registry.conf", []byte(registryConf), 0o644); err != nil {
 		return fmt.Errorf("failed to write insecure registry config: %w", err)
 	}
