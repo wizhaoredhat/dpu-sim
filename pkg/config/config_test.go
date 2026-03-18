@@ -572,3 +572,57 @@ func TestRegistryEnablementModes(t *testing.T) {
 		})
 	}
 }
+
+func TestGetRegistryInsecureEndpoints(t *testing.T) {
+	t.Run("fallback to vm registry node endpoint", func(t *testing.T) {
+		cfg := Config{
+			Networks: []NetworkConfig{{
+				Name:       "mgmt-network",
+				Type:       MgmtNetworkName,
+				BridgeName: "virbr-mgmt",
+				Gateway:    "192.168.120.1",
+				Mode:       "nat",
+				NICModel:   "virtio",
+			}},
+			BareMetal: []BareMetalConfig{{
+				Name:       "dh4",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleWorker),
+				MgmtIP:     "172.22.1.4",
+				NodeIP:     "172.22.1.4",
+			}},
+			Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIFlannel}}},
+		}
+
+		err := cfg.validateAndSetDefaults()
+		require.NoError(t, err)
+		require.Equal(t, []string{"192.168.120.1:5000"}, cfg.GetRegistryInsecureEndpoints())
+	})
+
+	t.Run("uses configured insecure endpoints", func(t *testing.T) {
+		cfg := Config{
+			Registry: &RegistryConfig{
+				InsecureEndpoints: []string{"172.22.1.100:5000", " 192.168.120.1:5000 ", "172.22.1.100:5000"},
+			},
+			Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIFlannel}}},
+		}
+
+		err := cfg.validateAndSetDefaults()
+		require.NoError(t, err)
+		require.Equal(t, []string{"172.22.1.100:5000", "192.168.120.1:5000"}, cfg.GetRegistryInsecureEndpoints())
+	})
+}
+
+func TestValidateRegistryInsecureEndpoints(t *testing.T) {
+	cfg := Config{
+		Registry: &RegistryConfig{
+			InsecureEndpoints: []string{"http://172.22.1.100:5000"},
+		},
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIFlannel}}},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "registry.insecure_endpoints[0]")
+}
