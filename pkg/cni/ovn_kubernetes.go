@@ -3,6 +3,7 @@ package cni
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/containerengine"
+	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
@@ -29,6 +31,41 @@ const (
 	// DefaultOVNRepoURL is the default URL for the OVN-Kubernetes repository
 	DefaultOVNRepoURL = "https://github.com/ovn-org/ovn-kubernetes.git"
 )
+
+// ovnkMode describes how OVN-Kubernetes is deployed in a cluster.
+type ovnkMode int
+
+const (
+	ovnkModeFull    ovnkMode = iota // every node runs OVS+OVN (interconnect)
+	ovnkModeDPUHost                 // host cluster in DPU-offload topology
+	ovnkModeDPU                     // DPU cluster in DPU-offload topology
+)
+
+func (m ovnkMode) String() string {
+	switch m {
+	case ovnkModeDPUHost:
+		return "dpu-host"
+	case ovnkModeDPU:
+		return "dpu"
+	default:
+		return "full"
+	}
+}
+
+// detectOVNKMode returns the deployment mode for the given cluster based on
+// config. When offload_dpu is false the mode is always full. Otherwise the
+// cluster that contains DPU-type nodes is the DPU cluster and the other is the
+// DPU-host cluster.
+// TODO: Single cluster support for DPU + DPU-host is not yet supported.
+func (m *CNIManager) detectOVNKMode(clusterName string) ovnkMode {
+	if !m.config.IsOffloadDPU() {
+		return ovnkModeFull
+	}
+	if m.config.IsDPUCluster(clusterName) {
+		return ovnkModeDPU
+	}
+	return ovnkModeDPUHost
+}
 
 // patchCoreDNSForOVN patches the CoreDNS configmap for OVN-Kubernetes compatibility.
 // This modifies CoreDNS to:
@@ -91,9 +128,12 @@ func (m *CNIManager) patchCoreDNS(dnsServer string) error {
 	return nil
 }
 
-// installOVNKubernetes installs OVN-Kubernetes CNI using Helm charts with
-// the single-node-zone interconnect architecture.
-func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gatewayInterface string) error {
+// installOVNKubernetes installs OVN-Kubernetes CNI using Helm charts.
+// The deployment topology (full / DPU-host / DPU) is determined automatically
+// from the config.
+func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gatewayInterface string, gatewayAcceleratedInterface string) error {
+	mode := m.detectOVNKMode(clusterName)
+
 	clusterCfg := m.config.GetClusterConfig(clusterName)
 	if clusterCfg == nil {
 		return fmt.Errorf("cluster configuration not found for cluster %s", clusterName)
@@ -102,7 +142,8 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gate
 	serviceCIDR := clusterCfg.ServiceCIDR
 	apiServerURL := "https://" + k8sIP + ":6443"
 
-	log.Info("Installing OVN-Kubernetes via Helm: Pod CIDR: %s, Service CIDR: %s, API Server: %s", podCIDR, serviceCIDR, apiServerURL)
+	log.Info("Installing OVN-Kubernetes (mode=%s): Pod CIDR: %s, Service CIDR: %s, API Server: %s",
+		mode, podCIDR, serviceCIDR, apiServerURL)
 
 	if err := m.patchCoreDNS("8.8.8.8"); err != nil {
 		return fmt.Errorf("failed to patch CoreDNS: %w", err)
@@ -134,7 +175,19 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gate
 		return fmt.Errorf("failed to label master nodes: %w", err)
 	}
 
-	if err := m.runHelmInstall(ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface); err != nil {
+	switch mode {
+	case ovnkModeDPUHost:
+		if err := m.labelNodesForDPUHost(clusterName); err != nil {
+			return fmt.Errorf("failed to label DPU-host nodes: %w", err)
+		}
+	case ovnkModeDPU:
+		if err := m.labelNodesForDPU(clusterName); err != nil {
+			return fmt.Errorf("failed to label DPU nodes: %w", err)
+		}
+	}
+
+	mgmtPortName := ""
+	if err := m.runHelmInstall(mode, ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, mgmtPortName, gatewayInterface, gatewayAcceleratedInterface); err != nil {
 		return fmt.Errorf("failed to run helm install: %w", err)
 	}
 
@@ -145,57 +198,107 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gate
 	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
 		log.Warn("Warning: OVN-Kubernetes pods may not be ready: %v", err)
 	} else {
-		log.Info("✓ OVN-Kubernetes pods are ready, installed via Helm successfully!")
+		log.Info("✓ OVN-Kubernetes pods are ready, installed via Helm successfully (mode=%s)", mode)
 	}
 
 	if err := m.k8sClient.DeleteDaemonSet("kube-system", "kube-proxy"); err != nil {
 		return fmt.Errorf("failed to delete kube-proxy DaemonSet: %w", err)
 	}
 
+	// DPU-host: create the service account secret for cross-cluster access
+	if mode == ovnkModeDPUHost {
+		if err := m.createDPUAccessSecret(); err != nil {
+			return fmt.Errorf("failed to create DPU access secret: %w", err)
+		}
+	}
+
 	return nil
 }
 
-// runHelmInstall executes `helm install` for OVN-Kubernetes using the
-// single-node-zone values file with configuration overrides. The --set flags
-// mirror the options from ovn-kubernetes/contrib/kind-helm.sh's
-// create_ovn_kubernetes function.
-func (m *CNIManager) runHelmInstall(ovnkRepoPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface string) error {
+// runHelmInstall executes `helm install` for OVN-Kubernetes. The values file,
+// image key, and additional flags are selected based on the deployment mode:
+//   - Full:     values-single-node-zone.yaml, global.image.*, OvnKubeIdentity
+//   - DPU-Host: values-single-node-zone.yaml, global.image.*, dpu-host subchart
+//   - DPU:      values-single-node-zone-dpu.yaml, global.dpuImage.*, host credentials
+func (m *CNIManager) runHelmInstall(mode ovnkMode, ovnkRepoPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, mgmtPortName, gatewayInterface, gatewayAcceleratedInterface string) error {
 	chartPath := filepath.Join(ovnkRepoPath, "helm", "ovn-kubernetes")
-	valuesFile := "values-single-node-zone.yaml"
-
 	imageRepo, imageTag := splitImageRef(ovnImage)
 
-	args := []string{
-		"install", "ovn-kubernetes", ".",
-		"-f", valuesFile,
-		"--set", fmt.Sprintf("k8sAPIServer=%s", apiServerURL),
-		"--set", fmt.Sprintf("podNetwork=%s", podCIDR),
-		"--set", fmt.Sprintf("serviceNetwork=%s", serviceCIDR),
-		"--set", "mtu=1400",
-		"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
-		"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
-		"--set", "global.image.pullPolicy=Always",
-		"--set", fmt.Sprintf("global.gatewayOpts=--gateway-interface=%s", gatewayInterface),
-		"--set", "global.enableAdminNetworkPolicy=true",
-		"--set", "global.enableEgressIp=true",
-		"--set", "global.egressIpHealthCheckPort=9107",
-		"--set", "global.enableEgressFirewall=true",
-		"--set", "global.enableEgressQos=true",
-		"--set", "global.enableEgressService=true",
-		"--set", "global.enableMultiExternalGateway=true",
-		"--set", "global.enableOvnKubeIdentity=true",
-		"--set", "global.enablePersistentIPs=true",
+	args := []string{"install", "ovn-kubernetes", "."}
+
+	switch mode {
+	case ovnkModeFull, ovnkModeDPUHost:
+		args = append(args,
+			"-f", "values-single-node-zone.yaml",
+			"--set", fmt.Sprintf("k8sAPIServer=%s", apiServerURL),
+			"--set", fmt.Sprintf("podNetwork=%s", podCIDR),
+			"--set", fmt.Sprintf("serviceNetwork=%s", serviceCIDR),
+			"--set", "mtu=1400",
+			"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
+			"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
+			"--set", "global.image.pullPolicy=Always",
+			"--set", "global.enableAdminNetworkPolicy=true",
+			"--set", "global.enableEgressIp=true",
+			"--set", "global.egressIpHealthCheckPort=9107",
+			"--set", "global.enableEgressFirewall=true",
+			"--set", "global.enableEgressQos=true",
+			"--set", "global.enableEgressService=true",
+			"--set", "global.enableMultiExternalGateway=true",
+			"--set", "global.enablePersistentIPs=true",
+		)
+
+		switch mode {
+		case ovnkModeDPUHost:
+			args = append(args,
+				"--set", "tags.ovnkube-node-dpu-host=true",
+				"--set", "tags.ovs-node=false",
+				"--set", "global.enableOvnKubeIdentity=false",
+			)
+		case ovnkModeFull:
+			args = append(args, "--set", "global.enableOvnKubeIdentity=true")
+			if !m.config.NeedsOVSNodeDaemonSet() {
+				args = append(args, "--set", "tags.ovs-node=false")
+			}
+		}
+
+		if mgmtPortName != "" {
+			args = append(args, "--set", fmt.Sprintf("global.nodeMgmtPortNetdev=%s", mgmtPortName))
+		}
+	case ovnkModeDPU:
+		creds, err := m.getDPUHostClusterCredentials()
+		if err != nil {
+			return fmt.Errorf("failed to get DPU host cluster credentials: %w", err)
+		}
+		args = append(args,
+			"-f", "values-single-node-zone-dpu.yaml",
+			"--set", "global.enableOvnKubeIdentity=false",
+			"--set", fmt.Sprintf("global.dpuImage.repository=%s", imageRepo),
+			"--set", fmt.Sprintf("global.dpuImage.tag=%s", imageTag),
+			"--set", "global.dpuImage.pullPolicy=Always",
+			"--set", fmt.Sprintf("global.dpuHostClusterK8sAPIServer=%s", creds.APIServer),
+			"--set", fmt.Sprintf("global.dpuHostClusterK8sToken=%s", creds.Token),
+			"--set", fmt.Sprintf("global.dpuHostClusterK8sCACertData=%s", creds.CACert),
+			"--set", fmt.Sprintf("global.dpuHostClusterNetworkCIDR=%s", creds.PodCIDR),
+			"--set", fmt.Sprintf("global.dpuHostClusterServiceCIDR=%s", creds.ServiceCIDR),
+			"--set", "global.mtu=1400",
+		)
+		if m.config.NeedsOVSNodeDaemonSet() {
+			args = append(args, "--set", "tags.ovs-node=true")
+		}
+	}
+
+	if gatewayInterface != "" {
+		args = append(args, "--set", fmt.Sprintf("global.gatewayOpts=--gateway-interface=%s", gatewayInterface))
+	}
+	if gatewayAcceleratedInterface != "" {
+		args = append(args, "--set", fmt.Sprintf("global.gatewayOpts=--gateway-accelerated-interface=%s", gatewayAcceleratedInterface))
 	}
 
 	if m.kubeconfigPath != "" {
 		args = append(args, "--kubeconfig", m.kubeconfigPath)
 	}
 
-	if !m.config.NeedsOVSNodeDaemonSet() {
-		args = append(args, "--set", "tags.ovs-node=false")
-	}
-
-	log.Info("Running helm install for OVN-Kubernetes (chart: %s, values: %s)...", chartPath, valuesFile)
+	log.Info("Running Helm install for OVN-Kubernetes (mode=%s, chart: %s)...", mode, chartPath)
 	log.Debug("Helm args: %v", args)
 
 	cmd := exec.Command("helm", args...)
@@ -203,10 +306,10 @@ func (m *CNIManager) runHelmInstall(ovnkRepoPath, apiServerURL, podCIDR, service
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("helm install failed: %s\n%s", err, string(output))
+		return fmt.Errorf("Helm install failed (mode=%s): %s\n%s", mode, err, string(output))
 	}
 
-	log.Info("✓ Helm install completed successfully")
+	log.Info("✓ Helm install completed successfully (mode=%s)", mode)
 	log.Debug("Helm output: %s", string(output))
 	return nil
 }
@@ -765,6 +868,163 @@ func resolveGitRef(cmdExec platform.CommandExecutor, repo, ref string) (string, 
 		return ref, nil
 	}
 	return parts[0], nil
+}
+
+// labelNodesForDPUHost labels DPU-host worker nodes with the required
+// k8s.ovn.org/dpu-host label.
+func (m *CNIManager) labelNodesForDPUHost(clusterName string) error {
+	dpuHostNodes := m.config.GetDPUHostNodeNames(clusterName)
+	if len(dpuHostNodes) == 0 {
+		log.Info("No DPU-host nodes found in cluster %s", clusterName)
+		return nil
+	}
+
+	log.Info("Labeling DPU-host nodes in cluster %s...", clusterName)
+	for _, nodeName := range dpuHostNodes {
+		labels := map[string]string{
+			"k8s.ovn.org/dpu-host": "",
+		}
+		if err := m.k8sClient.LabelNode(nodeName, labels); err != nil {
+			return fmt.Errorf("failed to label DPU-host node %s: %w", nodeName, err)
+		}
+		log.Debug("✓ Labeled node %s with k8s.ovn.org/dpu-host", nodeName)
+	}
+
+	log.Info("✓ DPU-host nodes labeled in cluster %s", clusterName)
+	return nil
+}
+
+// labelNodesForDPU labels DPU nodes with the required k8s.ovn.org/dpu label.
+func (m *CNIManager) labelNodesForDPU(clusterName string) error {
+	dpuNodes := m.config.GetDPUNodeNames(clusterName)
+	if len(dpuNodes) == 0 {
+		log.Info("No DPU nodes found in cluster %s", clusterName)
+		return nil
+	}
+
+	log.Info("Labeling DPU nodes in cluster %s...", clusterName)
+	for _, nodeName := range dpuNodes {
+		labels := map[string]string{
+			"k8s.ovn.org/dpu": "",
+		}
+		if err := m.k8sClient.LabelNode(nodeName, labels); err != nil {
+			return fmt.Errorf("failed to label DPU node %s: %w", nodeName, err)
+		}
+		log.Debug("✓ Labeled node %s with k8s.ovn.org/dpu", nodeName)
+	}
+
+	log.Info("✓ DPU nodes labeled in cluster %s", clusterName)
+	return nil
+}
+
+// createDPUAccessSecret creates a service account token Secret in the
+// ovn-kubernetes namespace for the ovnkube-node service account. The DPU
+// cluster uses the token and CA cert from this secret for cross-cluster access.
+func (m *CNIManager) createDPUAccessSecret() error {
+	log.Info("Creating DPU access secret for cross-cluster authentication...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ovnkube-node-sa-for-dpu",
+			Namespace: "ovn-kubernetes",
+			Annotations: map[string]string{
+				"kubernetes.io/service-account.name": "ovnkube-node",
+			},
+		},
+		Type: corev1.SecretTypeServiceAccountToken,
+	}
+
+	_, err := m.k8sClient.Clientset().CoreV1().Secrets("ovn-kubernetes").Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create DPU access secret: %w", err)
+	}
+
+	// Wait for the token controller to populate the secret
+	log.Info("Waiting for DPU access secret to be populated...")
+	for i := 0; i < 30; i++ {
+		time.Sleep(2 * time.Second)
+		populated, getErr := m.k8sClient.Clientset().CoreV1().Secrets("ovn-kubernetes").Get(ctx, "ovnkube-node-sa-for-dpu", metav1.GetOptions{})
+		if getErr != nil {
+			continue
+		}
+		if _, hasToken := populated.Data["token"]; hasToken {
+			log.Info("✓ DPU access secret created and populated")
+			return nil
+		}
+	}
+
+	return fmt.Errorf("timed out waiting for DPU access secret to be populated")
+}
+
+// getDPUHostClusterCredentials retrieves the service account token and CA
+// certificate from the host cluster's "ovnkube-node-sa-for-dpu" secret,
+// along with the API server URL and cluster network information. The host
+// cluster kubeconfig path is derived from the config.
+func (m *CNIManager) getDPUHostClusterCredentials() (*DPUHostCredentials, error) {
+	hostClusterName := m.config.GetDPUHostClusterName()
+	hostKubeconfigPath := k8s.GetKubeconfigPath(hostClusterName, m.config.Kubernetes.GetKubeconfigDir())
+	log.Info("Retrieving DPU host cluster credentials from %s...", hostKubeconfigPath)
+
+	hostClient, err := k8s.NewClientFromFile(hostKubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create host cluster client: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	secret, err := hostClient.Clientset().CoreV1().Secrets("ovn-kubernetes").Get(ctx, "ovnkube-node-sa-for-dpu", metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get DPU access secret from host cluster: %w", err)
+	}
+
+	tokenBytes, ok := secret.Data["token"]
+	if !ok {
+		return nil, fmt.Errorf("token not found in DPU access secret")
+	}
+
+	caCertBytes, ok := secret.Data["ca.crt"]
+	if !ok {
+		return nil, fmt.Errorf("ca.crt not found in DPU access secret")
+	}
+
+	hostClusterCfg := m.config.GetClusterConfig(hostClusterName)
+	if hostClusterCfg == nil {
+		return nil, fmt.Errorf("host cluster %s not found in config", hostClusterName)
+	}
+
+	// Determine the host cluster API server URL from the first master node
+	apiServerURL := ""
+	if m.config.IsVMMode() {
+		masterVMs := m.config.GetClusterRoleMapping()[hostClusterName][config.ClusterRoleMaster]
+		if len(masterVMs) > 0 {
+			apiServerURL = "https://" + masterVMs[0].K8sNodeIP + ":6443"
+		}
+	}
+	if apiServerURL == "" {
+		apiServerURL = hostClient.GetAPIServerURL()
+	}
+
+	// Pod CIDR in the format expected by OVN-K DPU: "CIDR/perNodePrefix"
+	podCIDR := hostClusterCfg.PodCIDR
+	if !strings.Contains(podCIDR, "/24") || strings.Count(podCIDR, "/") < 2 {
+		podCIDR = podCIDR + "/24"
+	}
+
+	credentials := &DPUHostCredentials{
+		APIServer:   apiServerURL,
+		Token:       string(tokenBytes),
+		CACert:      base64.StdEncoding.EncodeToString(caCertBytes),
+		PodCIDR:     podCIDR,
+		ServiceCIDR: hostClusterCfg.ServiceCIDR,
+	}
+
+	log.Info("✓ DPU host cluster credentials retrieved (API: %s, PodCIDR: %s, ServiceCIDR: %s)",
+		credentials.APIServer, credentials.PodCIDR, credentials.ServiceCIDR)
+	return credentials, nil
 }
 
 // Deprecated: daemonset.sh-based deployment

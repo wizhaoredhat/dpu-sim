@@ -14,6 +14,7 @@ type K8sClient struct {
 	dynamicClient   dynamic.Interface
 	cachedDiscovery discovery.CachedDiscoveryInterface
 	restMapper      *restmapper.DeferredDiscoveryRESTMapper
+	apiServerURL    string // API server URL from the REST config
 }
 
 // K8sMachineManager manages Kubernetes cluster operations

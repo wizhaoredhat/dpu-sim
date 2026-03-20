@@ -80,3 +80,13 @@ func (m *CNIManager) SetKubeconfigFile(kubeconfigPath string) error {
 func (m *CNIManager) K8sClient() *k8s.K8sClient {
 	return m.k8sClient
 }
+
+// DPUHostCredentials holds the credentials and network information for the
+// DPU host cluster that the DPU cluster needs for cross-cluster access.
+type DPUHostCredentials struct {
+	APIServer   string
+	Token       string
+	CACert      string // base64-encoded CA certificate
+	PodCIDR     string // e.g., "10.244.0.0/16/24" (with per-node prefix)
+	ServiceCIDR string
+}

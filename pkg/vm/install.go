@@ -150,7 +150,8 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("failed to create CNI manager: %w", err)
 	}
 
-	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP, config.K8sNetworkName); err != nil {
+	gwIf, gwAccelIf := m.config.GatewayInterfaces(clusterName)
+	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP, gwIf, gwAccelIf); err != nil {
 		return fmt.Errorf("failed to install CNI: %w", err)
 	}
 
@@ -191,13 +192,15 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	return nil
 }
 
-// SetupAllK8sClusters sets up all Kubernetes clusters from the configuration
+// SetupAllK8sClusters sets up all Kubernetes clusters from the configuration.
+// Clusters are processed in install order (host clusters before DPU clusters
+// when offloading is enabled).
 func (m *VMManager) SetupAllK8sClusters() error {
 	clusterRoleMapping := m.config.GetClusterRoleMapping()
-	for _, clusterName := range m.config.GetClusterNames() {
-		log.Info("\n=== Setting up Kubernetes cluster %s ===", clusterName)
-		if err := m.setupK8sCluster(clusterName, clusterRoleMapping[clusterName]); err != nil {
-			return fmt.Errorf("failed to setup Kubernetes cluster %s: %w", clusterName, err)
+	for _, clusterCfg := range m.config.ClustersOrderedForInstall() {
+		log.Info("\n=== Setting up Kubernetes cluster %s ===", clusterCfg.Name)
+		if err := m.setupK8sCluster(clusterCfg.Name, clusterRoleMapping[clusterCfg.Name]); err != nil {
+			return fmt.Errorf("failed to setup Kubernetes cluster %s: %w", clusterCfg.Name, err)
 		}
 	}
 	return nil

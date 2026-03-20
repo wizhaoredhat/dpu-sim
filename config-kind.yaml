@@ -42,6 +42,7 @@ kind:
 
 kubernetes:
   version: "1.33"
+  offload_dpu: false
   clusters:
     - name: "dpu-sim-host-kind"
       pod_cidr: "10.244.0.0/16"

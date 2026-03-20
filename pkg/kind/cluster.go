@@ -63,8 +63,9 @@ func (m *KindManager) DeployAllClusters() error {
 	return nil
 }
 
+// InstallCNI installs the CNI on every Kind cluster.
 func (m *KindManager) InstallCNI() error {
-	for _, clusterCfg := range m.config.Kubernetes.Clusters {
+	for _, clusterCfg := range m.config.ClustersOrderedForInstall() {
 		log.Info("\n--- Installing CNI on cluster %s ---", clusterCfg.Name)
 		cniType := clusterCfg.CNI
 
@@ -94,7 +95,8 @@ func (m *KindManager) InstallCNI() error {
 			return fmt.Errorf("failed to get internal API server IP for cluster %s: %w", clusterCfg.Name, err)
 		}
 
-		if err := cniMgr.InstallCNI(cniType, clusterCfg.Name, apiServerIP, "eth0"); err != nil {
+		gwIf, gwAccelIf := m.config.GatewayInterfaces(clusterCfg.Name)
+		if err := cniMgr.InstallCNI(cniType, clusterCfg.Name, apiServerIP, gwIf, gwAccelIf); err != nil {
 			return fmt.Errorf("failed to install CNI on cluster %s: %w", clusterCfg.Name, err)
 		}
 	}

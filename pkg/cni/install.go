@@ -10,15 +10,17 @@ import (
 )
 
 // InstallCNI installs the specified CNI on a cluster using the Kubernetes API.
-// gatewayInterface is the default gateway interface name.
-func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sIP string, gatewayInterface string) error {
+// gatewayInterface is the default gateway interface name. For OVN-Kubernetes
+// the deployment mode (full / DPU-host / DPU) is detected automatically from
+// the config, including cross-cluster credential retrieval for DPU mode.
+func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sIP string, gatewayInterface string, gatewayAcceleratedInterface string) error {
 	log.Info("\n=== Installing %s CNI on cluster %s ===", cniType, clusterName)
 
 	switch cniType {
 	case config.CNIFlannel:
 		return m.installFlannel(clusterName)
 	case config.CNIOVNKubernetes:
-		return m.installOVNKubernetes(clusterName, k8sIP, gatewayInterface)
+		return m.installOVNKubernetes(clusterName, k8sIP, gatewayInterface, gatewayAcceleratedInterface)
 	case config.CNIKindnet:
 		if m.config.IsKindMode() {
 			log.Info("Kindnet is the default CNI for Kind clusters, no installation needed")

@@ -509,6 +509,115 @@ func (c *Config) GetKindHostDPUPairs() []KindHostDPUPair {
 	return pairs
 }
 
+// IsOffloadDPU returns true if DPU offloading is enabled.
+// When true, OVN-Kubernetes is deployed in DPU/DPU-Host mode instead of Full mode.
+func (c *Config) IsOffloadDPU() bool {
+	return c.Kubernetes.OffloadDPU
+}
+
+// IsDPUCluster returns true if the named cluster contains DPU-type nodes.
+func (c *Config) IsDPUCluster(clusterName string) bool {
+	for _, vm := range c.VMs {
+		if vm.K8sCluster == clusterName && vm.Type == DpuType {
+			return true
+		}
+	}
+	if c.Kind != nil {
+		for _, node := range c.Kind.Nodes {
+			if node.K8sCluster == clusterName && node.Type == DpuType {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// GetDPUClusterName returns the name of the cluster that contains DPU-type nodes,
+// or empty string if none.
+func (c *Config) GetDPUClusterName() string {
+	for _, cluster := range c.Kubernetes.Clusters {
+		if c.IsDPUCluster(cluster.Name) {
+			return cluster.Name
+		}
+	}
+	return ""
+}
+
+// GetDPUHostClusterName returns the name of the cluster that contains host nodes
+// paired with DPUs.
+func (c *Config) GetDPUHostClusterName() string {
+	dpuCluster := c.GetDPUClusterName()
+	if dpuCluster == "" {
+		return ""
+	}
+	for _, cluster := range c.Kubernetes.Clusters {
+		if cluster.Name != dpuCluster {
+			return cluster.Name
+		}
+	}
+	return ""
+}
+
+// GetDPUHostNodeNames returns the K8s node names for DPU-host nodes in the
+// given cluster. These are host-type nodes that have a corresponding DPU in
+// another cluster.
+func (c *Config) GetDPUHostNodeNames(clusterName string) []string {
+	dpuHostNames := make(map[string]bool)
+	for _, vm := range c.VMs {
+		if vm.Type == DpuType && vm.Host != "" {
+			dpuHostNames[vm.Host] = true
+		}
+	}
+	if c.Kind != nil {
+		for _, node := range c.Kind.Nodes {
+			if node.Type == DpuType && node.Host != "" {
+				dpuHostNames[node.Host] = true
+			}
+		}
+	}
+
+	var names []string
+	if c.IsVMMode() {
+		for _, vm := range c.VMs {
+			if vm.K8sCluster == clusterName && vm.Type == HostType && dpuHostNames[vm.Name] {
+				names = append(names, vm.Name)
+			}
+		}
+	} else if c.Kind != nil {
+		for _, node := range c.Kind.Nodes {
+			if node.K8sCluster == clusterName && node.Type == HostType && dpuHostNames[node.Name] {
+				containerName := c.GetKindNodeContainerName(clusterName, node.Name)
+				if containerName != "" {
+					names = append(names, containerName)
+				}
+			}
+		}
+	}
+	return names
+}
+
+// GetDPUNodeNames returns the K8s node names for DPU-type nodes in the given cluster.
+func (c *Config) GetDPUNodeNames(clusterName string) []string {
+	var names []string
+	if c.IsVMMode() {
+		for _, vm := range c.VMs {
+			if vm.K8sCluster == clusterName && vm.Type == DpuType {
+				names = append(names, vm.Name)
+			}
+		}
+	} else if c.Kind != nil {
+		for _, node := range c.Kind.Nodes {
+			if node.K8sCluster == clusterName && node.Type == DpuType {
+				containerName := c.GetKindNodeContainerName(clusterName, node.Name)
+				if containerName != "" {
+					names = append(names, containerName)
+				}
+			}
+		}
+	}
+	return names
+}
+
 // GetNetworkByType returns the network configuration by type (e.g., "mgmt" or "k8s")
 func (c *Config) GetNetworkByType(networkType string) *NetworkConfig {
 	for i := range c.Networks {
@@ -656,4 +765,49 @@ func expandTilde(path string) (string, error) {
 
 	// Just ~ prefix without slash - return as is (edge case like ~username not supported)
 	return path, nil
+}
+
+// ClustersOrderedForInstall returns a copy of the configured clusters ordered
+// so that DPU host clusters come before DPU clusters. This ensures the host
+// cluster's service account secret exists before the DPU cluster tries to
+// fetch it. When DPU offloading is disabled the original order is preserved.
+func (c *Config) ClustersOrderedForInstall() []ClusterConfig {
+	if !c.IsOffloadDPU() {
+		return c.Kubernetes.Clusters
+	}
+	ordered := make([]ClusterConfig, 0, len(c.Kubernetes.Clusters))
+	var dpuClusters []ClusterConfig
+	for _, cl := range c.Kubernetes.Clusters {
+		if c.IsDPUCluster(cl.Name) {
+			dpuClusters = append(dpuClusters, cl)
+		} else {
+			ordered = append(ordered, cl)
+		}
+	}
+	return append(ordered, dpuClusters...)
+}
+
+// GatewayInterfaces returns the gateway interface and accelerated gateway
+// interface names for the given cluster.
+func (c *Config) GatewayInterfaces(clusterName string) (gateway, acceleratedGateway string) {
+	gatewayIf := K8sNetworkName
+	if c.IsKindMode() {
+		gatewayIf = KindK8sNetworkName
+	}
+
+	if !c.IsOffloadDPU() {
+		return gatewayIf, ""
+	}
+	if c.IsDPUCluster(clusterName) {
+		return "", "rep0-0"
+	}
+	return "eth0-0", ""
+}
+
+// Get the management port name for the given cluster.
+func (c *Config) GetManagementPortName(clusterName string) string {
+	if c.IsDPUCluster(clusterName) {
+		return "rep0-1"
+	}
+	return "eth0-1"
 }

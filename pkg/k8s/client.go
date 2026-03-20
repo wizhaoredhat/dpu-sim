@@ -60,7 +60,14 @@ func NewClient(kubeconfigContent string) (*K8sClient, error) {
 		dynamicClient:   dynamicClient,
 		cachedDiscovery: cachedDiscovery,
 		restMapper:      mapper,
+		apiServerURL:    clientConfig.Host,
 	}, nil
+}
+
+// GetAPIServerURL returns the API server URL from the kubeconfig used to
+// create this client (e.g., "https://192.168.123.11:6443").
+func (c *K8sClient) GetAPIServerURL() string {
+	return c.apiServerURL
 }
 
 // NewClientFromFile creates a new Kubernetes client from a kubeconfig file path

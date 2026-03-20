@@ -8,6 +8,7 @@ import (
 const (
 	MgmtNetworkName      = "mgmt"
 	K8sNetworkName       = "k8s"
+	KindK8sNetworkName   = "eth0"
 	HostToDpuNetworkType = "HostToDpu"
 	VMDeploymentMode     = "vm"
 	KindDeploymentMode   = "kind"
@@ -122,6 +123,7 @@ type SSHConfig struct {
 type KubernetesConfig struct {
 	Version       string          `yaml:"version"`
 	KubeconfigDir string          `yaml:"kubeconfig_dir,omitempty"`
+	OffloadDPU    bool            `yaml:"offload_dpu,omitempty"`
 	Clusters      []ClusterConfig `yaml:"clusters"`
 }
 
