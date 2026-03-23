@@ -469,15 +469,41 @@ func (c *Config) GetKindWorkerCount(clusterName string) int {
 	return count
 }
 
-// KindHostDPUPair describes a host-DPU worker pair; containers may be in different Kind clusters.
-type KindHostDPUPair struct {
-	HostContainer string
-	DPUContainer  string
+// HostDPUPair describes a Host and DPU worker pair. HostNode and DPUNode are the
+// K8s node names (Kind container names in Kind mode, VM names in VM mode).
+type HostDPUPair struct {
+	HostNode string
+	DPUNode  string
 }
 
-// GetKindHostDPUPairs returns all host-DPU container pairs for Kind mode, even if across clusters.
-// Each DPU node's "host" field references a host node; pairs use Docker container names.
-func (c *Config) GetKindHostDPUPairs() []KindHostDPUPair {
+// GetHostDPUPairs returns host-DPU worker pairs. When dpuClusterName is empty
+// all pairs are returned; otherwise only pairs whose DPU belongs to the given
+// cluster are included. Works for both Kind and VM modes.
+func (c *Config) GetHostDPUPairs(dpuClusterName string) []HostDPUPair {
+	if c.IsVMMode() {
+		return c.getHostDPUPairsVM(dpuClusterName)
+	}
+	return c.getHostDPUPairsKind(dpuClusterName)
+}
+
+func (c *Config) getHostDPUPairsVM(dpuClusterName string) []HostDPUPair {
+	var pairs []HostDPUPair
+	for _, vm := range c.VMs {
+		if vm.Type != DpuType || vm.Host == "" {
+			continue
+		}
+		if dpuClusterName != "" && vm.K8sCluster != dpuClusterName {
+			continue
+		}
+		pairs = append(pairs, HostDPUPair{
+			HostNode: vm.Host,
+			DPUNode:  vm.Name,
+		})
+	}
+	return pairs
+}
+
+func (c *Config) getHostDPUPairsKind(dpuClusterName string) []HostDPUPair {
 	if c.Kind == nil {
 		return nil
 	}
@@ -487,9 +513,12 @@ func (c *Config) GetKindHostDPUPairs() []KindHostDPUPair {
 			hostByName[node.Name] = node
 		}
 	}
-	var pairs []KindHostDPUPair
+	var pairs []HostDPUPair
 	for _, node := range c.Kind.Nodes {
 		if node.Type != DpuType || node.Host == "" {
+			continue
+		}
+		if dpuClusterName != "" && node.K8sCluster != dpuClusterName {
 			continue
 		}
 		host, ok := hostByName[node.Host]
@@ -501,9 +530,9 @@ func (c *Config) GetKindHostDPUPairs() []KindHostDPUPair {
 		if hostContainer == "" || dpuContainer == "" {
 			continue
 		}
-		pairs = append(pairs, KindHostDPUPair{
-			HostContainer: hostContainer,
-			DPUContainer:  dpuContainer,
+		pairs = append(pairs, HostDPUPair{
+			HostNode: hostContainer,
+			DPUNode:  dpuContainer,
 		})
 	}
 	return pairs

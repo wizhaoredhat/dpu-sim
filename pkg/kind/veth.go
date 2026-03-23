@@ -25,7 +25,7 @@ func (m *KindManager) SetupHostToDpuNetwork() error {
 		return nil
 	}
 
-	pairs := m.config.GetKindHostDPUPairs()
+	pairs := m.config.GetHostDPUPairs("")
 	if len(pairs) == 0 {
 		log.Warn("HostToDpu network configured but no host/dpu worker pairs found in Kind node config")
 		return nil
@@ -41,7 +41,7 @@ func (m *KindManager) SetupHostToDpuNetwork() error {
 // When veths are in kind containers, they are automatically cleaned up by the kind delete command.
 // When a container is destroyed, its network namespace is torn down by the kernel which automatically
 // deletes the interfaces in that namespace.
-func (m *KindManager) CleanupVethTopology(cmdExec platform.CommandExecutor, pairs []config.KindHostDPUPair, numPairs int) {
+func (m *KindManager) CleanupVethTopology(cmdExec platform.CommandExecutor, pairs []config.HostDPUPair, numPairs int) {
 	for pairIdx := range pairs {
 		for i := 0; i < numPairs; i++ {
 			cmdExec.RunCmd(log.LevelDebug, "sudo", "ip", "link", "delete", fmt.Sprintf(vethHostEndFmt, pairIdx, i))
@@ -61,22 +61,22 @@ func (m *KindManager) CleanupVethTopology(cmdExec platform.CommandExecutor, pair
 //
 // Host container:  pf     (takes over the Kind IP from eth0)
 // DPU  container:  pfrep
-func (m *KindManager) CreateVethTopology(cmdExec platform.CommandExecutor, pairs []config.KindHostDPUPair, numPairs int) error {
+func (m *KindManager) CreateVethTopology(cmdExec platform.CommandExecutor, pairs []config.HostDPUPair, numPairs int) error {
 	for pairIdx, pair := range pairs {
 		log.Info("Setting up veth topology for pair %d: %s <-> %s (%d data channels)",
-			pairIdx, pair.HostContainer, pair.DPUContainer, numPairs)
+			pairIdx, pair.HostNode, pair.DPUNode, numPairs)
 
-		hostPID, err := getContainerPID(cmdExec, pair.HostContainer)
+		hostPID, err := getContainerPID(cmdExec, pair.HostNode)
 		if err != nil {
-			return fmt.Errorf("failed to get PID for host container %s: %w", pair.HostContainer, err)
+			return fmt.Errorf("failed to get PID for host container %s: %w", pair.HostNode, err)
 		}
-		dpuPID, err := getContainerPID(cmdExec, pair.DPUContainer)
+		dpuPID, err := getContainerPID(cmdExec, pair.DPUNode)
 		if err != nil {
-			return fmt.Errorf("failed to get PID for DPU container %s: %w", pair.DPUContainer, err)
+			return fmt.Errorf("failed to get PID for DPU container %s: %w", pair.DPUNode, err)
 		}
 
-		hostContainerExec := platform.NewDockerExecutor(pair.HostContainer)
-		dpuContainerExec := platform.NewDockerExecutor(pair.DPUContainer)
+		hostContainerExec := platform.NewDockerExecutor(pair.HostNode)
+		dpuContainerExec := platform.NewDockerExecutor(pair.DPUNode)
 
 		if err := createDataVeths(cmdExec, hostContainerExec, dpuContainerExec, pairIdx, hostPID, dpuPID, numPairs); err != nil {
 			return fmt.Errorf("failed to create data veths for pair %d: %w", pairIdx, err)
