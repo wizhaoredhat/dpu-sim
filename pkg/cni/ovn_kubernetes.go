@@ -283,7 +283,12 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, ovnkRepoPath, apiServerURL, p
 			"--set", "global.mtu=1400",
 		)
 		if m.config.NeedsOVSNodeDaemonSet() {
-			args = append(args, "--set", "tags.ovs-node=true")
+			args = append(args,
+				"--set", "tags.ovs-node=true",
+				"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
+				"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
+				"--set", "global.image.pullPolicy=Always",
+			)
 		}
 	}
 
