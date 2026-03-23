@@ -144,17 +144,6 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("failed to save kubeconfig for cluster %s: %w", clusterName, err)
 	}
 
-	kubeconfigPath := k8s.GetKubeconfigPath(clusterName, m.config.Kubernetes.KubeconfigDir)
-	cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to create CNI manager: %w", err)
-	}
-
-	gwIf, gwAccelIf := m.config.GatewayInterfaces(clusterName)
-	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP, gwIf, gwAccelIf); err != nil {
-		return fmt.Errorf("failed to install CNI: %w", err)
-	}
-
 	// Join additional master nodes to the control plane
 	if len(masterVMs) > 1 {
 		log.Info("=== Joining additional control plane nodes ===")
@@ -186,6 +175,17 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 				return fmt.Errorf("failed to join worker node %s: %w", workerVM.Name, err)
 			}
 		}
+	}
+
+	kubeconfigPath := k8s.GetKubeconfigPath(clusterName, m.config.Kubernetes.KubeconfigDir)
+	cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to create CNI manager: %w", err)
+	}
+
+	gwIf, gwAccelIf := m.config.GatewayInterfaces(clusterName)
+	if err := cniMgr.InstallCNI(cniType, clusterName, firstMasterK8sIP, gwIf, gwAccelIf); err != nil {
+		return fmt.Errorf("failed to install CNI: %w", err)
 	}
 
 	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)

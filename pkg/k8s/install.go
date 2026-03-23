@@ -262,6 +262,23 @@ func (m *K8sMachineManager) SetupKubectlForRootUser(cmdExec platform.CommandExec
 	return nil
 }
 
+// WaitForControlPlaneReady waits until bootstrap-critical control plane components
+// are ready enough for additional nodes to join (CSR approval/signing path available).
+func (m *K8sMachineManager) WaitForControlPlaneReady(cmdExec platform.CommandExecutor) error {
+	sb := strings.Builder{}
+	sb.WriteString("set -e\n")
+	sb.WriteString("KUBECTL='sudo kubectl --kubeconfig /etc/kubernetes/admin.conf'\n")
+	sb.WriteString("$KUBECTL wait --for=condition=Ready node/$(hostname) --timeout=5m\n")
+	sb.WriteString("$KUBECTL wait --for=condition=Ready pod -n kube-system -l component=kube-controller-manager --timeout=5m\n")
+
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(sb.String(), 6*time.Minute)
+	if err != nil {
+		return fmt.Errorf("failed waiting for control plane readiness: %w, stdout: %s, stderr: %s", err, stdout, stderr)
+	}
+
+	return nil
+}
+
 // ExtractWorkerJoinCommand extracts the worker join command from the machine
 func (m *K8sMachineManager) ExtractWorkerJoinCommand(cmdExec platform.CommandExecutor, machineName string) (string, error) {
 	sb := strings.Builder{}
@@ -312,6 +329,10 @@ func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecu
 
 	if err := m.SetupKubectlForRootUser(cmdExec, machineName); err != nil {
 		return nil, fmt.Errorf("failed to setup kubectl for root user: %w", err)
+	}
+
+	if err := m.WaitForControlPlaneReady(cmdExec); err != nil {
+		return nil, fmt.Errorf("control plane is not ready for node joins: %w", err)
 	}
 
 	workerJoinCommand, err := m.ExtractWorkerJoinCommand(cmdExec, machineName)
