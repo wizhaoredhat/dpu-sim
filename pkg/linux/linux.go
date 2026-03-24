@@ -240,9 +240,14 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 	return nil
 }
 
-func enableRHELOVSRepos(cmdExec platform.CommandExecutor, distro *platform.Distro) {
+func enableRHELOVSRepos(cmdExec platform.CommandExecutor, distro *platform.Distro) error {
+	if distro.Architecture != platform.X86_64 && distro.Architecture != platform.AARCH64 {
+		return platform.UnsupportedArchitecture(distro)
+	}
+
 	if !distro.IsRHEL() {
-		return
+		// Skip if not RHEL
+		return nil
 	}
 
 	arch := string(distro.Architecture)
@@ -257,26 +262,35 @@ func enableRHELOVSRepos(cmdExec platform.CommandExecutor, distro *platform.Distr
 			log.Warn("could not enable %s: %v", repo, err)
 		}
 	}
+	return nil
 }
 
-// Install Open vSwitch on the target machine
 func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	switch distro.PackageManager {
 	case platform.DNF:
-		if distro.Architecture != platform.X86_64 && distro.Architecture != platform.AARCH64 {
-			return platform.UnsupportedArchitecture(distro)
+		if err := enableRHELOVSRepos(cmdExec, distro); err != nil {
+			return fmt.Errorf("failed to enable RHEL OVS repos: %w", err)
 		}
-		enableRHELOVSRepos(cmdExec, distro)
-
 		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "openvswitch"); err != nil {
 			return fmt.Errorf("failed to install openvswitch: %w", err)
 		}
 	case platform.APT:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.APT, "update"); err != nil {
+			return fmt.Errorf("failed to update apt: %w", err)
+		}
 		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.APT, "install", "-y", "openvswitch-switch"); err != nil {
 			return fmt.Errorf("failed to install openvswitch: %w", err)
 		}
 	default:
 		return platform.UnsupportedPackageManager(distro)
+	}
+	return nil
+}
+
+// Install Open vSwitch on the target machine
+func InstallSystemdOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	if err := InstallOpenVSwitch(cmdExec, distro, cfg, dep); err != nil {
+		return fmt.Errorf("failed to install openvswitch: %w", err)
 	}
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "openvswitch"); err != nil {
 		return fmt.Errorf("failed to enable openvswitch: %w", err)
@@ -290,14 +304,25 @@ func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distr
 	return nil
 }
 
+// InstallOpenVSwitchDirect installs OVS and starts it directly with ovs-ctl.
+// Use this for environments without full systemd init (e.g. Kind containers).
+func InstallOpenVSwitchWithoutSystemd(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	if err := InstallOpenVSwitch(cmdExec, distro, cfg, dep); err != nil {
+		return fmt.Errorf("failed to install openvswitch: %w", err)
+	}
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "/usr/share/openvswitch/scripts/ovs-ctl", "start", "--system-id=random"); err != nil {
+		return fmt.Errorf("failed to start OVS via ovs-ctl: %w", err)
+	}
+	return nil
+}
+
 // Install NetworkManager Open vSwitch on the target machine
 func InstallNetworkManagerOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	switch distro.PackageManager {
 	case platform.DNF:
-		if distro.Architecture != platform.X86_64 && distro.Architecture != platform.AARCH64 {
-			return platform.UnsupportedArchitecture(distro)
+		if err := enableRHELOVSRepos(cmdExec, distro); err != nil {
+			return fmt.Errorf("failed to enable RHEL OVS repos: %w", err)
 		}
-		enableRHELOVSRepos(cmdExec, distro)
 
 		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "NetworkManager-ovs"); err != nil {
 			return fmt.Errorf("failed to install NetworkManager-ovs: %w", err)

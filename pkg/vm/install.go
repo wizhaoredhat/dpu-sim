@@ -103,6 +103,11 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	//		return err
 	//	}
 	//}
+	if cniType == config.CNIOVNKubernetes && m.config.IsOffloadDPU() && m.config.IsDPUCluster(clusterCfg.Name) {
+		if err := m.setupOVNKubernetesOffloadToDPUOVS(clusterCfg.Name); err != nil {
+			return fmt.Errorf("failed to setup OVS on DPU VMs: %w", err)
+		}
+	}
 
 	// Ensure br-int exists on all nodes (OVN needs it; avoids "ovs-ofctl: br-int is not a bridge or a socket").
 	for _, vms := range clusterRoleMapping {
@@ -189,6 +194,34 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	}
 
 	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)
+	return nil
+}
+
+// setupOVNKubernetesOffloadToDPUOVS configures OVS external_ids on all DPU VMs in the given
+// cluster. OVS is already installed on VMs during InstallKubernetes; this
+// sets the external_ids that ovnkube-node DPU mode needs.
+func (m *VMManager) setupOVNKubernetesOffloadToDPUOVS(dpuClusterName string) error {
+	pairs := m.config.GetHostDPUPairs(dpuClusterName)
+	if len(pairs) == 0 {
+		return nil
+	}
+
+	for _, pair := range pairs {
+		mgmtIP, err := m.GetVMMgmtIP(pair.DPUNode)
+		if err != nil {
+			return fmt.Errorf("failed to get mgmt IP for DPU %s: %w", pair.DPUNode, err)
+		}
+
+		encapIP, err := m.GetVMK8sIP(pair.DPUNode)
+		if err != nil {
+			return fmt.Errorf("failed to get K8s IP for DPU %s: %w", pair.DPUNode, err)
+		}
+
+		sshExec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
+		if err := cni.SetupOVNKOffloadToDPUNodeOVS(sshExec, pair.DPUNode, pair.HostNode, encapIP); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

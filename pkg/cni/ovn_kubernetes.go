@@ -282,14 +282,7 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, ovnkRepoPath, apiServerURL, p
 			"--set", fmt.Sprintf("global.dpuHostClusterServiceCIDR=%s", creds.ServiceCIDR),
 			"--set", "global.mtu=1400",
 		)
-		if m.config.NeedsOVSNodeDaemonSet() {
-			args = append(args,
-				"--set", "tags.ovs-node=true",
-				"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
-				"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
-				"--set", "global.image.pullPolicy=Always",
-			)
-		}
+		args = append(args, "--set", "tags.ovs-node=false")
 	}
 
 	if gatewayInterface != "" {
@@ -1030,6 +1023,31 @@ func (m *CNIManager) getDPUHostClusterCredentials() (*DPUHostCredentials, error)
 	log.Info("✓ DPU host cluster credentials retrieved (API: %s, PodCIDR: %s, ServiceCIDR: %s)",
 		credentials.APIServer, credentials.PodCIDR, credentials.ServiceCIDR)
 	return credentials, nil
+}
+
+// SetupOVNKOffloadToDPUNodeOVS configures OVS external_ids on a DPU node so that
+// ovnkube-node in DPU mode can find the encap IP and the paired host node
+// name. his must be called after OVS is installed/running
+// on the DPU and before helm install.
+func SetupOVNKOffloadToDPUNodeOVS(cmdExec platform.CommandExecutor, dpuNodeName, hostNodeName, encapIP string) error {
+	log.Info("Configuring OVS external_ids on DPU %s (encap-ip=%s, host=%s)...", dpuNodeName, encapIP, hostNodeName)
+
+	ovsCmd := fmt.Sprintf(
+		"ovs-vsctl set Open_vSwitch . "+
+			"external_ids:ovn-encap-ip=%s "+
+			"external_ids:hostname=%s "+
+			"external_ids:host-k8s-nodename=%s "+
+			"external_ids:ovn-encap-type=geneve",
+		encapIP, dpuNodeName, hostNodeName,
+	)
+
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(ovsCmd, 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to set OVS external_ids on %s: %w\nstdout: %s\nstderr: %s", dpuNodeName, err, stdout, stderr)
+	}
+
+	log.Info("✓ OVS external_ids configured on DPU %s", dpuNodeName)
+	return nil
 }
 
 // Deprecated: daemonset.sh-based deployment

@@ -58,7 +58,7 @@ func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) 
 			Name:        "openvswitch",
 			Reason:      "Required for OVS bridged networks",
 			CheckCmd:    []string{"ovs-vsctl", "--version"},
-			InstallFunc: linux.InstallOpenVSwitch,
+			InstallFunc: linux.InstallSystemdOpenVSwitch,
 		},
 	}
 

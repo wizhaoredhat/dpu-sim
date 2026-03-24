@@ -63,6 +63,60 @@ func (m *KindManager) DeployAllClusters() error {
 	return nil
 }
 
+// setupOVNKubernetesOffloadToDPUOVS installs OVS inside each DPU Kind container and
+// configures the external_ids that ovnkube-node DPU mode requires. This
+// mirrors the VM flow where OVS is pre-installed on the DPU hardware.
+func (m *KindManager) setupOVNKubernetesOffloadToDPUOVS(dpuClusterName string) error {
+	pairs := m.config.GetHostDPUPairs(dpuClusterName)
+	if len(pairs) == 0 {
+		return nil
+	}
+
+	ovsDeps := []platform.Dependency{
+		{
+			Name:        "Open vSwitch",
+			Reason:      "Required for OVN-Kubernetes DPU mode",
+			CheckCmd:    []string{"ovs-vsctl", "--version"},
+			InstallFunc: linux.InstallOpenVSwitchWithoutSystemd,
+		},
+	}
+
+	for _, pair := range pairs {
+		dpuExec := platform.NewDockerExecutor(pair.DPUNode)
+
+		if err := platform.EnsureDependenciesWithExecutor(dpuExec, ovsDeps, m.config); err != nil {
+			return fmt.Errorf("failed to ensure OVS on DPU container %s: %w", pair.DPUNode, err)
+		}
+
+		encapIP, err := m.getContainerIP(pair.DPUNode)
+		if err != nil {
+			return fmt.Errorf("failed to get IP for DPU container %s: %w", pair.DPUNode, err)
+		}
+
+		if err := cni.SetupOVNKOffloadToDPUNodeOVS(dpuExec, pair.DPUNode, pair.HostNode, encapIP); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// getContainerIP returns the IP address of a Kind container on the kind
+// Docker network.
+func (m *KindManager) getContainerIP(containerName string) (string, error) {
+	cmd := exec.Command(m.containerBin, "inspect", "-f",
+		"{{.NetworkSettings.Networks.kind.IPAddress}}", containerName)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get IP for container %s: %w", containerName, err)
+	}
+	ip := strings.TrimSpace(string(output))
+	if ip == "" {
+		return "", fmt.Errorf("IP is empty for container %s", containerName)
+	}
+	return ip, nil
+}
+
 // InstallCNI installs the CNI on every Kind cluster.
 func (m *KindManager) InstallCNI() error {
 	for _, clusterCfg := range m.config.ClustersOrderedForInstall() {
@@ -81,6 +135,12 @@ func (m *KindManager) InstallCNI() error {
 				}
 			} else {
 				log.Info("Using local registry image for OVN-Kubernetes (tag: %s)", regContainer.Tag)
+			}
+		}
+
+		if cniType == config.CNIOVNKubernetes && m.config.IsOffloadDPU() && m.config.IsDPUCluster(clusterCfg.Name) {
+			if err := m.setupOVNKubernetesOffloadToDPUOVS(clusterCfg.Name); err != nil {
+				return fmt.Errorf("failed to setup OVS on DPU containers: %w", err)
 			}
 		}
 
@@ -357,18 +417,9 @@ func (m *KindManager) GetInternalAPIServerIP(clusterName string) (string, error)
 		return "", fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
-	cpContainer := controlPlaneContainer(clusterName)
-
-	cmd := exec.Command(m.containerBin, "inspect", "-f",
-		"{{.NetworkSettings.Networks.kind.IPAddress}}", cpContainer)
-	output, err := cmd.Output()
+	nodeIP, err := m.getContainerIP(controlPlaneContainer(clusterName))
 	if err != nil {
-		return "", fmt.Errorf("failed to get IP for %s: %w", cpContainer, err)
-	}
-
-	nodeIP := strings.TrimSpace(string(output))
-	if nodeIP == "" {
-		return "", fmt.Errorf("IP is empty for %s", cpContainer)
+		return "", err
 	}
 
 	log.Info("Internal API server IP for cluster %s: %s", clusterName, nodeIP)

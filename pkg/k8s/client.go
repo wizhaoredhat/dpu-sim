@@ -418,6 +418,31 @@ func (c *K8sClient) LabelNode(name string, labels map[string]string) error {
 	return nil
 }
 
+// AnnotateNode adds or updates annotations on a node
+func (c *K8sClient) AnnotateNode(name string, annotations map[string]string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get node %s: %w", name, err)
+	}
+
+	if node.Annotations == nil {
+		node.Annotations = make(map[string]string)
+	}
+	for k, v := range annotations {
+		node.Annotations[k] = v
+	}
+
+	_, err = c.clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update node %s annotations: %w", name, err)
+	}
+
+	return nil
+}
+
 // RemoveNodeTaint removes a taint from a node by key and effect (best effort, ignores if not found)
 func (c *K8sClient) RemoveNodeTaint(name string, taintKey string, effect corev1.TaintEffect) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
