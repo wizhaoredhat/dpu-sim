@@ -26,6 +26,12 @@ func (m *KindManager) InstallDependencies(cmdExec platform.CommandExecutor) erro
 			CheckFunc:   linux.CheckIpv6,
 			InstallFunc: linux.ConfigureIpv6,
 		},
+		{
+			Name:        "Open vSwitch",
+			Reason:      "Required for OVN-Kubernetes",
+			CheckCmd:    []string{"ovs-vsctl", "--version"},
+			InstallFunc: linux.InstallOpenVSwitchWithoutSystemd,
+		},
 	}
 	return platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config)
 }
@@ -72,21 +78,8 @@ func (m *KindManager) setupOVNKubernetesOffloadToDPUOVS(dpuClusterName string) e
 		return nil
 	}
 
-	ovsDeps := []platform.Dependency{
-		{
-			Name:        "Open vSwitch",
-			Reason:      "Required for OVN-Kubernetes DPU mode",
-			CheckCmd:    []string{"ovs-vsctl", "--version"},
-			InstallFunc: linux.InstallOpenVSwitchWithoutSystemd,
-		},
-	}
-
 	for _, pair := range pairs {
 		dpuExec := platform.NewDockerExecutor(pair.DPUNode)
-
-		if err := platform.EnsureDependenciesWithExecutor(dpuExec, ovsDeps, m.config); err != nil {
-			return fmt.Errorf("failed to ensure OVS on DPU container %s: %w", pair.DPUNode, err)
-		}
 
 		encapIP, err := m.getContainerIP(pair.DPUNode)
 		if err != nil {
