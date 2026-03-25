@@ -186,7 +186,7 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gate
 		}
 	}
 
-	mgmtPortName := ""
+	mgmtPortName := m.config.GetManagementPortName(clusterName)
 	if err := m.runHelmInstall(mode, ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, mgmtPortName, gatewayInterface, gatewayAcceleratedInterface); err != nil {
 		return fmt.Errorf("failed to run helm install: %w", err)
 	}
