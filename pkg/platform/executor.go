@@ -54,18 +54,56 @@ type CommandExecutor interface {
 	RemoveAll(path string) error
 
 	// GetDistro returns the Linux distribution information for this executor's target
+	// The result is cached after the first probe.
 	GetDistro() (*Distro, error)
 
 	// GetArchitecture returns the architecture of the target system
 	GetArchitecture() (Architecture, error)
 
+	// HasSudo returns true if "sudo" is available on the target system.
+	// The result is cached after the first probe.
+	HasSudo() bool
+
 	// String returns a description of this executor (for logging)
 	String() string
+}
+
+// stripSudoCmd removes "sudo" from RunCmd-style arguments when sudo is
+// unavailable.
+func stripSudoCmd(hasSudo bool, name string, args []string) (string, []string) {
+	if !hasSudo && name == "sudo" && len(args) > 0 {
+		return args[0], args[1:]
+	}
+	return name, args
+}
+
+// stripSudoScript removes "sudo " prefixes from shell script strings when
+// sudo is unavailable. Handles both line-start and mid-line occurrences
+// (e.g. after "&&", pipes, or semicolons).
+func stripSudoScript(hasSudo bool, command string) string {
+	if hasSudo {
+		return command
+	}
+	result := strings.ReplaceAll(command, "sudo ", "")
+	return result
+}
+
+// rawExecute runs a command without any sudo stripping. Used internally only
+// by probeSudo to avoid infinite recursion.
+type rawExecutor interface {
+	rawExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error)
+}
+
+// probeSudo checks whether "sudo" is available on the target system.
+func probeSudo(cmdExec rawExecutor) bool {
+	_, _, err := cmdExec.rawExecuteWithTimeout("which sudo", 5*time.Second)
+	return err == nil
 }
 
 // LocalExecutor executes commands on the local machine
 type LocalExecutor struct {
 	cachedDistro *Distro
+	cachedSudo   *bool
 }
 
 // NewLocalExecutor creates a new LocalExecutor
@@ -78,13 +116,22 @@ func (e *LocalExecutor) WaitUntilReady(timeout time.Duration) error {
 	return nil
 }
 
+// HasSudo returns true if "sudo" is available locally.
+func (e *LocalExecutor) HasSudo() bool {
+	if e.cachedSudo != nil {
+		return *e.cachedSudo
+	}
+	v := probeSudo(e)
+	e.cachedSudo = &v
+	return v
+}
+
 // Execute runs a command locally
 func (e *LocalExecutor) Execute(command string) (stdout, stderr string, err error) {
 	return e.ExecuteWithTimeout(command, 30*time.Second)
 }
 
-// ExecuteWithTimeout runs a command with a specific timeout
-func (e *LocalExecutor) ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
+func (e *LocalExecutor) rawExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -97,8 +144,14 @@ func (e *LocalExecutor) ExecuteWithTimeout(command string, timeout time.Duration
 	return stdoutBuf.String(), stderrBuf.String(), err
 }
 
+// ExecuteWithTimeout runs a command with a specific timeout
+func (e *LocalExecutor) ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
+	return e.rawExecuteWithTimeout(stripSudoScript(e.HasSudo(), command), timeout)
+}
+
 // RunCmd executes a command with arguments
 func (e *LocalExecutor) RunCmd(level log.Level, name string, args ...string) error {
+	name, args = stripSudoCmd(e.HasSudo(), name, args)
 	cmd := exec.Command(name, args...)
 
 	// If the requested level is visible, stream to stdout/stderr
@@ -122,6 +175,7 @@ func (e *LocalExecutor) RunCmd(level log.Level, name string, args ...string) err
 
 // RunCmdInDir executes a command with arguments in a specific working directory
 func (e *LocalExecutor) RunCmdInDir(level log.Level, dir string, name string, args ...string) error {
+	name, args = stripSudoCmd(e.HasSudo(), name, args)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 
@@ -200,6 +254,7 @@ type SSHExecutor struct {
 	config       *config.SSHConfig
 	ip           string
 	cachedDistro *Distro
+	cachedSudo   *bool
 }
 
 // NewSSHExecutor creates a new SSHExecutor for a specific remote host
@@ -216,19 +271,33 @@ func (e *SSHExecutor) WaitUntilReady(timeout time.Duration) error {
 	return e.client.WaitForSSH(e.ip, timeout)
 }
 
+// HasSudo returns true if "sudo" is available on the remote host.
+func (e *SSHExecutor) HasSudo() bool {
+	if e.cachedSudo != nil {
+		return *e.cachedSudo
+	}
+	v := probeSudo(e)
+	e.cachedSudo = &v
+	return v
+}
+
 // Execute runs a command on the remote host
 func (e *SSHExecutor) Execute(command string) (stdout, stderr string, err error) {
 	return e.ExecuteWithTimeout(command, 30*time.Second)
 }
 
+func (e *SSHExecutor) rawExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
+	return e.client.ExecuteWithTimeout(e.ip, command, timeout)
+}
+
 // ExecuteWithTimeout runs a command with a specific timeout
 func (e *SSHExecutor) ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
-	return e.client.ExecuteWithTimeout(e.ip, command, timeout)
+	return e.rawExecuteWithTimeout(stripSudoScript(e.HasSudo(), command), timeout)
 }
 
 // RunCmd executes a command with arguments
 func (e *SSHExecutor) RunCmd(level log.Level, name string, args ...string) error {
-	// Build the command string
+	name, args = stripSudoCmd(e.HasSudo(), name, args)
 	command := name
 	for _, arg := range args {
 		// Escape single quotes in arguments
@@ -258,7 +327,7 @@ func (e *SSHExecutor) RunCmd(level log.Level, name string, args ...string) error
 
 // RunCmdInDir executes a command with arguments in a specific working directory via SSH
 func (e *SSHExecutor) RunCmdInDir(level log.Level, dir string, name string, args ...string) error {
-	// Build the command string with cd prefix
+	name, args = stripSudoCmd(e.HasSudo(), name, args)
 	command := fmt.Sprintf("cd '%s' && '%s'", dir, name)
 	for _, arg := range args {
 		escaped := strings.ReplaceAll(arg, "'", "'\"'\"'")
@@ -352,6 +421,7 @@ func (e *SSHExecutor) String() string {
 type DockerExecutor struct {
 	containerID  string
 	cachedDistro *Distro
+	cachedSudo   *bool
 }
 
 // NewDockerExecutor creates a new DockerExecutor for a specific container
@@ -366,13 +436,22 @@ func (e *DockerExecutor) WaitUntilReady(timeout time.Duration) error {
 	return nil
 }
 
+// HasSudo returns true if "sudo" is available inside the container.
+func (e *DockerExecutor) HasSudo() bool {
+	if e.cachedSudo != nil {
+		return *e.cachedSudo
+	}
+	v := probeSudo(e)
+	e.cachedSudo = &v
+	return v
+}
+
 // Execute runs a command inside the container
 func (e *DockerExecutor) Execute(command string) (stdout, stderr string, err error) {
 	return e.ExecuteWithTimeout(command, 30*time.Second)
 }
 
-// ExecuteWithTimeout runs a command with a specific timeout
-func (e *DockerExecutor) ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
+func (e *DockerExecutor) rawExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -385,8 +464,14 @@ func (e *DockerExecutor) ExecuteWithTimeout(command string, timeout time.Duratio
 	return stdoutBuf.String(), stderrBuf.String(), err
 }
 
+// ExecuteWithTimeout runs a command with a specific timeout
+func (e *DockerExecutor) ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
+	return e.rawExecuteWithTimeout(stripSudoScript(e.HasSudo(), command), timeout)
+}
+
 // RunCmd executes a command with arguments inside the container
 func (e *DockerExecutor) RunCmd(level log.Level, name string, args ...string) error {
+	name, args = stripSudoCmd(e.HasSudo(), name, args)
 	dockerArgs := []string{"exec", e.containerID, name}
 	dockerArgs = append(dockerArgs, args...)
 
@@ -413,7 +498,7 @@ func (e *DockerExecutor) RunCmd(level log.Level, name string, args ...string) er
 
 // RunCmdInDir executes a command with arguments in a specific working directory inside the container
 func (e *DockerExecutor) RunCmdInDir(level log.Level, dir string, name string, args ...string) error {
-	// Build the command string with cd prefix
+	name, args = stripSudoCmd(e.HasSudo(), name, args)
 	command := fmt.Sprintf("cd '%s' && '%s'", dir, name)
 	for _, arg := range args {
 		escaped := strings.ReplaceAll(arg, "'", "'\\''")

@@ -63,6 +63,7 @@ func (f *fakeExecutor) WriteFile(path string, content []byte, mode os.FileMode) 
 func (f *fakeExecutor) RemoveAll(path string) error                                   { return nil }
 func (f *fakeExecutor) GetDistro() (*platform.Distro, error)                          { return nil, nil }
 func (f *fakeExecutor) GetArchitecture() (platform.Architecture, error)               { return "", nil }
+func (f *fakeExecutor) HasSudo() bool                                                 { return true }
 func (f *fakeExecutor) String() string                                                { return "fake" }
 
 func TestDockerBuildCommand(t *testing.T) {

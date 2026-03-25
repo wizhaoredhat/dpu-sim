@@ -229,6 +229,7 @@ type MockExecutor struct {
 	architecture   Architecture
 	ShouldFail     bool
 	FailOnCommands map[string]bool
+	sudoAvailable  bool
 }
 
 func NewMockExecutor(distro *Distro) *MockExecutor {
@@ -238,6 +239,7 @@ func NewMockExecutor(distro *Distro) *MockExecutor {
 		distro:         distro,
 		architecture:   X86_64,
 		FailOnCommands: make(map[string]bool),
+		sudoAvailable:  true,
 	}
 }
 
@@ -279,6 +281,10 @@ func (e *MockExecutor) GetDistro() (*Distro, error) {
 
 func (e *MockExecutor) GetArchitecture() (Architecture, error) {
 	return e.architecture, nil
+}
+
+func (e *MockExecutor) HasSudo() bool {
+	return e.sudoAvailable
 }
 
 func (e *MockExecutor) String() string {
