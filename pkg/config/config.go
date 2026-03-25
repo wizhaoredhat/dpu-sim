@@ -289,12 +289,6 @@ func (c *Config) IsKindMode() bool {
 	return mode == KindDeploymentMode
 }
 
-// NeedsOVSNodeDaemonSet reports whether OVS must be deployed as a
-// Kubernetes DaemonSet rather than being installed natively on nodes.
-func (c *Config) NeedsOVSNodeDaemonSet() bool {
-	return c.IsKindMode()
-}
-
 // IsVMMode returns true if the configuration is for VM mode
 func (c *Config) IsVMMode() bool {
 	mode, _ := c.GetDeploymentMode()

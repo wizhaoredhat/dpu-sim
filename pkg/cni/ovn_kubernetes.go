@@ -245,20 +245,17 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, ovnkRepoPath, apiServerURL, p
 			"--set", "global.enableEgressService=true",
 			"--set", "global.enableMultiExternalGateway=true",
 			"--set", "global.enablePersistentIPs=true",
+			"--set", "tags.ovs-node=false",
 		)
 
 		switch mode {
 		case ovnkModeDPUHost:
 			args = append(args,
 				"--set", "tags.ovnkube-node-dpu-host=true",
-				"--set", "tags.ovs-node=false",
 				"--set", "global.enableOvnKubeIdentity=false",
 			)
 		case ovnkModeFull:
 			args = append(args, "--set", "global.enableOvnKubeIdentity=true")
-			if !m.config.NeedsOVSNodeDaemonSet() {
-				args = append(args, "--set", "tags.ovs-node=false")
-			}
 		}
 
 		if mgmtPortName != "" {
@@ -281,8 +278,8 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, ovnkRepoPath, apiServerURL, p
 			"--set", fmt.Sprintf("global.dpuHostClusterNetworkCIDR=%s", creds.PodCIDR),
 			"--set", fmt.Sprintf("global.dpuHostClusterServiceCIDR=%s", creds.ServiceCIDR),
 			"--set", "global.mtu=1400",
+			"--set", "tags.ovs-node=false",
 		)
-		args = append(args, "--set", "tags.ovs-node=false")
 	}
 
 	if gatewayInterface != "" {
@@ -1243,9 +1240,6 @@ func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string, clusterName str
 		"ovnkube-identity.yaml",
 	}
 
-	if m.config.NeedsOVSNodeDaemonSet() {
-		deploymentManifests = append(deploymentManifests, "ovs-node.yaml")
-	}
 	deploymentManifests = append(deploymentManifests, "ovnkube-db.yaml")
 	deploymentManifests = append(deploymentManifests, "ovnkube-master.yaml")
 	deploymentManifests = append(deploymentManifests, "ovnkube-node.yaml")
