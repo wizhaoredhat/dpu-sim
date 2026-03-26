@@ -258,10 +258,8 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, ap
 				"--set", fmt.Sprintf("ovnkube-node-dpu-host.gatewayOpts=--gateway-interface=%s", dpuHostGw),
 			)
 		case ovnkModeFull:
-			gatewayIf := m.config.GatewayInterfaces(clusterName)
 			args = append(args,
 				"--set", "global.enableOvnKubeIdentity=true",
-				"--set", fmt.Sprintf("global.gatewayOpts=--gateway-interface=%s", gatewayIf),
 			)
 		}
 	case ovnkModeDPU:
@@ -288,6 +286,11 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, ap
 			"--set", fmt.Sprintf("global.gatewayOpts=--gateway-accelerated-interface=%s", dpuGatewayAcceleratedInterface),
 		)
 	}
+
+	gatewayIf := m.config.GatewayInterfaces(clusterName)
+	args = append(args,
+		"--set", fmt.Sprintf("global.gatewayOpts=--gateway-interface=%s", gatewayIf),
+	)
 
 	if m.kubeconfigPath != "" {
 		args = append(args, "--kubeconfig", m.kubeconfigPath)
