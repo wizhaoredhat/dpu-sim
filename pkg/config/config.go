@@ -810,27 +810,28 @@ func (c *Config) ClustersOrderedForInstall() []ClusterConfig {
 	return append(ordered, dpuClusters...)
 }
 
-// GatewayInterfaces returns the gateway interface and accelerated gateway
-// interface names for the given cluster.
-func (c *Config) GatewayInterfaces(clusterName string) (gateway, acceleratedGateway string) {
+// GatewayInterfaces returns the gateway interface name for the ovnkube-node
+// daemonset on the given cluster.
+func (c *Config) GatewayInterfaces(clusterName string) string {
 	gatewayIf := K8sNetworkName
 	if c.IsKindMode() {
 		gatewayIf = KindK8sNetworkName
 	}
-
-	if !c.IsOffloadDPU() {
-		return gatewayIf, ""
-	}
-	if c.IsDPUCluster(clusterName) {
-		return "", "rep0-0"
-	}
-	return "eth0-0", ""
+	return gatewayIf
 }
 
-// Get the management port name for the given cluster.
-func (c *Config) GetManagementPortName(clusterName string) string {
-	if c.IsDPUCluster(clusterName) {
-		return "rep0-1"
-	}
+// DPUHostGatewayInterface returns the gateway interface name for DPU-Host mode
+func (c *Config) DPUHostGatewayInterface() string {
+	return "eth0-0"
+}
+
+// DPUGatewayAcceleratedInterface returns the accelerated gateway interface name for
+// DPU mode
+func (c *Config) DPUGatewayAcceleratedInterface() string {
+	return "rep0-0"
+}
+
+// Get the management port netdev name for  DPU mode
+func (c *Config) DPUHostManagementPortNetDevName() string {
 	return "eth0-1"
 }

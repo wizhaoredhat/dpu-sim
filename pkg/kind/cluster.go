@@ -148,8 +148,7 @@ func (m *KindManager) InstallCNI() error {
 			return fmt.Errorf("failed to get internal API server IP for cluster %s: %w", clusterCfg.Name, err)
 		}
 
-		gwIf, gwAccelIf := m.config.GatewayInterfaces(clusterCfg.Name)
-		if err := cniMgr.InstallCNI(cniType, clusterCfg.Name, apiServerIP, gwIf, gwAccelIf); err != nil {
+		if err := cniMgr.InstallCNI(cniType, clusterCfg.Name, apiServerIP); err != nil {
 			return fmt.Errorf("failed to install CNI on cluster %s: %w", clusterCfg.Name, err)
 		}
 	}

@@ -131,7 +131,7 @@ func (m *CNIManager) patchCoreDNS(dnsServer string) error {
 // installOVNKubernetes installs OVN-Kubernetes CNI using Helm charts.
 // The deployment topology (full / DPU-host / DPU) is determined automatically
 // from the config.
-func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gatewayInterface string, gatewayAcceleratedInterface string) error {
+func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) error {
 	mode := m.detectOVNKMode(clusterName)
 
 	clusterCfg := m.config.GetClusterConfig(clusterName)
@@ -186,8 +186,7 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gate
 		}
 	}
 
-	mgmtPortName := m.config.GetManagementPortName(clusterName)
-	if err := m.runHelmInstall(mode, ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, mgmtPortName, gatewayInterface, gatewayAcceleratedInterface); err != nil {
+	if err := m.runHelmInstall(mode, clusterName, ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage); err != nil {
 		return fmt.Errorf("failed to run helm install: %w", err)
 	}
 
@@ -220,7 +219,7 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string, gate
 //   - Full:     values-single-node-zone.yaml, global.image.*, OvnKubeIdentity
 //   - DPU-Host: values-single-node-zone.yaml, global.image.*, dpu-host subchart
 //   - DPU:      values-single-node-zone-dpu.yaml, global.dpuImage.*, host credentials
-func (m *CNIManager) runHelmInstall(mode ovnkMode, ovnkRepoPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, mgmtPortName, gatewayInterface, gatewayAcceleratedInterface string) error {
+func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, apiServerURL, podCIDR, serviceCIDR, ovnImage string) error {
 	chartPath := filepath.Join(ovnkRepoPath, "helm", "ovn-kubernetes")
 	imageRepo, imageTag := splitImageRef(ovnImage)
 
@@ -250,22 +249,29 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, ovnkRepoPath, apiServerURL, p
 
 		switch mode {
 		case ovnkModeDPUHost:
+			dpuHostMgmtPort := m.config.DPUHostManagementPortNetDevName()
+			dpuHostGw := m.config.DPUHostGatewayInterface()
 			args = append(args,
 				"--set", "tags.ovnkube-node-dpu-host=true",
 				"--set", "global.enableOvnKubeIdentity=false",
+				"--set", fmt.Sprintf("ovnkube-node-dpu-host.nodeMgmtPortNetdev=%s", dpuHostMgmtPort),
+				"--set", fmt.Sprintf("ovnkube-node-dpu-host.gatewayOpts=--gateway-interface=%s", dpuHostGw),
 			)
 		case ovnkModeFull:
-			args = append(args, "--set", "global.enableOvnKubeIdentity=true")
-		}
-
-		if mgmtPortName != "" {
-			args = append(args, "--set", fmt.Sprintf("global.nodeMgmtPortNetdev=%s", mgmtPortName))
+			gatewayIf := m.config.GatewayInterfaces(clusterName)
+			args = append(args,
+				"--set", "global.enableOvnKubeIdentity=true",
+				"--set", fmt.Sprintf("global.gatewayOpts=--gateway-interface=%s", gatewayIf),
+			)
 		}
 	case ovnkModeDPU:
 		creds, err := m.getDPUHostClusterCredentials()
 		if err != nil {
 			return fmt.Errorf("failed to get DPU host cluster credentials: %w", err)
 		}
+
+		dpuGatewayAcceleratedInterface := m.config.DPUGatewayAcceleratedInterface()
+
 		args = append(args,
 			"-f", "values-single-node-zone-dpu.yaml",
 			"--set", "global.enableOvnKubeIdentity=false",
@@ -279,14 +285,8 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, ovnkRepoPath, apiServerURL, p
 			"--set", fmt.Sprintf("global.dpuHostClusterServiceCIDR=%s", creds.ServiceCIDR),
 			"--set", "global.mtu=1400",
 			"--set", "tags.ovs-node=false",
+			"--set", fmt.Sprintf("global.gatewayOpts=--gateway-accelerated-interface=%s", dpuGatewayAcceleratedInterface),
 		)
-	}
-
-	if gatewayInterface != "" {
-		args = append(args, "--set", fmt.Sprintf("global.gatewayOpts=--gateway-interface=%s", gatewayInterface))
-	}
-	if gatewayAcceleratedInterface != "" {
-		args = append(args, "--set", fmt.Sprintf("global.gatewayOpts=--gateway-accelerated-interface=%s", gatewayAcceleratedInterface))
 	}
 
 	if m.kubeconfigPath != "" {
