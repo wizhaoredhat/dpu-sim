@@ -47,7 +47,7 @@ func (m *K8sMachineManager) InstallKubernetes(cmdExec platform.CommandExecutor, 
 			Name:        "openvswitch",
 			Reason:      reason,
 			CheckCmd:    []string{"ovs-vsctl", "--version"},
-			InstallFunc: linux.InstallOpenVSwitch,
+			InstallFunc: linux.InstallSystemdOpenVSwitch,
 		},
 		{
 			Name:        "NetworkManager-ovs",
