@@ -1,0 +1,101 @@
+networks:
+  - name: mgmt-network
+    type: mgmt
+    bridge_name: virbr-mgmt
+    gateway: 192.168.120.1
+    subnet_mask: 255.255.255.0
+    dhcp_start: 192.168.120.10
+    dhcp_end: 192.168.120.100
+    mode: nat
+    nic_model: virtio
+    attach_to: any
+
+  - name: ovn-network
+    type: k8s
+    bridge_name: ovn
+    gateway: 192.168.123.1
+    subnet_mask: 255.255.255.0
+    dhcp_start: 192.168.123.50
+    dhcp_end: 192.168.123.100
+    mode: nat
+    nic_model: virtio
+    use_ovs: false
+    attach_to: any
+
+  - name: data-l2-network
+    type: layer2
+    bridge_name: ovs-data
+    mode: l2-bridge
+    nic_model: virtio
+    use_ovs: true
+    attach_to: dpu
+
+vms:
+  - name: master-1
+    type: host
+    k8s_cluster: cluster-1
+    k8s_role: master
+    k8s_node_mac: 52:54:00:00:01:11
+    k8s_node_ip: 192.168.123.11
+    memory: 4096
+    vcpus: 2
+    disk_size: 20
+
+  - name: master-2
+    type: host
+    k8s_cluster: cluster-1
+    k8s_role: master
+    k8s_node_mac: 52:54:00:00:02:11
+    k8s_node_ip: 192.168.123.12
+    memory: 4096
+    vcpus: 2
+    disk_size: 20
+
+  - name: master-3
+    type: host
+    k8s_cluster: cluster-1
+    k8s_role: master
+    k8s_node_mac: 52:54:00:00:03:11
+    k8s_node_ip: 192.168.123.13
+    memory: 4096
+    vcpus: 2
+    disk_size: 20
+
+baremetal:
+  - name: "dh4"
+    type: "host"
+    k8s_cluster: "cluster-1"
+    k8s_role: "worker"
+    mgmt_ip: "${MGMT_IP}"
+    node_ip: "${NODE_IP}"
+    gateway_interface: "eno12399np0"
+    protected_interfaces: ["eno12399np0"]
+    bootstrap_ssh:
+      user: "root"
+      password: "${DH4_PASSWORD}"
+
+operating_system:
+  image_ref: ghcr.io/samd2021/dpu-sim-control-plane-qcow2:latest-amd64
+  image_name: Fedora-bootc-x86_64.qcow2
+
+ssh:
+  user: root
+  key_path: ~/.ssh/id_rsa
+  password: redhat
+
+kubernetes:
+  version: 1.33
+  kubeconfig_dir: kubeconfig
+  clusters:
+    - name: cluster-1
+      pod_cidr: 10.244.0.0/16
+      service_cidr: 10.245.0.0/16
+      cni: flannel
+      addons:
+        - multus
+        - whereabouts
+        - cert-manager
+
+registry:
+  enabled: true
+  insecure_endpoints: ["172.22.1.100:5000"]
