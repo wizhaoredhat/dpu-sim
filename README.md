@@ -202,6 +202,10 @@ kubernetes:
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
+      addons:
+        - "multus"
+        - "whereabouts"
+        - "cert-manager"
     - name: "dpu-sim-dpu-kind"
       pod_cidr: "10.246.0.0/16"
       service_cidr: "10.247.0.0/16"
@@ -341,6 +345,10 @@ kubernetes:
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
+      addons:
+        - "multus"
+        - "whereabouts"
+        - "cert-manager"
     - name: "cluster-2"
       pod_cidr: "10.246.0.0/16"
       service_cidr: "10.247.0.0/16"
@@ -415,6 +423,7 @@ Everything Kubernetes related is in the `kubernetes` section. By default version
 - **pod_cidr**: Default is 10.244.0.0/16. This is the custom pod network CIDR
 - **service_cidr**: Default is 10.245.0.0/16. This is the custom service CIDR.
 - **cni**: Selects which CNI should be used in the cluster such as ovn-kubernetes
+- **addons**: Optional ordered list of additional components to install (currently `multus`, `whereabouts`, `cert-manager`)
 
 Multiple cluster configuration example:
 ```yaml
@@ -426,6 +435,10 @@ kubernetes:
       pod_cidr: "10.244.0.0/16" # First cluster pod network
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
+      addons:
+        - "multus"
+        - "whereabouts"
+        - "cert-manager"
     - name: "cluster-2"
       pod_cidr: "10.246.0.0/16" # Second cluster pod network
       service_cidr: "10.247.0.0/16"
@@ -463,10 +476,39 @@ Add a `registry` section to your config file:
 
 ```yaml
 registry:
+  enabled: true
+```
+
+This enables an empty local registry (no CNI image builds), useful when you
+want to push your own images (for example dpu-operator images).
+
+For hybrid setups, you can override which registry endpoints nodes trust as
+insecure HTTP registries:
+
+```yaml
+registry:
+  enabled: true
+  insecure_endpoints:
+    - "172.22.1.100:5000"
+    - "192.168.120.1:5000"
+```
+
+To also build/push CNI images from source, add `containers` entries:
+
+```yaml
+registry:
+  enabled: true
   containers:
     - name: "ovn-kube"
       cni: "ovn-kubernetes"
       tag: "ovn-kube:dpu-sim"
+```
+
+To disable registry management entirely:
+
+```yaml
+registry:
+  enabled: false
 ```
 
 Each entry under `containers` defines an image to build:
@@ -476,15 +518,13 @@ Each entry under `containers` defines an image to build:
 
 #### How It Works
 
-When a `registry` section is present, dpu-sim automatically:
+When `registry.enabled` is true (or omitted), dpu-sim automatically:
 
 1. **Starts a local Docker registry** (`registry:2`) on port 5000
-2. **Builds the CNI image from source** using the OVN-Kubernetes git submodule
-3. **Pushes the image** to the local registry
-4. **Configures nodes to pull from the registry**:
+2. **Configures nodes to pull from the registry**:
    - **Kind mode**: Containerd on each node is configured to redirect `localhost:5000` pulls to the registry container on the Docker network
-   - **VM mode**: CRI-O on each VM is configured to pull from the host's management network gateway IP (e.g. `192.168.120.1:5000`) over HTTP
-5. **Uses the registry image** in CNI Helm manifests instead of the upstream image from `ghcr.io`
+   - **VM mode**: CRI-O on each node is configured to trust insecure HTTP pulls from `registry.insecure_endpoints` (if set), otherwise from the host's management network gateway IP (e.g. `192.168.120.1:5000`)
+3. **If `registry.containers` is set**, dpu-sim also builds/pushes those images and uses them in CNI deployment paths
 
 #### Rebuilding and Redeploying CNI Images
 
@@ -498,7 +538,7 @@ $ ./bin/dpu-sim --rebuild-cni
 $ ./bin/dpu-sim --rebuild-cni --redeploy-cni
 ```
 
-The `--rebuild-cni` flag requires a `registry` section in the config. It builds all configured container images and pushes them to the registry. Adding `--redeploy-cni` triggers a rolling restart of the CNI daemonsets so pods pick up the new image.
+The `--rebuild-cni` flag requires `registry.enabled=true` and at least one `registry.containers` entry. It builds all configured container images and pushes them to the registry. Adding `--redeploy-cni` triggers a rolling restart of the CNI daemonsets so pods pick up the new image.
 
 #### OVN-Kubernetes Source
 
@@ -1620,6 +1660,7 @@ Deployment mode: vm
 │   ├── flannel.go        # Functions to install Flannel CNI
 │   ├── install.go        # Delagates CNI installation
 │   ├── multus.go         # Functions to install Multus CNI
+│   ├── whereabouts.go    # Functions to install Whereabouts IPAM addon
 │   ├── ovn_kubernetes.go # Functions to install OVN-Kubernetes CNI
 │   ├── types.go          # Types related to CNI
 ├── pkg/config

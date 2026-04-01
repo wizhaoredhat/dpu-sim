@@ -92,6 +92,10 @@ func (e *baseEngine) RunContainer(_ context.Context, opts RunContainerOptions) e
 	return e.exec.RunCmd(log.LevelInfo, e.bin, args...)
 }
 
+func (e *baseEngine) TryRepairRunContainerFailure(_ context.Context, _ error) (bool, error) {
+	return false, nil
+}
+
 func (e *baseEngine) RemoveContainer(_ context.Context, name string, force bool) error {
 	args := []string{"rm"}
 	if force {

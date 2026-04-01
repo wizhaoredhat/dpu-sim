@@ -71,6 +71,15 @@ func (m *K8sMachineManager) InstallKubernetes(cmdExec platform.CommandExecutor, 
 	if err := platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config); err != nil {
 		return fmt.Errorf("failed to ensure dependencies: %w", err)
 	}
+	if err := linux.EnsureCRIOCNIPluginPaths(cmdExec); err != nil {
+		return fmt.Errorf("failed to ensure CRI-O CNI plugin paths: %w", err)
+	}
+	if err := linux.ConfigureCRIOLocalRegistry(cmdExec, m.config); err != nil {
+		return fmt.Errorf("failed to configure local registry for CRI-O: %w", err)
+	}
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "restart", "crio"); err != nil {
+		return fmt.Errorf("failed to restart CRI-O after dependency and registry setup: %w", err)
+	}
 
 	log.Info("✓ Kubernetes %s installed on %s", k8sVersion, machineName)
 	return nil
@@ -311,14 +320,32 @@ func (m *K8sMachineManager) GenerateCertificateKey(cmdExec platform.CommandExecu
 
 // InitializeControlPlane initializes a Kubernetes control plane node
 // Returns ControlPlaneInfo with all information needed to join additional nodes
-func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecutor, machineName, k8sIP, podCIDR, serviceCIDR string) (*ControlPlaneInfo, error) {
+func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecutor, machineName, k8sIP, podCIDR, serviceCIDR, controlPlaneEndpoint string, extraAPIServerSANs []string) (*ControlPlaneInfo, error) {
 	log.Info("Initializing control plane on %s (%s)...", machineName, cmdExec.String())
 	log.Info("K8s IP: %s Pod CIDR: %s, Service CIDR: %s", k8sIP, podCIDR, serviceCIDR)
 
 	sb := strings.Builder{}
 	sb.WriteString("set -e\n")
 	// Use --upload-certs to enable control plane join for additional masters
-	sb.WriteString(fmt.Sprintf("sudo kubeadm init --pod-network-cidr=%s --service-cidr=%s --apiserver-advertise-address=%s --upload-certs\n", podCIDR, serviceCIDR, k8sIP))
+	initCmd := fmt.Sprintf("sudo kubeadm init --pod-network-cidr=%s --service-cidr=%s --apiserver-advertise-address=%s", podCIDR, serviceCIDR, k8sIP)
+	if strings.TrimSpace(controlPlaneEndpoint) != "" {
+		initCmd += fmt.Sprintf(" --control-plane-endpoint=%s", strings.TrimSpace(controlPlaneEndpoint))
+	}
+	if len(extraAPIServerSANs) > 0 {
+		sans := make([]string, 0, len(extraAPIServerSANs))
+		for _, san := range extraAPIServerSANs {
+			san = strings.TrimSpace(san)
+			if san == "" {
+				continue
+			}
+			sans = append(sans, san)
+		}
+		if len(sans) > 0 {
+			initCmd += fmt.Sprintf(" --apiserver-cert-extra-sans=%s", strings.Join(sans, ","))
+		}
+	}
+	initCmd += " --upload-certs"
+	sb.WriteString(initCmd + "\n")
 
 	stdout, stderr, err := cmdExec.ExecuteWithTimeout(sb.String(), 10*time.Minute)
 	if err != nil {
@@ -356,6 +383,9 @@ func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecu
 
 	// Build the API server endpoint
 	apiServerEndpoint := fmt.Sprintf("https://%s:6443", k8sIP)
+	if strings.TrimSpace(controlPlaneEndpoint) != "" {
+		apiServerEndpoint = fmt.Sprintf("https://%s", strings.TrimSpace(controlPlaneEndpoint))
+	}
 
 	joinInfo := &ControlPlaneInfo{
 		WorkerJoinCommand:       workerJoinCommand,

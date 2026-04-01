@@ -151,6 +151,11 @@ func (m *KindManager) InstallCNI() error {
 		if err := cniMgr.InstallCNI(cniType, clusterCfg.Name, apiServerIP); err != nil {
 			return fmt.Errorf("failed to install CNI on cluster %s: %w", clusterCfg.Name, err)
 		}
+
+		if err := cniMgr.InstallAddons(clusterCfg.Addons, clusterCfg.Name); err != nil {
+			return fmt.Errorf("failed to install addons: %w", err)
+		}
+
 	}
 
 	log.Info("\n✓ CNI installation complete on Kind clusters")
@@ -253,7 +258,7 @@ func (m *KindManager) ConfigureRegistryOnNode(cmdExec platform.CommandExecutor, 
 	hostsTOML := fmt.Sprintf("server = \"http://%s\"\n\n[host.\"http://%s\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
 		registryAddr, registryAddr)
 
-	if err := cmdExec.WriteFile(hostsDir+"/hosts.toml", []byte(hostsTOML), 0644); err != nil {
+	if err := cmdExec.WriteFile(hostsDir+"/hosts.toml", []byte(hostsTOML), 0o644); err != nil {
 		return fmt.Errorf("failed to write hosts.toml: %w", err)
 	}
 
@@ -327,11 +332,11 @@ func (m *KindManager) GetKubeconfig(name string, kubeconfigPath string) error {
 	}
 
 	kubeconfigDir := filepath.Dir(kubeconfigPath)
-	if err := os.MkdirAll(kubeconfigDir, 0755); err != nil {
+	if err := os.MkdirAll(kubeconfigDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create kubeconfig directory %s: %w", kubeconfigDir, err)
 	}
 
-	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
+	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0o600); err != nil {
 		return fmt.Errorf("failed to write kubeconfig to %s: %w", kubeconfigPath, err)
 	}
 
@@ -387,7 +392,7 @@ func (m *KindManager) ExportLogs(clusterName, outputDir string) error {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 

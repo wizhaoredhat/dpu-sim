@@ -86,7 +86,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	// Create registry manager once if configured; nil otherwise.
 	var regMgr *registry.RegistryManager = nil
 	var buildCNIImage registry.BuildFunc
-	if cfg.HasRegistry() {
+	if cfg.IsRegistryEnabled() {
 		localExec := platform.NewLocalExecutor()
 		engine, err := containerengine.NewProjectEngine(localExec)
 		if err != nil {
@@ -98,8 +98,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	// Handle rebuild CNI image(s) and redeploy onto each cluster
 	if rebuildCNI || redeployCNI {
-		if regMgr == nil {
-			return fmt.Errorf("--rebuild-cni/--redeploy-cni requires a registry section in the config")
+		if !cfg.IsRegistryEnabled() {
+			return fmt.Errorf("--rebuild-cni/--redeploy-cni requires registry.enabled=true")
+		}
+		if !cfg.HasRegistry() {
+			return fmt.Errorf("--rebuild-cni/--redeploy-cni requires registry.containers with at least one CNI image entry")
 		}
 
 		log.Info("\n=== Rebuilding CNI images ===")
@@ -175,6 +178,10 @@ func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManage
 	log.Info("╔═══════════════════════════════════════════════╗")
 	log.Info("║       VM-Based Deployment Workflow            ║")
 	log.Info("╚═══════════════════════════════════════════════╝")
+
+	if err := vm.EnsureHostNetworkPrerequisites(); err != nil {
+		return fmt.Errorf("failed to prepare host network prerequisites: %w", err)
+	}
 
 	vmMgr, err := vm.NewVMManager(cfg)
 	if err != nil {
