@@ -827,7 +827,7 @@ func (c *Config) DPUHostGatewayInterface() string {
 
 // DPUGatewayAcceleratedInterface returns the accelerated gateway interface name for
 // DPU mode
-func (c *Config) DPUGatewayAcceleratedInterface() string {
+func (c *Config) DPUHostGatewayRepresentorInterface() string {
 	return "rep0-0"
 }
 

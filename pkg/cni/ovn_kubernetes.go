@@ -256,6 +256,7 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, ap
 				"--set", "global.enableOvnKubeIdentity=false",
 				"--set", fmt.Sprintf("ovnkube-node-dpu-host.nodeMgmtPortNetdev=%s", dpuHostMgmtPort),
 				"--set", fmt.Sprintf("ovnkube-node-dpu-host.gatewayOpts=--gateway-interface=%s", dpuHostGw),
+				"--set", "global.simulateDpu=true",
 			)
 		case ovnkModeFull:
 			args = append(args,
@@ -268,7 +269,7 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, ap
 			return fmt.Errorf("failed to get DPU host cluster credentials: %w", err)
 		}
 
-		dpuGatewayAcceleratedInterface := m.config.DPUGatewayAcceleratedInterface()
+		dpuHostGatewayRepresentorInterface := m.config.DPUHostGatewayRepresentorInterface()
 
 		args = append(args,
 			"-f", "values-single-node-zone-dpu.yaml",
@@ -283,7 +284,8 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, ap
 			"--set", fmt.Sprintf("global.dpuHostClusterServiceCIDR=%s", creds.ServiceCIDR),
 			"--set", "global.mtu=1400",
 			"--set", "tags.ovs-node=false",
-			"--set", fmt.Sprintf("global.gatewayOpts=--gateway-accelerated-interface=%s", dpuGatewayAcceleratedInterface),
+			"--set", "global.simulateDpu=true",
+			"--set", fmt.Sprintf("global.dpuHostGatewayRepresentorInterface=%s", dpuHostGatewayRepresentorInterface),
 		)
 	}
 
