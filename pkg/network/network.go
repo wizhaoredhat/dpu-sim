@@ -14,6 +14,17 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
+// OUI 52:54:00 is commonly used for QEMU/virtio; locally administered and deterministic.
+const MacOUI = "52:54:00"
+
+// GenerateMACForHostToDpu returns a deterministic MAC for a host-to-DPU data interface.
+// Works for both VM (libvirt) and Kind (veth pair) setups.
+// Hash is over nodeName+role ("host" or "dpu"); the index is the last octet so each pair has a unique MAC.
+func GenerateMACForHostToDpu(nodeName, role string, index int) string {
+	h := sha256.Sum256([]byte(nodeName + "\x00" + role))
+	return fmt.Sprintf("%s:%02x:%02x:%02x", MacOUI, h[0], h[1], index&0xff)
+}
+
 // Host-to-DPU data interface naming
 // Format strings for the guest/container interface names; use with fmt.Sprintf(..., index).
 const (

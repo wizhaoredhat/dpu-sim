@@ -305,7 +305,7 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 				for _, conn := range mapping.Connections {
 					for idx := 0; idx < numPairs; idx++ {
 						netName := network.GetHostToDPUNetworkName(mapping.Host.Name, conn.DPU.Name, idx)
-						mac := GenerateMACForHostToDpu(vmCfg.Name, config.HostType, idx)
+						mac := network.GenerateMACForHostToDpu(vmCfg.Name, config.HostType, idx)
 						sb.WriteString("    <interface type='network'>\n")
 						sb.WriteString(fmt.Sprintf("      <mac address='%s'/>\n", mac))
 						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))
@@ -325,7 +325,7 @@ func (m *VMManager) GenerateVMXML(vmCfg config.VMConfig, diskPath, cloudInitPath
 				if conn.DPU.Name == vmCfg.Name {
 					for idx := 0; idx < numPairs; idx++ {
 						netName := network.GetHostToDPUNetworkName(mapping.Host.Name, conn.DPU.Name, idx)
-						mac := GenerateMACForHostToDpu(vmCfg.Name, config.DpuType, idx)
+						mac := network.GenerateMACForHostToDpu(vmCfg.Name, config.DpuType, idx)
 						sb.WriteString("    <interface type='network'>\n")
 						sb.WriteString(fmt.Sprintf("      <mac address='%s'/>\n", mac))
 						sb.WriteString(fmt.Sprintf("      <source network='%s'/>\n", netName))

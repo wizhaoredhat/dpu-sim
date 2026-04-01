@@ -78,7 +78,7 @@ func (m *KindManager) CreateVethTopology(cmdExec platform.CommandExecutor, pairs
 		hostContainerExec := platform.NewDockerExecutor(pair.HostNode)
 		dpuContainerExec := platform.NewDockerExecutor(pair.DPUNode)
 
-		if err := createDataVeths(cmdExec, hostContainerExec, dpuContainerExec, pairIdx, hostPID, dpuPID, numPairs); err != nil {
+		if err := createDataVeths(cmdExec, hostContainerExec, dpuContainerExec, pair.HostNode, pair.DPUNode, pairIdx, hostPID, dpuPID, numPairs); err != nil {
 			return fmt.Errorf("failed to create data veths for pair %d: %w", pairIdx, err)
 		}
 	}
@@ -92,6 +92,7 @@ func (m *KindManager) CreateVethTopology(cmdExec platform.CommandExecutor, pairs
 func createDataVeths(
 	hostExec platform.CommandExecutor,
 	hostContainerExec, dpuContainerExec platform.CommandExecutor,
+	hostNode, dpuNode string,
 	pairIdx int, hostPID, dpuPID string, numPairs int,
 ) error {
 	for i := 0; i < numPairs; i++ {
@@ -113,6 +114,10 @@ func createDataVeths(
 		if err := hostContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", hostEnd, "name", hostTarget); err != nil {
 			return fmt.Errorf("failed to rename %s to %s in host container: %w", hostEnd, hostTarget, err)
 		}
+		hostMAC := network.GenerateMACForHostToDpu(hostNode, config.HostType, i)
+		if err := hostContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", hostTarget, "address", hostMAC); err != nil {
+			return fmt.Errorf("failed to set MAC %s on %s in host container: %w", hostMAC, hostTarget, err)
+		}
 		if err := hostContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", hostTarget, "up"); err != nil {
 			return fmt.Errorf("failed to bring up %s in host container: %w", hostTarget, err)
 		}
@@ -120,6 +125,10 @@ func createDataVeths(
 		dpuTarget := fmt.Sprintf(network.DPUDataIfFmt, i)
 		if err := dpuContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", dpuEnd, "name", dpuTarget); err != nil {
 			return fmt.Errorf("failed to rename %s to %s in DPU container: %w", dpuEnd, dpuTarget, err)
+		}
+		dpuMAC := network.GenerateMACForHostToDpu(dpuNode, config.DpuType, i)
+		if err := dpuContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", dpuTarget, "address", dpuMAC); err != nil {
+			return fmt.Errorf("failed to set MAC %s on %s in DPU container: %w", dpuMAC, dpuTarget, err)
 		}
 		if err := dpuContainerExec.RunCmd(log.LevelDebug, "ip", "link", "set", dpuTarget, "up"); err != nil {
 			return fmt.Errorf("failed to bring up %s in DPU container: %w", dpuTarget, err)

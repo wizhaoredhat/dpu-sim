@@ -97,7 +97,7 @@ func getInterfaceNamesAndMACs(cfg *config.Config, vmConfig config.VMConfig) []if
 				for idx := 0; idx < numPairs; idx++ {
 					out = append(out, ifaceNameAndMAC{
 						Name: fmt.Sprintf(network.HostDataIfFmt, idx),
-						MAC:  GenerateMACForHostToDpu(vmConfig.Name, config.HostType, idx),
+						MAC:  network.GenerateMACForHostToDpu(vmConfig.Name, config.HostType, idx),
 					})
 				}
 				break
@@ -111,7 +111,7 @@ func getInterfaceNamesAndMACs(cfg *config.Config, vmConfig config.VMConfig) []if
 					for idx := 0; idx < numPairs; idx++ {
 						out = append(out, ifaceNameAndMAC{
 							Name: fmt.Sprintf(network.DPUDataIfFmt, idx),
-							MAC:  GenerateMACForHostToDpu(vmConfig.Name, config.DpuType, idx),
+							MAC:  network.GenerateMACForHostToDpu(vmConfig.Name, config.DpuType, idx),
 						})
 					}
 					break
