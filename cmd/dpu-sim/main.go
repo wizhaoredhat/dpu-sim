@@ -328,7 +328,10 @@ func doVMDeploy(cfg *config.Config, vmMgr *vm.VMManager) error {
 		if err := cmdExec.WaitUntilReady(5 * time.Minute); err != nil {
 			return fmt.Errorf("failed to wait for SSH on %s: %w", vmCfg.Name, err)
 		}
-		log.Info("✓ SSH ready on %s", vmCfg.Name)
+		log.Info("✓ SSH ready on %s, waiting for cloud-init to finish...", vmCfg.Name)
+		// Exit code 0 = success, 2 = done with recoverable errors; both mean cloud-init finished.
+		stdout, _, _ := cmdExec.Execute("cloud-init status --wait")
+		log.Info("✓ cloud-init finished on %s (%s)", vmCfg.Name, strings.TrimSpace(stdout))
 	}
 
 	// We don't need to setup host-to-DPU virtio pairs because it is done at VM creation time
