@@ -1,7 +1,9 @@
 package kind
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
@@ -62,15 +64,17 @@ func (m *KindManager) CleanupVethTopology(cmdExec platform.CommandExecutor, pair
 // Host container:  pf     (takes over the Kind IP from eth0)
 // DPU  container:  pfrep
 func (m *KindManager) CreateVethTopology(cmdExec platform.CommandExecutor, pairs []config.HostDPUPair, numPairs int) error {
+	subnet, usedIPs := m.GetKindSubnetAndAllocatedIPs()
+
 	for pairIdx, pair := range pairs {
 		log.Info("Setting up veth topology for pair %d: %s <-> %s (%d data channels)",
 			pairIdx, pair.HostNode, pair.DPUNode, numPairs)
 
-		hostPID, err := getContainerPID(cmdExec, pair.HostNode)
+		hostPID, err := getContainerPID(cmdExec, m.containerBin, pair.HostNode)
 		if err != nil {
 			return fmt.Errorf("failed to get PID for host container %s: %w", pair.HostNode, err)
 		}
-		dpuPID, err := getContainerPID(cmdExec, pair.DPUNode)
+		dpuPID, err := getContainerPID(cmdExec, m.containerBin, pair.DPUNode)
 		if err != nil {
 			return fmt.Errorf("failed to get PID for DPU container %s: %w", pair.DPUNode, err)
 		}
@@ -80,6 +84,17 @@ func (m *KindManager) CreateVethTopology(cmdExec platform.CommandExecutor, pairs
 
 		if err := createDataVeths(cmdExec, hostContainerExec, dpuContainerExec, pair.HostNode, pair.DPUNode, pairIdx, hostPID, dpuPID, numPairs); err != nil {
 			return fmt.Errorf("failed to create data veths for pair %d: %w", pairIdx, err)
+		}
+
+		if m.config.IsOffloadDPU() && subnet != nil {
+			gwIP, allocErr := network.GetFreeIPv4AddressInSubnet(subnet, usedIPs)
+			if allocErr != nil {
+				return fmt.Errorf("failed to allocate gateway veth IP for pair %d: %w", pairIdx, allocErr)
+			}
+			if err := assignDpuHostGatewayIP(hostContainerExec, pair.HostNode, gwIP, subnet); err != nil {
+				return fmt.Errorf("failed to assign gateway veth IP for pair %d: %w", pairIdx, err)
+			}
+			usedIPs = append(usedIPs, gwIP)
 		}
 	}
 
@@ -137,14 +152,93 @@ func createDataVeths(
 	return nil
 }
 
-func getContainerPID(cmdExec platform.CommandExecutor, container string) (string, error) {
-	stdout, _, err := cmdExec.Execute(fmt.Sprintf("docker inspect --format '{{.State.Pid}}' %s", container))
+// GetKindSubnetAndAllocatedIPs discovers the Kind network subnet and all
+// already-used IPs by reading eth0 inside every node across all Kind clusters.
+func (m *KindManager) GetKindSubnetAndAllocatedIPs() (*net.IPNet, []net.IP) {
+	var subnet *net.IPNet
+	var usedIPs []net.IP
+
+	clusters, err := m.provider.List()
+	if err != nil {
+		log.Warn("Could not list Kind clusters: %v", err)
+		return nil, nil
+	}
+
+	for _, clusterName := range clusters {
+		nodes, err := m.provider.ListNodes(clusterName)
+		if err != nil {
+			log.Warn("Could not list nodes for cluster %s: %v", clusterName, err)
+			continue
+		}
+		for _, node := range nodes {
+			name := node.String()
+			ip, ipNet, err := getKindNodeNetworkCIDR(platform.NewDockerExecutor(name))
+			if err != nil {
+				log.Warn("Could not read eth0 from %s: %v", name, err)
+				continue
+			}
+			usedIPs = append(usedIPs, ip)
+			if subnet == nil {
+				subnet = ipNet
+			}
+		}
+	}
+
+	if subnet == nil {
+		log.Warn("Could not determine Kind network subnet")
+	}
+	return subnet, usedIPs
+}
+
+// getKindNodeNetworkCIDR reads the IPv4 address and subnet of eth0 inside a
+// container which by default is part of the default Kind network.
+func getKindNodeNetworkCIDR(exec platform.CommandExecutor) (net.IP, *net.IPNet, error) {
+	stdout, _, err := exec.Execute("ip -4 -o addr show eth0 | awk '{print $4}'")
+	if err != nil {
+		return nil, nil, err
+	}
+	cidr := strings.TrimSpace(stdout)
+	ip, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse CIDR %q: %w", cidr, err)
+	}
+	return ip, ipNet, nil
+}
+
+// assignGatewayVethIP assigns gwIP to eth0-0 inside the host container and
+// removes the auto-created subnet route so normal (API) traffic still goes via eth0.
+func assignDpuHostGatewayIP(hostContainerExec platform.CommandExecutor, hostNode string, gwIP net.IP, subnet *net.IPNet) error {
+	ones, _ := subnet.Mask.Size()
+	gwCIDR := fmt.Sprintf("%s/%d", gwIP, ones)
+	gwIf := fmt.Sprintf(network.HostDataIfFmt, 0)
+
+	// noprefixroute prevents the kernel from adding a connected subnet
+	// route on eth0-0, which would conflict with the same route on eth0.
+	if err := hostContainerExec.RunCmd(log.LevelDebug, "ip", "addr", "add", gwCIDR, "dev", gwIf, "noprefixroute"); err != nil {
+		return fmt.Errorf("failed to assign %s to %s in %s: %w", gwCIDR, gwIf, hostNode, err)
+	}
+
+	log.Info("Assigned %s to %s in %s", gwCIDR, gwIf, hostNode)
+	return nil
+}
+
+func getContainerPID(cmdExec platform.CommandExecutor, containerBin, container string) (string, error) {
+	inspectOut, _, err := cmdExec.Execute(fmt.Sprintf(
+		"%s inspect %s", containerBin, container))
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect container %s: %w", container, err)
 	}
-	pid := strings.TrimSpace(stdout)
-	if pid == "" || pid == "0" {
+
+	var containers []struct {
+		State struct {
+			Pid int `json:"Pid"`
+		} `json:"State"`
+	}
+	if err := json.Unmarshal([]byte(inspectOut), &containers); err != nil {
+		return "", fmt.Errorf("failed to parse inspect JSON for %s: %w", container, err)
+	}
+	if len(containers) == 0 || containers[0].State.Pid == 0 {
 		return "", fmt.Errorf("container %s has no running PID", container)
 	}
-	return pid, nil
+	return fmt.Sprintf("%d", containers[0].State.Pid), nil
 }

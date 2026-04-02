@@ -2,12 +2,14 @@ package vm
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/network"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
@@ -235,5 +237,66 @@ func (m *VMManager) SetupAllK8sClusters() error {
 			return fmt.Errorf("failed to setup Kubernetes cluster %s: %w", clusterCfg.Name, err)
 		}
 	}
+	return nil
+}
+
+// AssignDpuHostGatewayIPs SSHes into each DPU Host VM and assigns a gateway
+// IP to eth0-0 so OVN-Kubernetes DPU Host mode can find an IPv4 address on the
+// gateway interface. IPs are allocated from the top of the k8s subnet, skipping
+// all IPs already used by VMs or the network gateway.
+func (m *VMManager) AssignDpuHostGatewayIPs() error {
+	if !m.config.IsOffloadDPU() {
+		return nil
+	}
+
+	k8sNet := m.config.GetNetworkByType(config.K8sNetworkName)
+	if k8sNet == nil || k8sNet.SubnetMask == "" {
+		return nil
+	}
+
+	prefix, err := config.PrefixLenFromSubnetMask(k8sNet.SubnetMask)
+	if err != nil {
+		return err
+	}
+
+	_, subnet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", k8sNet.Gateway, prefix))
+	if err != nil {
+		return err
+	}
+
+	var usedIPs []net.IP
+	if gw := net.ParseIP(k8sNet.Gateway); gw != nil {
+		usedIPs = append(usedIPs, gw)
+	}
+	for _, vm := range m.config.VMs {
+		if ip := net.ParseIP(vm.K8sNodeIP); ip != nil {
+			usedIPs = append(usedIPs, ip)
+		}
+	}
+
+	gwIf := fmt.Sprintf(network.HostDataIfFmt, 0)
+
+	for _, pair := range m.config.GetHostDPUPairs("") {
+		gwIP, err := network.GetFreeIPv4AddressInSubnet(subnet, usedIPs)
+		if err != nil {
+			return fmt.Errorf("no free IP for %s: %w", pair.HostNode, err)
+		}
+		usedIPs = append(usedIPs, gwIP)
+
+		gwCIDR := fmt.Sprintf("%s/%d", gwIP, prefix)
+
+		mgmtIP, err := m.GetVMMgmtIP(pair.HostNode)
+		if err != nil {
+			return fmt.Errorf("failed to get mgmt IP for %s: %w", pair.HostNode, err)
+		}
+
+		sshExec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
+		if err := sshExec.RunCmd(log.LevelDebug, "ip", "addr", "add", gwCIDR, "dev", gwIf, "noprefixroute"); err != nil {
+			return fmt.Errorf("failed to assign %s to %s on %s: %w", gwCIDR, gwIf, pair.HostNode, err)
+		}
+
+		log.Info("Assigned %s to %s on %s", gwCIDR, gwIf, pair.HostNode)
+	}
+
 	return nil
 }

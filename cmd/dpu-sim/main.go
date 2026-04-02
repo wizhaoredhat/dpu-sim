@@ -331,6 +331,12 @@ func doVMDeploy(cfg *config.Config, vmMgr *vm.VMManager) error {
 		log.Info("✓ SSH ready on %s", vmCfg.Name)
 	}
 
+	// We don't need to setup host-to-DPU virtio pairs because it is done at VM creation time
+	// Assign DPU Host gateway IPs to eth0-0 for DPU Host mode
+	if err := vmMgr.AssignDpuHostGatewayIPs(); err != nil {
+		return fmt.Errorf("failed to assign DPU Host gateway IPs: %w", err)
+	}
+
 	return nil
 }
 

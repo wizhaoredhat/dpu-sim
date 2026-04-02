@@ -6,8 +6,10 @@ package network
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -31,6 +33,35 @@ const (
 	HostDataIfFmt = "eth0-%d" // data interface in host (e.g. eth0-0, eth0-1)
 	DPUDataIfFmt  = "rep0-%d" // data representor in DPU (e.g. rep0-0, rep0-1)
 )
+
+// GetFreeIPv4AddressInSubnet picks the highest usable IPv4 address in subnet that is
+// not present in usedIPs. It walks from broadcast-1 down to network+1 and
+// returns the first free address.
+func GetFreeIPv4AddressInSubnet(subnet *net.IPNet, usedIPs []net.IP) (net.IP, error) {
+	ones, bits := subnet.Mask.Size()
+	if bits != 32 {
+		return nil, fmt.Errorf("only IPv4 subnets are supported")
+	}
+
+	netAddr := binary.BigEndian.Uint32(subnet.IP.To4())
+	broadcast := netAddr | ((1 << (32 - ones)) - 1)
+
+	used := make(map[uint32]bool, len(usedIPs))
+	for _, ip := range usedIPs {
+		if v4 := ip.To4(); v4 != nil {
+			used[binary.BigEndian.Uint32(v4)] = true
+		}
+	}
+
+	for candidate := broadcast - 1; candidate > netAddr; candidate-- {
+		if !used[candidate] {
+			result := make(net.IP, 4)
+			binary.BigEndian.PutUint32(result, candidate)
+			return result, nil
+		}
+	}
+	return nil, fmt.Errorf("no free IP in subnet %s", subnet)
+}
 
 // InterfaceInfo represents detailed information about a network interface
 type InterfaceInfo struct {
