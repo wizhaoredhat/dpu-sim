@@ -76,17 +76,27 @@ func (m *K8sMachineManager) InstallKubernetes(cmdExec platform.CommandExecutor, 
 	return nil
 }
 
-// EnsureOVNBrInt creates the br-int bridge and restarts openvswitch so the datapath exists.
-// Without the restart, br-int can exist in the DB but ovs-vswitchd may not have created the
-// kernel datapath, causing "ovs-ofctl: br-int is not a bridge or a socket".
-func (m *K8sMachineManager) EnsureOVNBrInt(cmdExec platform.CommandExecutor) error {
-	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "ovs-vsctl", "--may-exist", "add-br", "br-int"); err != nil {
-		return fmt.Errorf("failed to create br-int: %w", err)
+// EnsureOVNBridges creates the given OVS bridges and restarts openvswitch so
+// that ovs-vswitchd creates the kernel datapaths and management sockets.
+// Without the restart, bridges can exist in the DB but ovs-vswitchd may not
+// have created the kernel datapath, causing "ovs-ofctl: <bridge> is not a
+// bridge or a socket".
+func (m *K8sMachineManager) EnsureOVNBridges(cmdExec platform.CommandExecutor, bridges ...string) error {
+	for _, br := range bridges {
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "ovs-vsctl", "--may-exist", "add-br", br); err != nil {
+			return fmt.Errorf("failed to create %s: %w", br, err)
+		}
 	}
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "restart", "openvswitch"); err != nil {
-		return fmt.Errorf("failed to restart openvswitch (needed so br-int datapath is created): %w", err)
+		return fmt.Errorf("failed to restart openvswitch (needed so bridge datapaths are created): %w", err)
 	}
 	return nil
+}
+
+// EnsureOVNBrInt creates br-int and restarts openvswitch.
+// Convenience wrapper around EnsureOVNBridges for non-DPU nodes.
+func (m *K8sMachineManager) EnsureOVNBrInt(cmdExec platform.CommandExecutor) error {
+	return m.EnsureOVNBridges(cmdExec, "br-int")
 }
 
 func (m *K8sMachineManager) SetupOVNBrEx(cmdExec platform.CommandExecutor, mgmtIP string, k8sIP string) error {

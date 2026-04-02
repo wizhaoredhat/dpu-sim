@@ -111,7 +111,19 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		}
 	}
 
-	// Ensure br-int exists on all nodes (OVN needs it; avoids "ovs-ofctl: br-int is not a bridge or a socket").
+	// Ensure required OVS bridges exist on all nodes and that ovs-vswitchd
+	// has created their kernel datapaths / management sockets. Without this,
+	// ovs-ofctl fails with "<bridge> is not a bridge or a socket".
+	// This is a weird issue which might point to an issue with ovs-vswitchd,
+	// where it doesn't create the managment socket for bridges added after
+	// startup.
+	// TODO: Investigate this further in the future.
+	isDPU := m.config.IsOffloadDPU() && m.config.IsDPUCluster(clusterCfg.Name)
+	bridges := []string{"br-int"}
+	if isDPU {
+		gatewayIf := m.config.GatewayInterfaces(clusterCfg.Name)
+		bridges = append(bridges, "br"+gatewayIf)
+	}
 	for _, vms := range clusterRoleMapping {
 		for _, vmCfg := range vms {
 			mgmtIP, err := m.GetVMMgmtIP(vmCfg.Name)
@@ -119,8 +131,8 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 				return fmt.Errorf("failed to get mgmt IP for %s: %w", vmCfg.Name, err)
 			}
 			exec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
-			if err := k8sMgr.EnsureOVNBrInt(exec); err != nil {
-				return fmt.Errorf("failed to ensure br-int on %s: %w", vmCfg.Name, err)
+			if err := k8sMgr.EnsureOVNBridges(exec, bridges...); err != nil {
+				return fmt.Errorf("failed to ensure OVS bridges on %s: %w", vmCfg.Name, err)
 			}
 		}
 	}
