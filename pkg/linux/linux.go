@@ -645,6 +645,73 @@ func CheckIpv6(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *c
 	return nil
 }
 
+// InstallKindCNIPlugins installs and stages the base CNI binaries flannel and
+// multus depend on for Kind node networking.
+//
+// Why: on some Debian-based Kind node images, /opt/cni/bin only has a subset
+// of plugins after multus install. Flannel then fails to delegate to "bridge"
+// and pods stay in ContainerCreating/Pending.
+//
+// What: install containernetworking-plugins and copy key binaries into
+// /opt/cni/bin (bridge, host-local, loopback, portmap, ptp).
+//
+// How: detect the distro plugin source path (/usr/lib/cni or
+// /usr/libexec/cni), then copy only binaries that exist so the routine is safe
+// across distro packaging differences.
+func InstallKindCNIPlugins(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	switch distro.PackageManager {
+	case platform.APT:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.APT, "update"); err != nil {
+			return fmt.Errorf("failed to update apt: %w", err)
+		}
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.APT, "install", "-y", "containernetworking-plugins"); err != nil {
+			return fmt.Errorf("failed to install containernetworking-plugins: %w", err)
+		}
+	case platform.DNF:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "containernetworking-plugins"); err != nil {
+			return fmt.Errorf("failed to install containernetworking-plugins: %w", err)
+		}
+	default:
+		return platform.UnsupportedPackageManager(distro)
+	}
+
+	stdout, stderr, err := cmdExec.Execute(`set -e
+SRC=""
+for d in /usr/lib/cni /usr/libexec/cni; do
+  if [ -x "$d/bridge" ]; then
+    SRC="$d"
+    break
+  fi
+done
+
+if [ -z "$SRC" ]; then
+  echo "missing bridge plugin under /usr/lib/cni or /usr/libexec/cni" >&2
+  exit 1
+fi
+
+sudo mkdir -p /opt/cni/bin
+for plugin in bridge host-local loopback portmap ptp; do
+  if [ -x "$SRC/$plugin" ]; then
+    sudo cp -f "$SRC/$plugin" "/opt/cni/bin/$plugin"
+  fi
+done`)
+	if err != nil {
+		return fmt.Errorf("failed to place kind cni plugins in /opt/cni/bin: %w, stdout: %s, stderr: %s", err, stdout, stderr)
+	}
+
+	return nil
+}
+
+// CheckKindCNIPlugins validates a minimal set that proves bridge-style primary networking can run.
+// bridge + host-local are the critical pair required by flannel delegation.
+func CheckKindCNIPlugins(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	stdout, stderr, err := cmdExec.Execute("test -x /opt/cni/bin/bridge && test -x /opt/cni/bin/host-local")
+	if err != nil {
+		return fmt.Errorf("required cni plugins are missing from /opt/cni/bin: %w, stdout: %s, stderr: %s", err, stdout, stderr)
+	}
+	return nil
+}
+
 const (
 	MinInotifyMaxUserInstances = 8192
 	MinInotifyMaxUserWatches   = 1048576

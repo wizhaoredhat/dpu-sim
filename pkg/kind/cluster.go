@@ -33,7 +33,41 @@ func (m *KindManager) InstallDependencies(cmdExec platform.CommandExecutor) erro
 			InstallFunc: linux.InstallOpenVSwitchWithoutSystemd,
 		},
 	}
+
+	if m.needsKindBridgeCNIPlugins() {
+		deps = append(deps, platform.Dependency{
+			Name:        "CNI plugins",
+			Reason:      "Required by flannel and multus on Kind nodes",
+			CheckFunc:   linux.CheckKindCNIPlugins,
+			InstallFunc: linux.InstallKindCNIPlugins,
+		})
+	}
+
 	return platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config)
+}
+
+// needsKindBridgeCNIPlugins returns true when Kind nodes need the standard CNI
+// bridge plugin set in /opt/cni/bin.
+//
+// Why: flannel delegates to the CNI bridge/host-local plugins, and multus in
+// this project chains to the cluster's primary CNI. If bridge binaries are
+// missing, pod sandbox creation fails after multus rollout with errors like:
+// "failed to find plugin bridge in path [/opt/cni/bin]".
+//
+// As a fix we gate plugin installation to clusters that use flannel directly or enable
+// multus, so OVN-only Kind runs do not install extra packages unnecessarily.
+func (m *KindManager) needsKindBridgeCNIPlugins() bool {
+	for _, clusterCfg := range m.config.Kubernetes.Clusters {
+		if clusterCfg.CNI == config.CNIFlannel {
+			return true
+		}
+		for _, addon := range clusterCfg.Addons {
+			if addon == config.AddonMultus {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *KindManager) InstallHostDependencies(cmdExec platform.CommandExecutor) error {
