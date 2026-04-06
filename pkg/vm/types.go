@@ -15,7 +15,9 @@ type VMManager struct {
 	conn       *libvirt.Connect
 	config     *config.Config
 	hostDistro *platform.Distro
-	hostSpec   archSpec
+	// hostSpec is the resolved per-host virtualization profile (machine type,
+	// emulator path, firmware, and feature flags) reused across VM XML creation.
+	hostSpec archSpec
 }
 
 // NewVMManager creates a new VMManager with the given config, connecting to libvirt.

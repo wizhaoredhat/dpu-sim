@@ -97,15 +97,20 @@ func (m *VMManager) generateNetworkInterfaces(vmCfg config.VMConfig) string {
 }
 
 type archSpec struct {
-	libvirtArch      string
-	machine          string
-	cpuMode          string
-	emulator         string
+	// libvirtArch/machine/cpuMode/emulator define the domain's compute platform.
+	libvirtArch string
+	machine     string
+	cpuMode     string
+	emulator    string
+	// uefiLoader/uefiVarsTemplate are optional and set when firmware-backed boot
+	// is available on the host architecture.
 	uefiLoader       string
 	uefiVarsTemplate string
-	enableIOMMU      bool
-	enableAPIC       bool
-	enableACPI       bool
+	// Feature flags map directly to optional XML blocks for device/interrupt
+	// behavior across architectures.
+	enableIOMMU bool
+	enableAPIC  bool
+	enableACPI  bool
 }
 
 func hostArchSpec(hostArch platform.Architecture) (archSpec, error) {
