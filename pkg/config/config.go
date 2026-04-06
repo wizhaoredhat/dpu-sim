@@ -137,6 +137,8 @@ func (c *Config) validateAndSetDefaults() error {
 		}
 	}
 
+	// TODO(vmctl): Extend vmctl commands to understand and operate on baremetal
+	// nodes in addition to VM-backed nodes.
 	// Validate BareMetal
 	for i, node := range c.BareMetal {
 		if node.Name == "" {
