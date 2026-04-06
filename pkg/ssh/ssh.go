@@ -17,6 +17,11 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
+// buildAuthMethods builds SSH authentication methods from configuration.
+//
+// It supports both private-key and password authentication, in that order.
+// This allows key-based login as the default while preserving password
+// fallback for environments that do not yet have the shared key installed.
 func (c *SSHClient) buildAuthMethods() ([]ssh.AuthMethod, error) {
 	auth := []ssh.AuthMethod{}
 	var keyErr error
@@ -83,7 +88,7 @@ func (c *SSHClient) ExecuteWithContext(ctx context.Context, ip, command string) 
 
 	// Create SSH client config
 	sshConfig := &ssh.ClientConfig{
-		User: c.config.User,
+		User:            c.config.User,
 		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         5 * time.Second,
