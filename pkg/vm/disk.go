@@ -34,6 +34,9 @@ const (
 
 var pullCloudImageFromOCI = pullOCICloudImage
 
+// TODO: Add documentation on how to build and publish OCI artifacts using oras
+// A relevant gh actions workflow can be seen here: https://github.com/SamD2021/dpu-image-factory/blob/a0ebfd28991586594bfd24bd1d851e73e05a7960/.github/workflows/build.yml
+
 // EnsureCloudImage makes sure the configured cloud image exists locally.
 func EnsureCloudImage(osConfig config.OSConfig, destPath string) error {
 	// Check if file already exists
@@ -61,7 +64,7 @@ func DownloadCloudImage(url, destPath string) error {
 
 	// Create destination directory if it doesn't exist
 	destDir := filepath.Dir(destPath)
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", destDir, err)
 	}
 
@@ -336,7 +339,7 @@ func CreateVMDisk(vmName string, sizeGB int, baseImage string) (string, error) {
 	}
 
 	// Create image directory if it doesn't exist
-	if err := os.MkdirAll(DefaultImageDir, 0755); err != nil {
+	if err := os.MkdirAll(DefaultImageDir, 0o755); err != nil {
 		return "", fmt.Errorf("failed to create image directory: %w", err)
 	}
 
@@ -461,7 +464,7 @@ func CreateCloudInitISO(vmName string, sshConfig config.SSHConfig, vmConfig conf
 	// Create meta-data file
 	metaDataPath := filepath.Join(tempDir, "meta-data")
 	metaData := generateMetaData(vmName)
-	if err := os.WriteFile(metaDataPath, []byte(metaData), 0644); err != nil {
+	if err := os.WriteFile(metaDataPath, []byte(metaData), 0o644); err != nil {
 		return "", fmt.Errorf("failed to write meta-data: %w", err)
 	}
 
@@ -478,7 +481,7 @@ func CreateCloudInitISO(vmName string, sshConfig config.SSHConfig, vmConfig conf
 	}
 	userData := generateUserData(string(pubKeyData), sshConfig.User, sshConfig.Password, ifaceNameMACs, cfg, vmConfig)
 	userDataPath := filepath.Join(tempDir, "user-data")
-	if err := os.WriteFile(userDataPath, []byte(userData), 0644); err != nil {
+	if err := os.WriteFile(userDataPath, []byte(userData), 0o644); err != nil {
 		return "", fmt.Errorf("failed to write user-data: %w", err)
 	}
 
