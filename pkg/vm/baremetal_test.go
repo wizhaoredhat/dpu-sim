@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// TestBuildBareMetalResetPhasesOrder verifies reset phases are emitted in the
+// expected order so destructive cleanup happens before service reload and final
+// validation.
 func TestBuildBareMetalResetPhasesOrder(t *testing.T) {
 	t.Parallel()
 
@@ -31,6 +34,9 @@ func TestBuildBareMetalResetPhasesOrder(t *testing.T) {
 	}
 }
 
+// TestBuildBareMetalResetPhasesAreGeneric verifies generated reset scripts keep
+// generic kube/ovs cleanup primitives and do not include environment-specific
+// MCO/OpenShift-only commands.
 func TestBuildBareMetalResetPhasesAreGeneric(t *testing.T) {
 	t.Parallel()
 
