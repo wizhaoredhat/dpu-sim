@@ -1,10 +1,12 @@
 package cni
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const writableCNIBinDir = "/var/lib/cni/bin"
@@ -24,7 +26,15 @@ func (m *CNIManager) shouldUseWritableCNIBinDir() bool {
 }
 
 func downloadManifest(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create manifest download request for %s: %w", url, err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download manifest from %s: %w", url, err)
 	}
