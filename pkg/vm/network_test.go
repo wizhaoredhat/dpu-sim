@@ -2,6 +2,8 @@ package vm
 
 import "testing"
 
+// TestSetLibvirtFirewallBackendAddsSettingWhenMissing verifies the helper
+// appends firewall_backend when the key is not present in the input config.
 func TestSetLibvirtFirewallBackendAddsSettingWhenMissing(t *testing.T) {
 	t.Parallel()
 
@@ -17,6 +19,8 @@ func TestSetLibvirtFirewallBackendAddsSettingWhenMissing(t *testing.T) {
 	}
 }
 
+// TestSetLibvirtFirewallBackendReplacesExistingSetting verifies an existing
+// firewall_backend value is rewritten to the requested backend.
 func TestSetLibvirtFirewallBackendReplacesExistingSetting(t *testing.T) {
 	t.Parallel()
 
@@ -32,6 +36,8 @@ func TestSetLibvirtFirewallBackendReplacesExistingSetting(t *testing.T) {
 	}
 }
 
+// TestSetLibvirtFirewallBackendNoopWhenAlreadySet verifies the helper leaves
+// config content unchanged when the desired backend is already configured.
 func TestSetLibvirtFirewallBackendNoopWhenAlreadySet(t *testing.T) {
 	t.Parallel()
 
