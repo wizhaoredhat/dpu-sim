@@ -574,8 +574,35 @@ func TestRegistryEnablementModes(t *testing.T) {
 }
 
 func TestGetRegistryInsecureEndpoints(t *testing.T) {
-	t.Run("fallback to vm registry node endpoint", func(t *testing.T) {
+	t.Run("returns empty when registry is not enabled", func(t *testing.T) {
 		cfg := Config{
+			Networks: []NetworkConfig{{
+				Name:       "mgmt-network",
+				Type:       MgmtNetworkName,
+				BridgeName: "virbr-mgmt",
+				Gateway:    "192.168.120.1",
+				Mode:       "nat",
+				NICModel:   "virtio",
+			}},
+			BareMetal: []BareMetalConfig{{
+				Name:       "dh4",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleWorker),
+				MgmtIP:     "172.22.1.4",
+				NodeIP:     "172.22.1.4",
+			}},
+			Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIFlannel}}},
+		}
+
+		err := cfg.validateAndSetDefaults()
+		require.NoError(t, err)
+		require.Empty(t, cfg.GetRegistryInsecureEndpoints())
+	})
+
+	t.Run("fallback to vm registry node endpoint when registry is enabled", func(t *testing.T) {
+		cfg := Config{
+			Registry: &RegistryConfig{},
 			Networks: []NetworkConfig{{
 				Name:       "mgmt-network",
 				Type:       MgmtNetworkName,

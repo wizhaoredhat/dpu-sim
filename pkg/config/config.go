@@ -893,9 +893,14 @@ func (c *Config) IsRegistryEnabled() bool {
 // that should be configured as insecure HTTP registries.
 //
 // Behavior:
+//   - when local registry management is disabled, return no endpoints
 //   - when registry.insecure_endpoints is set, return that list
 //   - otherwise fall back to GetRegistryNodeEndpoint()
 func (c *Config) GetRegistryInsecureEndpoints() []string {
+	if !c.IsRegistryEnabled() {
+		return nil
+	}
+
 	if c.Registry != nil && len(c.Registry.InsecureEndpoints) > 0 {
 		out := make([]string, 0, len(c.Registry.InsecureEndpoints))
 		seen := make(map[string]struct{}, len(c.Registry.InsecureEndpoints))
