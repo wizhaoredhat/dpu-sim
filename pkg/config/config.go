@@ -168,7 +168,11 @@ func (c *Config) validateAndSetDefaults() error {
 
 		if node.BootstrapSSH != nil {
 			if node.BootstrapSSH.User == "" {
-				c.BareMetal[i].BootstrapSSH.User = c.SSH.User
+				if c.SSH.User != "" {
+					c.BareMetal[i].BootstrapSSH.User = c.SSH.User
+				} else {
+					c.BareMetal[i].BootstrapSSH.User = "root"
+				}
 			}
 			if node.BootstrapSSH.KeyPath != "" {
 				expanded, err := expandTilde(node.BootstrapSSH.KeyPath)
