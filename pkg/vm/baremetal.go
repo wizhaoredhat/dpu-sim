@@ -173,9 +173,18 @@ func (m *VMManager) maybeApplyBootc(node config.BareMetalConfig, cmdExec platfor
 
 	command := strings.Join(parts, " ")
 	log.Info("Applying bootc %s on baremetal node %s...", strategy, node.Name)
-	_, _, err := cmdExec.ExecuteWithTimeout(command, 20*time.Minute)
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(command, 20*time.Minute)
 	if err != nil && !node.Bootc.Apply {
 		return fmt.Errorf("bootc command failed on node %s: %w", node.Name, err)
+	}
+	if err != nil && node.Bootc.Apply {
+		// bootc --apply may reboot immediately and tear down the SSH session.
+		// Treat only connection-loss style errors as expected and surface all
+		// other failures directly so invalid refs/auth/config errors are not
+		// hidden behind a later reconnect timeout.
+		if !isExpectedBootcApplyDisconnect(err) {
+			return fmt.Errorf("bootc apply failed on node %s: %w, stdout: %s, stderr: %s", node.Name, err, stdout, stderr)
+		}
 	}
 
 	if node.Bootc.Apply {
@@ -194,6 +203,28 @@ func (m *VMManager) maybeApplyBootc(node config.BareMetalConfig, cmdExec platfor
 	}
 
 	return nil
+}
+
+func isExpectedBootcApplyDisconnect(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	indicators := []string{
+		"eof",
+		"broken pipe",
+		"connection reset by peer",
+		"use of closed network connection",
+		"connection closed",
+		"connection refused",
+		"failed to dial ssh",
+	}
+	for _, indicator := range indicators {
+		if strings.Contains(msg, indicator) {
+			return true
+		}
+	}
+	return false
 }
 
 type resetPhase struct {

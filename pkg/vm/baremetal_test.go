@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -70,5 +71,36 @@ func TestBuildBareMetalResetPhasesAreGeneric(t *testing.T) {
 		if strings.Contains(script, token) {
 			t.Fatalf("expected reset script to not contain %q", token)
 		}
+	}
+}
+
+// TestIsExpectedBootcApplyDisconnect verifies we only suppress errors that
+// match expected SSH disconnect patterns caused by immediate reboot during
+// bootc --apply.
+func TestIsExpectedBootcApplyDisconnect(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil error", err: nil, want: false},
+		{name: "ssh EOF", err: errors.New("EOF"), want: true},
+		{name: "broken pipe", err: errors.New("write tcp: broken pipe"), want: true},
+		{name: "connection reset", err: errors.New("read: connection reset by peer"), want: true},
+		{name: "unexpected command failure", err: errors.New("exit status 1"), want: false},
+		{name: "auth failure", err: errors.New("permission denied"), want: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := isExpectedBootcApplyDisconnect(tt.err)
+			if got != tt.want {
+				t.Fatalf("isExpectedBootcApplyDisconnect() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
