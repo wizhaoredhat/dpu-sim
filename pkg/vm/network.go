@@ -25,6 +25,7 @@ func (m *VMManager) NetworkExists(networkName string) bool {
 // CreateNetwork creates a libvirt network based on the configuration
 func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
 	if m.NetworkExists(netCfg.Name) {
+		// Keep network creation idempotent for repeated deploy/redeploy runs.
 		log.Info("Network %s already exists, skipping creation", netCfg.Name)
 		return nil
 	}
@@ -76,6 +77,13 @@ func EnsureHostNetworkPrerequisites() error {
 	return nil
 }
 
+// ensureLibvirtNATFirewallBackend prepares Debian-like hosts for stable
+// libvirt NAT network creation.
+//
+// Why: on some Debian/Ubuntu systems, libvirt NAT setup can fail when the
+// host iptables alternative and libvirt firewall backend are not aligned.
+//
+// Scope: no-op for non-Debian-like distros.
 func ensureLibvirtNATFirewallBackend() error {
 	distro, err := platform.GetHostDistro()
 	if err != nil {
@@ -135,6 +143,11 @@ func ensureLibvirtNATFirewallBackend() error {
 	return nil
 }
 
+// ensureIptablesLegacyForLibvirtNAT switches iptables/ip6tables alternatives to
+// legacy only when the host reports the known nftables NAT incompatibility.
+//
+// This was observed in our VM bring-up on Ubuntu 22.04.5 LTS with errors like:
+// "table `nat` is incompatible, use 'nft' tool" during libvirt NAT probing.
 func ensureIptablesLegacyForLibvirtNAT() (bool, error) {
 	probe := exec.Command("iptables", "-w", "--table", "nat", "--list-rules")
 	if output, err := probe.CombinedOutput(); err == nil {
@@ -173,6 +186,9 @@ func ensureIptablesLegacyForLibvirtNAT() (bool, error) {
 	return changed, nil
 }
 
+// restartLibvirtForNetworkFirewallChange restarts the first available libvirt
+// service that manages networking after firewall backend updates.
+// Different distros expose different service names (virtnetworkd/libvirtd).
 func restartLibvirtForNetworkFirewallChange() error {
 	services := []string{"virtnetworkd", "libvirtd"}
 	for _, svc := range services {
@@ -188,6 +204,8 @@ func restartLibvirtForNetworkFirewallChange() error {
 	return fmt.Errorf("failed to restart libvirt service after updating firewall backend")
 }
 
+// setLibvirtFirewallBackend updates firewall_backend in libvirt network.conf
+// and returns the updated content plus whether a change was required.
 func setLibvirtFirewallBackend(conf, backend string) (string, bool) {
 	desired := fmt.Sprintf("firewall_backend = %q", backend)
 	lines := strings.Split(conf, "\n")
