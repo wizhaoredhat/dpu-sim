@@ -345,8 +345,15 @@ fi`, 1*time.Minute); err != nil {
 // ConfigureCRIOLocalRegistry configures CRI-O to use the local dpu-sim
 // registry over HTTP from cluster nodes.
 func ConfigureCRIOLocalRegistry(cmdExec platform.CommandExecutor, cfg *config.Config) error {
+	const registryConfPath = "/etc/containers/registries.conf.d/dpu-sim-registry.conf"
+
 	// No-op when no local registry is configured.
 	if !cfg.IsRegistryEnabled() {
+		// Remove stale drop-ins from prior runs so toggling registry.enabled=false
+		// actually stops CRI-O from trusting old insecure registry endpoints.
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "rm", "-f", registryConfPath); err != nil {
+			return fmt.Errorf("failed to remove insecure registry config: %w", err)
+		}
 		return nil
 	}
 
@@ -356,7 +363,7 @@ func ConfigureCRIOLocalRegistry(cmdExec platform.CommandExecutor, cfg *config.Co
 		blocks = append(blocks, fmt.Sprintf("[[registry]]\nlocation = \"%s\"\ninsecure = true\n", endpoint))
 	}
 	registryConf := strings.Join(blocks, "\n")
-	if err := cmdExec.WriteFile("/etc/containers/registries.conf.d/dpu-sim-registry.conf", []byte(registryConf), 0o644); err != nil {
+	if err := cmdExec.WriteFile(registryConfPath, []byte(registryConf), 0o644); err != nil {
 		return fmt.Errorf("failed to write insecure registry config: %w", err)
 	}
 
