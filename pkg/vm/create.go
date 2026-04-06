@@ -144,6 +144,9 @@ func hostArchSpec(hostArch platform.Architecture) (archSpec, error) {
 	}
 }
 
+// resolveQEMUEmulator matches the hosts architecture to its proper qemu binary
+// and calls resolveFirstAvailableEmulator to search for one of those binaries and returns it
+// Why: It's useful because depending on the distro (non-rhel vs rhel) the binary is path and name varies
 func resolveQEMUEmulator(hostArch platform.Architecture) (string, error) {
 	var candidates []string
 	switch hostArch {
@@ -172,6 +175,15 @@ func resolveQEMUEmulator(hostArch platform.Architecture) (string, error) {
 	return emulator, nil
 }
 
+// resolveFirstAvailableEmulator returns the first emulator candidate that
+// exists on the host.
+//
+// Why: qemu binary names and install paths vary across distros and packaging
+// layouts, so caller-provided candidates include both absolute paths and PATH
+// lookups.
+//
+// How: absolute candidates are validated with existsFn, while non-absolute
+// candidates are resolved with lookPathFn; the first match wins.
 func resolveFirstAvailableEmulator(candidates []string, existsFn func(string) bool, lookPathFn func(string) (string, error)) (string, bool) {
 	for _, candidate := range candidates {
 		if strings.HasPrefix(candidate, "/") {
