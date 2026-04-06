@@ -328,8 +328,18 @@ func (m *K8sMachineManager) GenerateCertificateKey(cmdExec platform.CommandExecu
 	return certificateKey, nil
 }
 
-// InitializeControlPlane initializes a Kubernetes control plane node
-// Returns ControlPlaneInfo with all information needed to join additional nodes
+// InitializeControlPlane initializes a Kubernetes control plane node and
+// returns the join/kubeconfig data needed by additional masters and workers.
+//
+// cmdExec: remote command executor for the target node.
+// machineName: logical node name for logging/errors.
+// k8sIP: node IP advertised by kube-apiserver.
+// podCIDR: cluster pod network CIDR passed to kubeadm init.
+// serviceCIDR: cluster service network CIDR passed to kubeadm init.
+// controlPlaneEndpoint: stable API endpoint used by join commands (when set),
+// avoiding joins tied to one node IP in hybrid/multi-network topologies.
+// extraAPIServerSANs: additional cert SANs so API access remains TLS-valid
+// across alternate node IPs/hostnames used in hybrid or multi-network setups.
 func (m *K8sMachineManager) InitializeControlPlane(cmdExec platform.CommandExecutor, machineName, k8sIP, podCIDR, serviceCIDR, controlPlaneEndpoint string, extraAPIServerSANs []string) (*ControlPlaneInfo, error) {
 	log.Info("Initializing control plane on %s (%s)...", machineName, cmdExec.String())
 	log.Info("K8s IP: %s Pod CIDR: %s, Service CIDR: %s", k8sIP, podCIDR, serviceCIDR)
@@ -471,7 +481,7 @@ func (m *K8sMachineManager) GetKubeconfig(cmdExec platform.CommandExecutor, outp
 	}
 
 	// Write to file
-	if err := os.WriteFile(outputPath, []byte(kubeconfig), 0600); err != nil {
+	if err := os.WriteFile(outputPath, []byte(kubeconfig), 0o600); err != nil {
 		return fmt.Errorf("failed to write kubeconfig: %w", err)
 	}
 
@@ -483,7 +493,7 @@ func (m *K8sMachineManager) GetKubeconfig(cmdExec platform.CommandExecutor, outp
 // The file is saved as <kubeconfigDir>/<clusterName>.kubeconfig
 func SaveKubeconfigToFile(kubeconfigContent, clusterName, kubeconfigDir string) error {
 	// Create kubeconfig directory if it doesn't exist
-	if err := os.MkdirAll(kubeconfigDir, 0755); err != nil {
+	if err := os.MkdirAll(kubeconfigDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create kubeconfig directory: %w", err)
 	}
 
@@ -491,7 +501,7 @@ func SaveKubeconfigToFile(kubeconfigContent, clusterName, kubeconfigDir string) 
 	filepath := GetKubeconfigPath(clusterName, kubeconfigDir)
 
 	// Write kubeconfig to file with restricted permissions
-	if err := os.WriteFile(filepath, []byte(kubeconfigContent), 0600); err != nil {
+	if err := os.WriteFile(filepath, []byte(kubeconfigContent), 0o600); err != nil {
 		return fmt.Errorf("failed to write kubeconfig file: %w", err)
 	}
 
