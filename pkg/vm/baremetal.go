@@ -72,9 +72,9 @@ func (m *VMManager) installGlobalSSHAccess(cmdExec platform.CommandExecutor) err
 		user = "root"
 	}
 
-	homeDir := "/root"
-	if user != "root" {
-		homeDir = "/home/" + user
+	homeDir, err := resolveRemoteUserHomeDir(cmdExec, user)
+	if err != nil {
+		return err
 	}
 
 	quotedKey := shellQuote(strings.TrimSpace(string(pubKey)))
@@ -95,6 +95,39 @@ func (m *VMManager) installGlobalSSHAccess(cmdExec platform.CommandExecutor) err
 	}
 
 	return nil
+}
+
+// resolveRemoteUserHomeDir resolves the target user's home directory on the
+// remote node.
+//
+// Why: baremetal targets can use non-standard home roots (e.g. /var/home on
+// FCOS-like systems), so assuming /home/<user> can write authorized_keys into
+// the wrong path and break bootstrap-to-global SSH handoff.
+func resolveRemoteUserHomeDir(cmdExec platform.CommandExecutor, user string) (string, error) {
+	if user == "root" {
+		return "/root", nil
+	}
+
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(
+		fmt.Sprintf("getent passwd %s | cut -d: -f6", shellQuote(user)),
+		30*time.Second,
+	)
+	homeDir := strings.TrimSpace(stdout)
+	if err == nil && homeDir != "" {
+		return homeDir, nil
+	}
+
+	for _, fallback := range []string{fmt.Sprintf("/var/home/%s", user), fmt.Sprintf("/home/%s", user)} {
+		exists, existsErr := cmdExec.FileExists(fallback)
+		if existsErr == nil && exists {
+			return fallback, nil
+		}
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve home dir for %s: %w, stderr: %s", user, err, strings.TrimSpace(stderr))
+	}
+	return "", fmt.Errorf("resolved empty home dir for %s and no fallback home path exists", user)
 }
 
 func (m *VMManager) maybeApplyBootc(node config.BareMetalConfig, cmdExec platform.CommandExecutor) error {
