@@ -228,11 +228,19 @@ func isExpectedBootcApplyDisconnect(err error) bool {
 }
 
 type resetPhase struct {
-	name    string
+	// name is emitted in logs to make failing reset stages obvious.
+	name string
+	// timeout bounds the whole phase execution on slow/problematic hosts.
 	timeout time.Duration
-	script  string
+	// script is a single bash script executed with set -e semantics.
+	script string
 }
 
+// buildScript creates a fail-fast shell script from ordered command entries.
+//
+// Commands are intentionally modeled one-per-line in Go so phase steps are
+// easy to review in diffs and idempotent exceptions (for example `|| true`)
+// remain explicit at the exact command that needs them.
 func buildScript(commands ...string) string {
 	script := strings.Builder{}
 	script.WriteString("set -e\n")
@@ -243,6 +251,11 @@ func buildScript(commands ...string) string {
 	return script.String()
 }
 
+// buildBareMetalResetPhases defines the phased baremetal reset workflow used
+// before kubeadm join.
+//
+// Each phase is executed as one script with its own timeout, which keeps
+// logging and failure location precise while allowing per-phase tuning.
 func buildBareMetalResetPhases() []resetPhase {
 	return []resetPhase{
 		{
@@ -295,6 +308,8 @@ func buildBareMetalResetPhases() []resetPhase {
 	}
 }
 
+// resetBareMetalNode runs the reset workflow for a baremetal node phase by
+// phase and returns detailed stdout/stderr context on first failure.
 func (m *VMManager) resetBareMetalNode(node config.BareMetalConfig, cmdExec platform.CommandExecutor) error {
 	for _, phase := range buildBareMetalResetPhases() {
 		log.Info("Reset baremetal node %s: %s", node.Name, phase.name)
