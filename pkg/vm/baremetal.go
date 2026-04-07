@@ -340,7 +340,9 @@ func (m *VMManager) setKubeletNodeIP(node config.BareMetalConfig, cmdExec platfo
 	script.WriteString(fmt.Sprintf("sudo sed -i '/^KUBELET_EXTRA_ARGS=/d' %s\n", shellQuote(kubeletEnv)))
 	script.WriteString(fmt.Sprintf("sudo sh -c \"printf 'KUBELET_EXTRA_ARGS=\\\"--node-ip=%s\\\"\\n' >> %s\"\n", node.NodeIP, shellQuote(kubeletEnv)))
 	script.WriteString("sudo systemctl daemon-reload\n")
-	script.WriteString("sudo systemctl restart kubelet || true\n")
+	script.WriteString("sudo systemctl restart kubelet\n")
+	// Do not require kubelet to be active immediately here: on freshly reset
+	// nodes it may remain inactive until kubeadm join/bootstrap completes.
 
 	stdout, stderr, err := cmdExec.ExecuteWithTimeout(script.String(), 2*time.Minute)
 	if err != nil {
