@@ -8,6 +8,8 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
+// TestEnsureCloudImageUsesOCIRef verifies EnsureCloudImage delegates to the
+// OCI pull helper when image_ref is configured and no local image exists.
 func TestEnsureCloudImageUsesOCIRef(t *testing.T) {
 	tmpDir := t.TempDir()
 	dest := filepath.Join(tmpDir, "Fedora-x86_64.qcow2")
@@ -43,6 +45,8 @@ func TestEnsureCloudImageUsesOCIRef(t *testing.T) {
 	}
 }
 
+// TestEnsureCloudImageSkipsExistingFile verifies EnsureCloudImage does not
+// re-pull an OCI image when the destination file already exists.
 func TestEnsureCloudImageSkipsExistingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	dest := filepath.Join(tmpDir, "Fedora-x86_64.qcow2")
@@ -72,6 +76,8 @@ func TestEnsureCloudImageSkipsExistingFile(t *testing.T) {
 	}
 }
 
+// TestFindPulledCloudImage verifies the helper locates a pulled qcow2 image
+// by name under nested directories in the extraction workspace.
 func TestFindPulledCloudImage(t *testing.T) {
 	t.Parallel()
 

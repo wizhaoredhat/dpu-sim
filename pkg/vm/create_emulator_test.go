@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// TestResolveFirstAvailableEmulatorPrefersExistingAbsolutePath verifies an
+// existing absolute-path candidate is selected before PATH lookups.
 func TestResolveFirstAvailableEmulatorPrefersExistingAbsolutePath(t *testing.T) {
 	t.Parallel()
 
@@ -27,6 +29,8 @@ func TestResolveFirstAvailableEmulatorPrefersExistingAbsolutePath(t *testing.T) 
 	}
 }
 
+// TestResolveFirstAvailableEmulatorFallsBackToLookPath verifies resolver falls
+// back to lookPath when no absolute candidate exists.
 func TestResolveFirstAvailableEmulatorFallsBackToLookPath(t *testing.T) {
 	t.Parallel()
 
@@ -49,6 +53,8 @@ func TestResolveFirstAvailableEmulatorFallsBackToLookPath(t *testing.T) {
 	}
 }
 
+// TestResolveFirstAvailableEmulatorReturnsFalseWhenNoneFound verifies resolver
+// reports failure when no candidates are present on disk or in PATH.
 func TestResolveFirstAvailableEmulatorReturnsFalseWhenNoneFound(t *testing.T) {
 	t.Parallel()
 
