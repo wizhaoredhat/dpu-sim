@@ -60,6 +60,59 @@ func CheckGenericPackage(cmdExec platform.CommandExecutor, distro *platform.Dist
 	return nil
 }
 
+// InstallQEMUKVM installs host QEMU virtualization packages.
+// Package names differ between Fedora/RHEL and Debian/Ubuntu.
+func InstallQEMUKVM(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	switch distro.PackageManager {
+	case platform.DNF:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "qemu-kvm"); err != nil {
+			return fmt.Errorf("failed to install qemu-kvm: %w", err)
+		}
+	case platform.APT:
+		pkgs := []string{"qemu-utils"}
+		switch distro.Architecture {
+		case platform.AARCH64:
+			pkgs = append(pkgs, "qemu-system-arm")
+		default:
+			pkgs = append(pkgs, "qemu-system-x86")
+		}
+		args := append([]string{"apt", "install", "-y"}, pkgs...)
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", args...); err != nil {
+			return fmt.Errorf("failed to install qemu system packages: %w", err)
+		}
+	default:
+		return platform.UnsupportedPackageManager(distro)
+	}
+
+	return nil
+}
+
+// CheckQEMUKVM validates that a usable QEMU system emulator is present.
+func CheckQEMUKVM(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	switch distro.PackageManager {
+	case platform.DNF:
+		return CheckGenericPackage(cmdExec, distro, cfg, dep)
+	case platform.APT:
+		candidates := []string{"qemu-kvm"}
+		switch distro.Architecture {
+		case platform.AARCH64:
+			candidates = append(candidates, "qemu-system-aarch64")
+		default:
+			candidates = append(candidates, "qemu-system-x86_64")
+		}
+
+		for _, candidate := range candidates {
+			if _, _, err := cmdExec.Execute("command -v " + candidate); err == nil {
+				return nil
+			}
+		}
+
+		return fmt.Errorf("no suitable qemu system binary found (checked: %s)", strings.Join(candidates, ", "))
+	default:
+		return platform.UnsupportedPackageManager(distro)
+	}
+}
+
 // InstallAarch64UEFIFirmware installs UEFI firmware required for aarch64 VM mode hosts.
 func InstallAarch64UEFIFirmware(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	if distro.Architecture != platform.AARCH64 {
@@ -145,7 +198,7 @@ func ConfigureK8sKernelModules(cmdExec platform.CommandExecutor, distro *platfor
 	loadModulesContent.WriteString("overlay\n")
 	loadModulesContent.WriteString("br_netfilter\n")
 	loadModulesContent.WriteString("EOF\n")
-	if err := cmdExec.WriteFile("/etc/modules-load.d/k8s.conf", []byte(loadModulesContent.String()), 0644); err != nil {
+	if err := cmdExec.WriteFile("/etc/modules-load.d/k8s.conf", []byte(loadModulesContent.String()), 0o644); err != nil {
 		return fmt.Errorf("failed to write modules load file: %w", err)
 	}
 	// Load kernel modules
@@ -160,7 +213,7 @@ func ConfigureK8sKernelModules(cmdExec platform.CommandExecutor, distro *platfor
 	sysctlContent.WriteString("net.bridge.bridge-nf-call-iptables = 1\n")
 	sysctlContent.WriteString("net.bridge.bridge-nf-call-ip6tables = 1\n")
 	sysctlContent.WriteString("net.ipv4.ip_forward = 1\n")
-	if err := cmdExec.WriteFile("/etc/sysctl.d/k8s.conf", []byte(sysctlContent.String()), 0644); err != nil {
+	if err := cmdExec.WriteFile("/etc/sysctl.d/k8s.conf", []byte(sysctlContent.String()), 0o644); err != nil {
 		return fmt.Errorf("failed to write sysctl file: %w", err)
 	}
 	// Apply sysctl params without reboot
@@ -202,33 +255,25 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 		repoContent.WriteString("enabled=1\n")
 		repoContent.WriteString("gpgcheck=1\n")
 		repoContent.WriteString(fmt.Sprintf("gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/v%s/rpm/repodata/repomd.xml.key\n", k8sVersion))
-		if err := cmdExec.WriteFile("/etc/yum.repos.d/cri-o.repo", []byte(repoContent.String()), 0644); err != nil {
+		if err := cmdExec.WriteFile("/etc/yum.repos.d/cri-o.repo", []byte(repoContent.String()), 0o644); err != nil {
 			return fmt.Errorf("failed to write cri-o repo file: %w", err)
 		}
 		// Install CRI-O, iproute-tc, and containernetworking-plugins (standard CNI plugins like bridge, host-local, etc.)
 		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "cri-o", "iproute-tc", "containernetworking-plugins"); err != nil {
 			return fmt.Errorf("failed to install CRI-O: %w", err)
 		}
-		// On Fedora, CNI plugins are installed to /usr/libexec/cni/ but CRI-O looks in /opt/cni/bin/
-		// Create symlinks so CRI-O can find them
-		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "mkdir", "-p", "/opt/cni/bin"); err != nil {
-			return fmt.Errorf("failed to create /opt/cni/bin: %w", err)
-		}
-		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "ln", "-sf", "/usr/libexec/cni/*", "/opt/cni/bin/"); err != nil {
-			return fmt.Errorf("failed to create symlinks: %w", err)
+		// On Fedora, CNI plugins are installed to /usr/libexec/cni/. Always mirror
+		// plugins into /var/lib/cni/bin and pin CRI-O plugin_dirs order so all nodes
+		// resolve plugins consistently (important for mixed writable/read-only roots).
+		// Keep /opt/cni/bin symlinks best-effort only for compatibility.
+		if err := EnsureCRIOCNIPluginPaths(cmdExec); err != nil {
+			return err
 		}
 	} else {
 		return platform.UnsupportedPackageManager(distro)
 	}
-	// If a local registry is configured, tell CRI-O to use HTTP (insecure)
-	// when pulling from it. The registry runs plain HTTP on the host and
-	// VMs reach it via the management network gateway IP.
-	if cfg.HasRegistry() {
-		nodeEndpoint := cfg.GetRegistryNodeEndpoint()
-		registryConf := fmt.Sprintf("[[registry]]\nlocation = \"%s\"\ninsecure = true\n", nodeEndpoint)
-		if err := cmdExec.WriteFile("/etc/containers/registries.conf.d/dpu-sim-registry.conf", []byte(registryConf), 0644); err != nil {
-			return fmt.Errorf("failed to write insecure registry config: %w", err)
-		}
+	if err := ConfigureCRIOLocalRegistry(cmdExec, cfg); err != nil {
+		return err
 	}
 
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "crio"); err != nil {
@@ -237,6 +282,91 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "start", "crio"); err != nil {
 		return fmt.Errorf("failed to start CRI-O: %w", err)
 	}
+	return nil
+}
+
+// EnsureCRIOCNIPluginPaths ensures CRI-O can always resolve required CNI plugins
+// from a consistent, writable-first path ordering across nodes.
+func EnsureCRIOCNIPluginPaths(cmdExec platform.CommandExecutor) error {
+	if _, stderr, err := cmdExec.ExecuteWithTimeout(`set -e
+SRC=""
+if [ -d /usr/libexec/cni ] && [ -n "$(ls -A /usr/libexec/cni 2>/dev/null)" ]; then
+  SRC="/usr/libexec/cni"
+elif [ -d /opt/cni/bin ] && [ -n "$(ls -A /opt/cni/bin 2>/dev/null)" ]; then
+  SRC="/opt/cni/bin"
+fi
+
+if [ -z "$SRC" ]; then
+  echo "missing CNI plugins under /usr/libexec/cni and /opt/cni/bin" >&2
+  exit 1
+fi
+
+sudo mkdir -p /var/lib/cni/bin
+for plugin in "$SRC"/*; do
+  [ -e "$plugin" ] || continue
+  sudo cp -f "$plugin" "/var/lib/cni/bin/$(basename "$plugin")"
+done
+
+sudo mkdir -p /etc/crio/crio.conf.d
+sudo tee /etc/crio/crio.conf.d/99-dpu-sim-cni-plugin-dirs.conf >/dev/null <<'EOF'
+[crio.network]
+plugin_dirs = [
+  "/var/lib/cni/bin",
+  "/opt/cni/bin",
+  "/usr/libexec/cni",
+]
+EOF
+
+# Prevent CRI-O default bridge config from racing as primary CNI.
+if [ -f /etc/cni/net.d/100-crio-bridge.conflist ]; then
+  sudo mv /etc/cni/net.d/100-crio-bridge.conflist /etc/cni/net.d/100-crio-bridge.conflist.disabled
+fi
+
+# Clear stale bridge/IPAM state that can pin cni0 to the wrong CIDR.
+sudo ip link delete cni0 2>/dev/null || true
+sudo rm -rf /var/lib/cni/networks/crio /var/lib/cni/networks/cbr0
+
+if [ "$SRC" = "/usr/libexec/cni" ] && sudo mkdir -p /opt/cni/bin 2>/dev/null; then
+  if sudo sh -c 'touch /opt/cni/bin/.dpu-sim-write-test' 2>/dev/null; then
+    sudo rm -f /opt/cni/bin/.dpu-sim-write-test
+    for plugin in /usr/libexec/cni/*; do
+      [ -e "$plugin" ] || continue
+      sudo ln -snf "$plugin" "/opt/cni/bin/$(basename "$plugin")"
+    done
+  else
+    echo "info: /opt/cni/bin not writable; skipping symlink step" >&2
+  fi
+fi`, 1*time.Minute); err != nil {
+		return fmt.Errorf("failed to ensure CNI plugin paths: %w, stderr: %s", err, stderr)
+	}
+	return nil
+}
+
+// ConfigureCRIOLocalRegistry configures CRI-O to use the local dpu-sim
+// registry over HTTP from cluster nodes.
+func ConfigureCRIOLocalRegistry(cmdExec platform.CommandExecutor, cfg *config.Config) error {
+	const registryConfPath = "/etc/containers/registries.conf.d/dpu-sim-registry.conf"
+
+	// No-op when no local registry is configured.
+	if !cfg.IsRegistryEnabled() {
+		// Remove stale drop-ins from prior runs so toggling registry.enabled=false
+		// actually stops CRI-O from trusting old insecure registry endpoints.
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "rm", "-f", registryConfPath); err != nil {
+			return fmt.Errorf("failed to remove insecure registry config: %w", err)
+		}
+		return nil
+	}
+
+	endpoints := cfg.GetRegistryInsecureEndpoints()
+	var blocks []string
+	for _, endpoint := range endpoints {
+		blocks = append(blocks, fmt.Sprintf("[[registry]]\nlocation = \"%s\"\ninsecure = true\n", endpoint))
+	}
+	registryConf := strings.Join(blocks, "\n")
+	if err := cmdExec.WriteFile(registryConfPath, []byte(registryConf), 0o644); err != nil {
+		return fmt.Errorf("failed to write insecure registry config: %w", err)
+	}
+
 	return nil
 }
 
@@ -361,7 +491,7 @@ func InstallKubelet(cmdExec platform.CommandExecutor, distro *platform.Distro, c
 		repoContent.WriteString("gpgcheck=1\n")
 		repoContent.WriteString(fmt.Sprintf("gpgkey=https://pkgs.k8s.io/core:/stable:/v%s/rpm/repodata/repomd.xml.key\n", k8sVersion))
 		repoContent.WriteString("exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni\n")
-		if err := cmdExec.WriteFile("/etc/yum.repos.d/kubernetes.repo", []byte(repoContent.String()), 0644); err != nil {
+		if err := cmdExec.WriteFile("/etc/yum.repos.d/kubernetes.repo", []byte(repoContent.String()), 0o644); err != nil {
 			return fmt.Errorf("failed to write repo file: %w", err)
 		}
 		// Install kubelet, kubeadm, kubectl
@@ -441,7 +571,7 @@ func InstallKubectl(cmdExec platform.CommandExecutor, distro *platform.Distro, c
 		repoContent.WriteString("enabled=1\n")
 		repoContent.WriteString("gpgcheck=1\n")
 		repoContent.WriteString(fmt.Sprintf("gpgkey=https://pkgs.k8s.io/core:/stable:/v%s/rpm/repodata/repomd.xml.key\n", k8sVersion))
-		if err := cmdExec.WriteFile("/etc/yum.repos.d/kubernetes.repo", []byte(repoContent.String()), 0644); err != nil {
+		if err := cmdExec.WriteFile("/etc/yum.repos.d/kubernetes.repo", []byte(repoContent.String()), 0o644); err != nil {
 			return fmt.Errorf("failed to write repo file: %w", err)
 		}
 		// Install kubectl
@@ -518,6 +648,73 @@ func CheckIpv6(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *c
 	stdout, stderr, err = cmdExec.Execute("sysctl -n net.ipv6.conf.all.forwarding")
 	if strings.TrimSpace(stdout) != "1" {
 		return fmt.Errorf("ipv6 forwarding is not enabled: stdout: %s, stderr: %s, err: %w", stdout, stderr, err)
+	}
+	return nil
+}
+
+// InstallKindCNIPlugins installs and stages the base CNI binaries flannel and
+// multus depend on for Kind node networking.
+//
+// Why: on some Debian-based Kind node images, /opt/cni/bin only has a subset
+// of plugins after multus install. Flannel then fails to delegate to "bridge"
+// and pods stay in ContainerCreating/Pending.
+//
+// What: install containernetworking-plugins and copy key binaries into
+// /opt/cni/bin (bridge, host-local, loopback, portmap, ptp).
+//
+// How: detect the distro plugin source path (/usr/lib/cni or
+// /usr/libexec/cni), then copy only binaries that exist so the routine is safe
+// across distro packaging differences.
+func InstallKindCNIPlugins(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	switch distro.PackageManager {
+	case platform.APT:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.APT, "update"); err != nil {
+			return fmt.Errorf("failed to update apt: %w", err)
+		}
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.APT, "install", "-y", "containernetworking-plugins"); err != nil {
+			return fmt.Errorf("failed to install containernetworking-plugins: %w", err)
+		}
+	case platform.DNF:
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "containernetworking-plugins"); err != nil {
+			return fmt.Errorf("failed to install containernetworking-plugins: %w", err)
+		}
+	default:
+		return platform.UnsupportedPackageManager(distro)
+	}
+
+	stdout, stderr, err := cmdExec.Execute(`set -e
+SRC=""
+for d in /usr/lib/cni /usr/libexec/cni; do
+  if [ -x "$d/bridge" ]; then
+    SRC="$d"
+    break
+  fi
+done
+
+if [ -z "$SRC" ]; then
+  echo "missing bridge plugin under /usr/lib/cni or /usr/libexec/cni" >&2
+  exit 1
+fi
+
+sudo mkdir -p /opt/cni/bin
+for plugin in bridge host-local loopback portmap ptp; do
+  if [ -x "$SRC/$plugin" ]; then
+    sudo cp -f "$SRC/$plugin" "/opt/cni/bin/$plugin"
+  fi
+done`)
+	if err != nil {
+		return fmt.Errorf("failed to place kind cni plugins in /opt/cni/bin: %w, stdout: %s, stderr: %s", err, stdout, stderr)
+	}
+
+	return nil
+}
+
+// CheckKindCNIPlugins validates a minimal set that proves bridge-style primary networking can run.
+// bridge + host-local are the critical pair required by flannel delegation.
+func CheckKindCNIPlugins(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	stdout, stderr, err := cmdExec.Execute("test -x /opt/cni/bin/bridge && test -x /opt/cni/bin/host-local")
+	if err != nil {
+		return fmt.Errorf("required cni plugins are missing from /opt/cni/bin: %w, stdout: %s, stderr: %s", err, stdout, stderr)
 	}
 	return nil
 }

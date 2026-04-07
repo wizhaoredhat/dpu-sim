@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -23,8 +24,8 @@ func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
 
 	imagePath := GetImagePath(m.config.OperatingSystem)
 
-	if err := DownloadCloudImage(m.config.OperatingSystem.ImageURL, imagePath); err != nil {
-		return fmt.Errorf("failed to download cloud image: %w", err)
+	if err := EnsureCloudImage(m.config.OperatingSystem, imagePath); err != nil {
+		return fmt.Errorf("failed to ensure cloud image: %w", err)
 	}
 
 	diskPath, err := CreateVMDisk(vmCfg.Name, vmCfg.DiskSize, imagePath)
@@ -37,10 +38,7 @@ func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
 		return fmt.Errorf("failed to create cloud-init ISO: %w", err)
 	}
 
-	spec, err := hostArchSpec(m.hostDistro.Architecture)
-	if err != nil {
-		return fmt.Errorf("failed to create libvirt arch spec: %w", err)
-	}
+	spec := m.hostSpec
 	var nvramPath string
 	if m.hostDistro.Architecture == platform.AARCH64 && (spec.uefiLoader == "" || spec.uefiVarsTemplate == "") {
 		return fmt.Errorf("missing aarch64 UEFI firmware: install edk2/aavmf and ensure QEMU_EFI-pflash and vars template are available")
@@ -99,18 +97,28 @@ func (m *VMManager) generateNetworkInterfaces(vmCfg config.VMConfig) string {
 }
 
 type archSpec struct {
-	libvirtArch      string
-	machine          string
-	cpuMode          string
-	emulator         string
+	// libvirtArch/machine/cpuMode/emulator define the domain's compute platform.
+	libvirtArch string
+	machine     string
+	cpuMode     string
+	emulator    string
+	// uefiLoader/uefiVarsTemplate are optional and set when firmware-backed boot
+	// is available on the host architecture.
 	uefiLoader       string
 	uefiVarsTemplate string
-	enableIOMMU      bool
-	enableAPIC       bool
-	enableACPI       bool
+	// Feature flags map directly to optional XML blocks for device/interrupt
+	// behavior across architectures.
+	enableIOMMU bool
+	enableAPIC  bool
+	enableACPI  bool
 }
 
 func hostArchSpec(hostArch platform.Architecture) (archSpec, error) {
+	emulator, err := resolveQEMUEmulator(hostArch)
+	if err != nil {
+		return archSpec{}, err
+	}
+
 	switch hostArch {
 	case platform.AARCH64:
 		loader, varsTemplate := findAarch64UEFIFirmware()
@@ -118,7 +126,7 @@ func hostArchSpec(hostArch platform.Architecture) (archSpec, error) {
 			libvirtArch:      "aarch64",
 			machine:          "virt",
 			cpuMode:          "host-passthrough",
-			emulator:         "/usr/bin/qemu-system-aarch64",
+			emulator:         emulator,
 			uefiLoader:       loader,
 			uefiVarsTemplate: varsTemplate,
 			enableIOMMU:      false,
@@ -131,7 +139,7 @@ func hostArchSpec(hostArch platform.Architecture) (archSpec, error) {
 			libvirtArch: "x86_64",
 			machine:     "q35",
 			cpuMode:     "host-passthrough",
-			emulator:    "/usr/libexec/qemu-kvm",
+			emulator:    emulator,
 			enableIOMMU: true,
 			enableAPIC:  true,
 			enableACPI:  true,
@@ -139,6 +147,63 @@ func hostArchSpec(hostArch platform.Architecture) (archSpec, error) {
 	default:
 		return archSpec{}, fmt.Errorf("unsupported Architecure: %v", hostArch)
 	}
+}
+
+// resolveQEMUEmulator matches the hosts architecture to its proper qemu binary
+// and calls resolveFirstAvailableEmulator to search for one of those binaries and returns it
+// Why: It's useful because depending on the distro (non-rhel vs rhel) the binary is path and name varies
+func resolveQEMUEmulator(hostArch platform.Architecture) (string, error) {
+	var candidates []string
+	switch hostArch {
+	case platform.X86_64:
+		candidates = []string{
+			"/usr/libexec/qemu-kvm",
+			"/usr/bin/qemu-kvm",
+			"/usr/bin/qemu-system-x86_64",
+			"qemu-kvm",
+			"qemu-system-x86_64",
+		}
+	case platform.AARCH64:
+		candidates = []string{
+			"/usr/bin/qemu-system-aarch64",
+			"qemu-system-aarch64",
+		}
+	default:
+		return "", fmt.Errorf("unsupported Architecure: %v", hostArch)
+	}
+
+	emulator, ok := resolveFirstAvailableEmulator(candidates, fileExists, exec.LookPath)
+	if !ok {
+		return "", fmt.Errorf("no suitable QEMU emulator found for host architecture %s (checked: %s)", hostArch, strings.Join(candidates, ", "))
+	}
+
+	return emulator, nil
+}
+
+// resolveFirstAvailableEmulator returns the first emulator candidate that
+// exists on the host.
+//
+// Why: qemu binary names and install paths vary across distros and packaging
+// layouts, so caller-provided candidates include both absolute paths and PATH
+// lookups.
+//
+// How: absolute candidates are validated with existsFn, while non-absolute
+// candidates are resolved with lookPathFn; the first match wins.
+func resolveFirstAvailableEmulator(candidates []string, existsFn func(string) bool, lookPathFn func(string) (string, error)) (string, bool) {
+	for _, candidate := range candidates {
+		if strings.HasPrefix(candidate, "/") {
+			if existsFn(candidate) {
+				return candidate, true
+			}
+			continue
+		}
+
+		resolved, err := lookPathFn(candidate)
+		if err == nil && resolved != "" {
+			return resolved, true
+		}
+	}
+	return "", false
 }
 
 type firmwareCandidate struct {

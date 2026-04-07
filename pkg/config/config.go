@@ -9,7 +9,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/wizhao/dpu-sim/pkg/log"
 
 	"gopkg.in/yaml.v3"
 )
@@ -134,10 +137,86 @@ func (c *Config) validateAndSetDefaults() error {
 		}
 	}
 
+	// TODO(vmctl): Extend vmctl commands to understand and operate on baremetal
+	// nodes in addition to VM-backed nodes.
+	// Validate BareMetal
+	for i, node := range c.BareMetal {
+		if node.Name == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d]: 'name' is required", i))
+		}
+		if node.Type == "" {
+			c.BareMetal[i].Type = HostType
+			node.Type = HostType
+		} else if node.Type != HostType && node.Type != DpuType {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'type' must be '%s' or '%s', got '%s'", i, node.Name, HostType, DpuType, node.Type))
+		}
+		if node.K8sCluster == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'k8s_cluster' is required", i, node.Name))
+		}
+		if node.K8sRole == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'k8s_role' is required", i, node.Name))
+		}
+		if node.MgmtIP == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'mgmt_ip' is required", i, node.Name))
+		}
+		if node.NodeIP == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'node_ip' is required", i, node.Name))
+		}
+		if node.Type == DpuType && node.Host == "" {
+			errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'host' is required for type '%s'", i, node.Name, DpuType))
+		}
+
+		if node.BootstrapSSH != nil {
+			if node.BootstrapSSH.User == "" {
+				if c.SSH.User != "" {
+					c.BareMetal[i].BootstrapSSH.User = c.SSH.User
+				} else {
+					c.BareMetal[i].BootstrapSSH.User = "root"
+				}
+			}
+			if node.BootstrapSSH.KeyPath != "" {
+				expanded, err := expandTilde(node.BootstrapSSH.KeyPath)
+				if err != nil {
+					errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootstrap_ssh.key_path expand failed: %v", i, node.Name, err))
+				} else {
+					c.BareMetal[i].BootstrapSSH.KeyPath = expanded
+				}
+			}
+			if node.BootstrapSSH.KeyPath == "" && node.BootstrapSSH.Password == "" {
+				errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootstrap_ssh requires one of 'key_path' or 'password'", i, node.Name))
+			}
+		}
+
+		if node.Bootc != nil {
+			if node.Bootc.Enabled {
+				strategy := node.Bootc.Strategy
+				if strategy == "" {
+					strategy = "switch"
+					c.BareMetal[i].Bootc.Strategy = strategy
+				}
+				if strategy != "switch" && strategy != "upgrade" {
+					errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootc.strategy must be 'switch' or 'upgrade'", i, node.Name))
+				}
+				if strategy == "switch" && node.Bootc.ImageRef == "" {
+					errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootc.image_ref is required when bootc.strategy is 'switch'", i, node.Name))
+				}
+				if node.Bootc.Transport == "" {
+					c.BareMetal[i].Bootc.Transport = "registry"
+				}
+				if node.Bootc.SoftReboot != "" && node.Bootc.SoftReboot != "auto" && node.Bootc.SoftReboot != "required" {
+					errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): bootc.soft_reboot must be 'auto' or 'required'", i, node.Name))
+				}
+			}
+		}
+	}
+
 	// Validate operating system (required for VM mode)
 	if len(c.VMs) > 0 {
-		if c.OperatingSystem.ImageURL == "" {
-			errors = append(errors, "VMs are defined, operating_system: 'image_url' is required")
+		if c.OperatingSystem.ImageURL == "" && c.OperatingSystem.ImageRef == "" {
+			errors = append(errors, "VMs are defined, operating_system: one of 'image_url' or 'image_ref' is required")
+		}
+		if c.OperatingSystem.ImageURL != "" && c.OperatingSystem.ImageRef != "" {
+			errors = append(errors, "VMs are defined, operating_system: 'image_url' and 'image_ref' are mutually exclusive")
 		}
 		if c.OperatingSystem.ImageName == "" {
 			errors = append(errors, "VMs are defined, operating_system: 'image_name' is required")
@@ -224,10 +303,31 @@ func (c *Config) validateAndSetDefaults() error {
 		} else if c.Kubernetes.Clusters[i].CNI != CNIOVNKubernetes && c.Kubernetes.Clusters[i].CNI != CNIFlannel && c.Kubernetes.Clusters[i].CNI != CNIKindnet {
 			errors = append(errors, fmt.Sprintf("kubernetes.clusters[%d]: 'cni' must be 'ovn-kubernetes', 'flannel', or 'kindnet', got '%s'", i, c.Kubernetes.Clusters[i].CNI))
 		}
+
+		normalizedAddons, duplicates, addonErrs := validateAndNormalizeAddons(cluster.Addons)
+		for _, err := range addonErrs {
+			errors = append(errors, fmt.Sprintf("kubernetes.clusters[%d] (%s): %s", i, cluster.Name, err))
+		}
+		for _, dup := range duplicates {
+			log.Warn("kubernetes.clusters[%d] (%s): duplicate addon %q found, keeping first occurrence", i, cluster.Name, dup)
+		}
+		c.Kubernetes.Clusters[i].Addons = normalizedAddons
 	}
 
 	// Validate registry configuration
 	if c.Registry != nil {
+		for i, endpoint := range c.Registry.InsecureEndpoints {
+			normalized := strings.TrimSpace(endpoint)
+			c.Registry.InsecureEndpoints[i] = normalized
+			if normalized == "" {
+				errors = append(errors, fmt.Sprintf("registry.insecure_endpoints[%d]: value must not be empty", i))
+				continue
+			}
+			if err := validateRegistryEndpoint(normalized); err != nil {
+				errors = append(errors, fmt.Sprintf("registry.insecure_endpoints[%d]: %v", i, err))
+			}
+		}
+
 		for i, container := range c.Registry.Containers {
 			if container.Name == "" {
 				errors = append(errors, fmt.Sprintf("registry.containers[%d]: 'name' is required", i))
@@ -251,11 +351,21 @@ func (c *Config) validateAndSetDefaults() error {
 				hostNames[vm.Name] = true
 			}
 		}
+		for _, node := range c.BareMetal {
+			if node.Type == HostType {
+				hostNames[node.Name] = true
+			}
+		}
 		for i, vm := range c.VMs {
 			if vm.Type == DpuType && vm.Host != "" {
 				if !hostNames[vm.Host] {
 					errors = append(errors, fmt.Sprintf("vms[%d] (%s): 'host' references non-existent host '%s'", i, vm.Name, vm.Host))
 				}
+			}
+		}
+		for i, node := range c.BareMetal {
+			if node.Type == DpuType && node.Host != "" && !hostNames[node.Host] {
+				errors = append(errors, fmt.Sprintf("baremetal[%d] (%s): 'host' references non-existent host '%s'", i, node.Name, node.Host))
 			}
 		}
 	}
@@ -267,9 +377,54 @@ func (c *Config) validateAndSetDefaults() error {
 	return nil
 }
 
+func validateAndNormalizeAddons(addons []AddonType) ([]AddonType, []AddonType, []string) {
+	seen := make(map[AddonType]struct{}, len(addons))
+	normalized := make([]AddonType, 0, len(addons))
+	duplicates := make([]AddonType, 0)
+	var errs []string
+
+	for idx, addon := range addons {
+		switch addon {
+		case AddonMultus, AddonCertManager, AddonWhereabouts:
+			// valid
+		default:
+			errs = append(errs, fmt.Sprintf("addons[%d]: unsupported addon %q", idx, addon))
+			continue
+		}
+
+		if _, exists := seen[addon]; exists {
+			duplicates = append(duplicates, addon)
+			continue
+		}
+
+		seen[addon] = struct{}{}
+		normalized = append(normalized, addon)
+	}
+
+	return normalized, duplicates, errs
+}
+
+func validateRegistryEndpoint(endpoint string) error {
+	if strings.Contains(endpoint, "://") {
+		return fmt.Errorf("must be in host:port format without URL scheme")
+	}
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fmt.Errorf("must be a valid host:port endpoint")
+	}
+	if host == "" {
+		return fmt.Errorf("host is required")
+	}
+	portNum, err := strconv.Atoi(port)
+	if err != nil || portNum < 1 || portNum > 65535 {
+		return fmt.Errorf("port must be an integer between 1 and 65535")
+	}
+	return nil
+}
+
 // GetDeploymentMode determines the deployment mode based on configuration
 func (c *Config) GetDeploymentMode() (string, error) {
-	hasVMs := len(c.VMs) > 0
+	hasVMs := len(c.VMs) > 0 || len(c.BareMetal) > 0
 	hasKind := c.Kind != nil && len(c.Kind.Nodes) > 0
 
 	if hasKind && hasVMs {
@@ -348,6 +503,24 @@ func (c *Config) GetClusterRoleMapping() map[string]ClusterRoleMapping {
 		}
 
 		result[clusterName][role] = append(result[clusterName][role], vm)
+	}
+
+	return result
+}
+
+// GetBareMetalClusterRoleMapping returns a mapping of cluster names to roles and their baremetal nodes.
+func (c *Config) GetBareMetalClusterRoleMapping() map[string]BareMetalClusterRoleMapping {
+	result := make(map[string]BareMetalClusterRoleMapping)
+
+	for _, node := range c.BareMetal {
+		clusterName := node.K8sCluster
+		role := ClusterRole(node.K8sRole)
+
+		if _, ok := result[clusterName]; !ok {
+			result[clusterName] = make(BareMetalClusterRoleMapping)
+		}
+
+		result[clusterName][role] = append(result[clusterName][role], node)
 	}
 
 	return result
@@ -698,6 +871,56 @@ func (c *Config) GetNetworkByName(name string) *NetworkConfig {
 // HasRegistry returns true if the configuration includes a local registry
 func (c *Config) HasRegistry() bool {
 	return c.Registry != nil && len(c.Registry.Containers) > 0
+}
+
+// IsRegistryEnabled returns true when local registry management is enabled.
+//
+// Behavior:
+//   - false when no registry section is present
+//   - true when registry section is present and enabled is unset
+//   - value of registry.enabled when explicitly set
+func (c *Config) IsRegistryEnabled() bool {
+	if c.Registry == nil {
+		return false
+	}
+	if c.Registry.Enabled == nil {
+		return true
+	}
+	return *c.Registry.Enabled
+}
+
+// GetRegistryInsecureEndpoints returns the node-side registry endpoints
+// that should be configured as insecure HTTP registries.
+//
+// Behavior:
+//   - when local registry management is disabled, return no endpoints
+//   - when registry.insecure_endpoints is set, return that list
+//   - otherwise fall back to GetRegistryNodeEndpoint()
+func (c *Config) GetRegistryInsecureEndpoints() []string {
+	if !c.IsRegistryEnabled() {
+		return nil
+	}
+
+	if c.Registry != nil && len(c.Registry.InsecureEndpoints) > 0 {
+		out := make([]string, 0, len(c.Registry.InsecureEndpoints))
+		seen := make(map[string]struct{}, len(c.Registry.InsecureEndpoints))
+		for _, endpoint := range c.Registry.InsecureEndpoints {
+			normalized := strings.TrimSpace(endpoint)
+			if normalized == "" {
+				continue
+			}
+			if _, exists := seen[normalized]; exists {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			out = append(out, normalized)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	return []string{c.GetRegistryNodeEndpoint()}
 }
 
 // GetRegistryContainerForCNI returns the registry container config for a

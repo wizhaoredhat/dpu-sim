@@ -32,22 +32,37 @@ const (
 	CNIKindnet       CNIType = "kindnet"
 )
 
+type AddonType string
+
+const (
+	AddonMultus      AddonType = "multus"
+	AddonCertManager AddonType = "cert-manager"
+	AddonWhereabouts AddonType = "whereabouts"
+)
+
 // Config represents the complete DPU simulator configuration
 type Config struct {
-	Networks        []NetworkConfig  `yaml:"networks"`
-	VMs             []VMConfig       `yaml:"vms"`
-	Kind            *KindConfig      `yaml:"kind,omitempty"`
-	OperatingSystem OSConfig         `yaml:"operating_system"`
-	SSH             SSHConfig        `yaml:"ssh"`
-	Kubernetes      KubernetesConfig `yaml:"kubernetes"`
-	Registry        *RegistryConfig  `yaml:"registry,omitempty"`
+	Networks        []NetworkConfig   `yaml:"networks"`
+	VMs             []VMConfig        `yaml:"vms"`
+	BareMetal       []BareMetalConfig `yaml:"baremetal,omitempty"`
+	Kind            *KindConfig       `yaml:"kind,omitempty"`
+	OperatingSystem OSConfig          `yaml:"operating_system"`
+	SSH             SSHConfig         `yaml:"ssh"`
+	Kubernetes      KubernetesConfig  `yaml:"kubernetes"`
+	Registry        *RegistryConfig   `yaml:"registry,omitempty"`
 }
 
 // RegistryConfig represents the local container registry configuration.
 // When specified, a local Docker registry is started and made accessible
 // to nodes in both VM and Kind modes.
 type RegistryConfig struct {
-	Containers []RegistryContainerConfig `yaml:"containers"`
+	// Enabled controls whether dpu-sim should manage the local registry.
+	// Defaults to true when the registry section is present.
+	Enabled *bool `yaml:"enabled,omitempty"`
+	// InsecureEndpoints is the list of registry endpoints (host:port)
+	// that nodes should treat as insecure HTTP registries.
+	InsecureEndpoints []string                  `yaml:"insecure_endpoints,omitempty"`
+	Containers        []RegistryContainerConfig `yaml:"containers"`
 }
 
 // RegistryContainerConfig represents a container image to build and push
@@ -76,6 +91,34 @@ type NetworkConfig struct {
 	UseOVS     bool   `yaml:"use_ovs,omitempty"`
 	AttachTo   string `yaml:"attach_to,omitempty"`
 	NumPairs   int    `yaml:"num_pairs,omitempty"`
+}
+
+// BareMetalConfig represents a bare metal configuration
+type BareMetalConfig struct {
+	Name             string                `yaml:"name"`
+	Type             string                `yaml:"type,omitempty"`
+	K8sCluster       string                `yaml:"k8s_cluster,omitempty"`
+	K8sRole          string                `yaml:"k8s_role,omitempty"`
+	MgmtIP           string                `yaml:"mgmt_ip,omitempty"`
+	NodeIP           string                `yaml:"node_ip,omitempty"`
+	Host             string                `yaml:"host,omitempty"`
+	GatewayInterface string                `yaml:"gateway_interface,omitempty"`
+	ProtectedIfaces  []string              `yaml:"protected_interfaces,omitempty"`
+	BootstrapSSH     *SSHConfig            `yaml:"bootstrap_ssh,omitempty"`
+	Bootc            *BareMetalBootcConfig `yaml:"bootc,omitempty"`
+}
+
+// BareMetalBootcConfig controls optional bootc reconciliation for adopted nodes.
+type BareMetalBootcConfig struct {
+	Enabled                   bool   `yaml:"enabled,omitempty"`
+	Strategy                  string `yaml:"strategy,omitempty"`
+	ImageRef                  string `yaml:"image_ref,omitempty"`
+	Transport                 string `yaml:"transport,omitempty"`
+	Apply                     bool   `yaml:"apply,omitempty"`
+	SoftReboot                string `yaml:"soft_reboot,omitempty"`
+	Retain                    bool   `yaml:"retain,omitempty"`
+	EnforceContainerSigpolicy bool   `yaml:"enforce_container_sigpolicy,omitempty"`
+	WaitAfterReboot           string `yaml:"wait_after_reboot,omitempty"`
 }
 
 // VMConfig represents a virtual machine configuration
@@ -108,7 +151,8 @@ type KindNodeConfig struct {
 
 // OSConfig represents operating system configuration
 type OSConfig struct {
-	ImageURL  string `yaml:"image_url"`
+	ImageURL  string `yaml:"image_url,omitempty"`
+	ImageRef  string `yaml:"image_ref,omitempty"`
 	ImageName string `yaml:"image_name"`
 }
 
@@ -137,10 +181,11 @@ func (k *KubernetesConfig) GetKubeconfigDir() string {
 
 // ClusterConfig represents a Kubernetes cluster configuration
 type ClusterConfig struct {
-	Name        string  `yaml:"name"`
-	PodCIDR     string  `yaml:"pod_cidr"`
-	ServiceCIDR string  `yaml:"service_cidr"`
-	CNI         CNIType `yaml:"cni"`
+	Name        string      `yaml:"name"`
+	PodCIDR     string      `yaml:"pod_cidr"`
+	ServiceCIDR string      `yaml:"service_cidr"`
+	CNI         CNIType     `yaml:"cni"`
+	Addons      []AddonType `yaml:"addons"`
 }
 
 // HostDPULink represents network link information between a host and DPU
@@ -169,6 +214,9 @@ const (
 
 // ClusterRoleMapping maps roles (master/worker) to their VM configurations
 type ClusterRoleMapping map[ClusterRole][]VMConfig
+
+// BareMetalClusterRoleMapping maps roles (master/worker) to baremetal configurations.
+type BareMetalClusterRoleMapping map[ClusterRole][]BareMetalConfig
 
 // GetSubnetCIDR returns the subnet in CIDR notation (e.g., "192.168.120.0/24")
 // derived from the gateway and subnet mask

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -55,7 +56,7 @@ kubernetes:
       cni: "ovn-kubernetes"
 `
 
-	err := os.WriteFile(configPath, []byte(configContent), 0644)
+	err := os.WriteFile(configPath, []byte(configContent), 0o644)
 	require.NoError(t, err)
 
 	// Test loading config
@@ -93,6 +94,14 @@ func TestGetDeploymentMode(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Baremetal mode",
+			config: Config{
+				BareMetal: []BareMetalConfig{{Name: "dh4", Type: HostType, K8sCluster: "cluster-1", K8sRole: string(ClusterRoleWorker), MgmtIP: "172.22.1.4", NodeIP: "172.22.1.4"}},
+			},
+			expected:    VMDeploymentMode,
+			expectError: false,
+		},
+		{
 			name: "Kind mode",
 			config: Config{
 				Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "k"}}},
@@ -106,7 +115,7 @@ func TestGetDeploymentMode(t *testing.T) {
 		{
 			name: "Both modes - error",
 			config: Config{
-				VMs: []VMConfig{{Name: "vm1"}},
+				VMs:        []VMConfig{{Name: "vm1"}},
 				Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "k"}}},
 				Kind: &KindConfig{
 					Nodes: []KindNodeConfig{{Name: "cp", K8sRole: "control-plane", K8sCluster: "k"}},
@@ -239,4 +248,408 @@ func TestIsKindMode(t *testing.T) {
 	}
 	assert.True(t, kindConfig.IsKindMode())
 	assert.False(t, kindConfig.IsVMMode())
+}
+
+func TestValidateOperatingSystemAllowsImageRef(t *testing.T) {
+	cfg := Config{
+		Networks: []NetworkConfig{
+			{
+				Name:       "mgmt-network",
+				Type:       MgmtNetworkName,
+				BridgeName: "virbr-mgmt",
+				Mode:       "nat",
+				NICModel:   "virtio",
+			},
+		},
+		VMs: []VMConfig{
+			{
+				Name:       "master-1",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleMaster),
+				K8sNodeMAC: "52:54:00:00:01:11",
+				K8sNodeIP:  "192.168.123.11",
+				Memory:     4096,
+				VCPUs:      2,
+				DiskSize:   20,
+			},
+		},
+		OperatingSystem: OSConfig{
+			ImageRef:  "ghcr.io/example/fedora-cloud:43",
+			ImageName: "Fedora-x86_64.qcow2",
+		},
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIOVNKubernetes},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+}
+
+func TestValidateMultusNotPrimaryCNI(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: "multus"},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "'cni' must be"))
+}
+
+func TestValidateMultusAndPrimaryCNI(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIFlannel, Addons: []AddonType{AddonMultus}},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+	addons := cfg.GetClusterConfig("cluster-1").Addons
+	require.Contains(t, addons, AddonMultus)
+}
+
+func TestValidateCertManagerAddon(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIFlannel, Addons: []AddonType{AddonCertManager}},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+	addons := cfg.GetClusterConfig("cluster-1").Addons
+	require.Contains(t, addons, AddonCertManager)
+}
+
+func TestValidateWhereaboutsAddon(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIFlannel, Addons: []AddonType{AddonWhereabouts}},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+	addons := cfg.GetClusterConfig("cluster-1").Addons
+	require.Contains(t, addons, AddonWhereabouts)
+}
+
+func TestValidateUnknownAddonFails(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIFlannel, Addons: []AddonType{"unknown-addon"}},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "unsupported addon"))
+}
+
+func TestValidateAddonsDeduplicatesPreservingOrder(t *testing.T) {
+	cfg := Config{
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{
+					Name:   "cluster-1",
+					CNI:    CNIFlannel,
+					Addons: []AddonType{AddonMultus, AddonCertManager, AddonWhereabouts, AddonMultus, AddonCertManager, AddonWhereabouts},
+				},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+	addons := cfg.GetClusterConfig("cluster-1").Addons
+	require.Equal(t, []AddonType{AddonMultus, AddonCertManager, AddonWhereabouts}, addons)
+}
+
+func TestValidateOperatingSystemRequiresURLOrRef(t *testing.T) {
+	cfg := Config{
+		Networks: []NetworkConfig{
+			{
+				Name:       "mgmt-network",
+				Type:       MgmtNetworkName,
+				BridgeName: "virbr-mgmt",
+				Mode:       "nat",
+				NICModel:   "virtio",
+			},
+		},
+		VMs: []VMConfig{
+			{
+				Name:       "master-1",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleMaster),
+				K8sNodeMAC: "52:54:00:00:01:11",
+				K8sNodeIP:  "192.168.123.11",
+				Memory:     4096,
+				VCPUs:      2,
+				DiskSize:   20,
+			},
+		},
+		OperatingSystem: OSConfig{
+			ImageName: "Fedora-x86_64.qcow2",
+		},
+		Kubernetes: KubernetesConfig{
+			Clusters: []ClusterConfig{
+				{Name: "cluster-1", CNI: CNIOVNKubernetes},
+			},
+		},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "one of 'image_url' or 'image_ref' is required"))
+}
+
+func TestValidateOperatingSystemRejectsURLAndRefTogether(t *testing.T) {
+	cfg := Config{
+		Networks: []NetworkConfig{{
+			Name:       "mgmt-network",
+			Type:       MgmtNetworkName,
+			BridgeName: "virbr-mgmt",
+			Mode:       "nat",
+			NICModel:   "virtio",
+		}},
+		VMs: []VMConfig{{
+			Name:       "master-1",
+			Type:       HostType,
+			K8sCluster: "cluster-1",
+			K8sRole:    string(ClusterRoleMaster),
+			K8sNodeMAC: "52:54:00:00:01:11",
+			K8sNodeIP:  "192.168.123.11",
+			Memory:     4096,
+			VCPUs:      2,
+			DiskSize:   20,
+		}},
+		OperatingSystem: OSConfig{
+			ImageURL:  "https://example.invalid/fedora.qcow2",
+			ImageRef:  "ghcr.io/example/fedora-cloud:43",
+			ImageName: "Fedora-x86_64.qcow2",
+		},
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIOVNKubernetes}}},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.True(t, strings.Contains(err.Error(), "'image_url' and 'image_ref' are mutually exclusive"))
+}
+
+func TestValidateBareMetalConfig(t *testing.T) {
+	cfg := Config{
+		BareMetal: []BareMetalConfig{
+			{
+				Name:       "dh4",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleWorker),
+				MgmtIP:     "172.22.1.4",
+				NodeIP:     "172.22.1.4",
+			},
+		},
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIOVNKubernetes}}},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.NoError(t, err)
+}
+
+func TestValidateBareMetalBootcSwitchRequiresImageRef(t *testing.T) {
+	cfg := Config{
+		BareMetal: []BareMetalConfig{
+			{
+				Name:       "dh4",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleWorker),
+				MgmtIP:     "172.22.1.4",
+				NodeIP:     "172.22.1.4",
+				Bootc: &BareMetalBootcConfig{
+					Enabled:  true,
+					Strategy: "switch",
+				},
+			},
+		},
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIOVNKubernetes}}},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bootc.image_ref is required")
+}
+
+func TestGetBareMetalClusterRoleMapping(t *testing.T) {
+	cfg := Config{
+		BareMetal: []BareMetalConfig{
+			{Name: "dh4", Type: HostType, K8sCluster: "cluster-1", K8sRole: string(ClusterRoleWorker), MgmtIP: "172.22.1.4", NodeIP: "172.22.1.4"},
+			{Name: "dh5", Type: HostType, K8sCluster: "cluster-1", K8sRole: string(ClusterRoleWorker), MgmtIP: "172.22.1.5", NodeIP: "172.22.1.5"},
+		},
+	}
+
+	m := cfg.GetBareMetalClusterRoleMapping()
+	require.Contains(t, m, "cluster-1")
+	assert.Len(t, m["cluster-1"][ClusterRoleWorker], 2)
+}
+
+func TestRegistryEnablementModes(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name            string
+		cfg             Config
+		enabledExpected bool
+		hasRegistry     bool
+	}{
+		{
+			name:            "registry absent",
+			cfg:             Config{},
+			enabledExpected: false,
+			hasRegistry:     false,
+		},
+		{
+			name:            "registry present defaults enabled",
+			cfg:             Config{Registry: &RegistryConfig{}},
+			enabledExpected: true,
+			hasRegistry:     false,
+		},
+		{
+			name:            "registry explicitly disabled",
+			cfg:             Config{Registry: &RegistryConfig{Enabled: &falseVal}},
+			enabledExpected: false,
+			hasRegistry:     false,
+		},
+		{
+			name:            "registry explicitly enabled",
+			cfg:             Config{Registry: &RegistryConfig{Enabled: &trueVal}},
+			enabledExpected: true,
+			hasRegistry:     false,
+		},
+		{
+			name: "registry with container entries",
+			cfg: Config{Registry: &RegistryConfig{Containers: []RegistryContainerConfig{{
+				Name: "ovn-kube",
+				CNI:  string(CNIOVNKubernetes),
+				Tag:  "ovn-kube:dpu-sim",
+			}}}},
+			enabledExpected: true,
+			hasRegistry:     true,
+		},
+		{
+			name: "registry disabled with container entries",
+			cfg: Config{Registry: &RegistryConfig{Enabled: &falseVal, Containers: []RegistryContainerConfig{{
+				Name: "ovn-kube",
+				CNI:  string(CNIOVNKubernetes),
+				Tag:  "ovn-kube:dpu-sim",
+			}}}},
+			enabledExpected: false,
+			hasRegistry:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.enabledExpected, tt.cfg.IsRegistryEnabled())
+			assert.Equal(t, tt.hasRegistry, tt.cfg.HasRegistry())
+		})
+	}
+}
+
+func TestGetRegistryInsecureEndpoints(t *testing.T) {
+	t.Run("returns empty when registry is not enabled", func(t *testing.T) {
+		cfg := Config{
+			Networks: []NetworkConfig{{
+				Name:       "mgmt-network",
+				Type:       MgmtNetworkName,
+				BridgeName: "virbr-mgmt",
+				Gateway:    "192.168.120.1",
+				Mode:       "nat",
+				NICModel:   "virtio",
+			}},
+			BareMetal: []BareMetalConfig{{
+				Name:       "dh4",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleWorker),
+				MgmtIP:     "172.22.1.4",
+				NodeIP:     "172.22.1.4",
+			}},
+			Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIFlannel}}},
+		}
+
+		err := cfg.validateAndSetDefaults()
+		require.NoError(t, err)
+		require.Empty(t, cfg.GetRegistryInsecureEndpoints())
+	})
+
+	t.Run("fallback to vm registry node endpoint when registry is enabled", func(t *testing.T) {
+		cfg := Config{
+			Registry: &RegistryConfig{},
+			Networks: []NetworkConfig{{
+				Name:       "mgmt-network",
+				Type:       MgmtNetworkName,
+				BridgeName: "virbr-mgmt",
+				Gateway:    "192.168.120.1",
+				Mode:       "nat",
+				NICModel:   "virtio",
+			}},
+			BareMetal: []BareMetalConfig{{
+				Name:       "dh4",
+				Type:       HostType,
+				K8sCluster: "cluster-1",
+				K8sRole:    string(ClusterRoleWorker),
+				MgmtIP:     "172.22.1.4",
+				NodeIP:     "172.22.1.4",
+			}},
+			Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIFlannel}}},
+		}
+
+		err := cfg.validateAndSetDefaults()
+		require.NoError(t, err)
+		require.Equal(t, []string{"192.168.120.1:5000"}, cfg.GetRegistryInsecureEndpoints())
+	})
+
+	t.Run("uses configured insecure endpoints", func(t *testing.T) {
+		cfg := Config{
+			Registry: &RegistryConfig{
+				InsecureEndpoints: []string{"172.22.1.100:5000", " 192.168.120.1:5000 ", "172.22.1.100:5000"},
+			},
+			Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIFlannel}}},
+		}
+
+		err := cfg.validateAndSetDefaults()
+		require.NoError(t, err)
+		require.Equal(t, []string{"172.22.1.100:5000", "192.168.120.1:5000"}, cfg.GetRegistryInsecureEndpoints())
+	})
+}
+
+func TestValidateRegistryInsecureEndpoints(t *testing.T) {
+	cfg := Config{
+		Registry: &RegistryConfig{
+			InsecureEndpoints: []string{"http://172.22.1.100:5000"},
+		},
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "cluster-1", CNI: CNIFlannel}}},
+	}
+
+	err := cfg.validateAndSetDefaults()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "registry.insecure_endpoints[0]")
 }

@@ -69,3 +69,29 @@ func TestBuildSSHCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildAuthMethods(t *testing.T) {
+	t.Run("password only", func(t *testing.T) {
+		cfg := &config.SSHConfig{User: "root", Password: "secret"}
+		client := NewSSHClient(cfg)
+		methods, err := client.buildAuthMethods()
+		assert.NoError(t, err)
+		assert.NotEmpty(t, methods)
+	})
+
+	t.Run("invalid key falls back to password", func(t *testing.T) {
+		cfg := &config.SSHConfig{User: "root", KeyPath: "/no/such/key", Password: "secret"}
+		client := NewSSHClient(cfg)
+		methods, err := client.buildAuthMethods()
+		assert.NoError(t, err)
+		assert.NotEmpty(t, methods)
+	})
+
+	t.Run("no auth method", func(t *testing.T) {
+		cfg := &config.SSHConfig{User: "root"}
+		client := NewSSHClient(cfg)
+		methods, err := client.buildAuthMethods()
+		assert.Error(t, err)
+		assert.Nil(t, methods)
+	})
+}

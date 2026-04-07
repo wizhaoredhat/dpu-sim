@@ -17,6 +17,43 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
+// buildAuthMethods builds SSH authentication methods from configuration.
+//
+// It supports both private-key and password authentication, in that order.
+// This allows key-based login as the default while preserving password
+// fallback for environments that do not yet have the shared key installed.
+func (c *SSHClient) buildAuthMethods() ([]ssh.AuthMethod, error) {
+	auth := []ssh.AuthMethod{}
+	var keyErr error
+
+	if c.config.KeyPath != "" {
+		key, err := os.ReadFile(c.config.KeyPath)
+		if err != nil {
+			keyErr = fmt.Errorf("failed to read SSH key: %w", err)
+		} else {
+			signer, err := ssh.ParsePrivateKey(key)
+			if err != nil {
+				keyErr = fmt.Errorf("failed to parse SSH key: %w", err)
+			} else {
+				auth = append(auth, ssh.PublicKeys(signer))
+			}
+		}
+	}
+
+	if c.config.Password != "" {
+		auth = append(auth, ssh.Password(c.config.Password))
+	}
+
+	if len(auth) == 0 {
+		if keyErr != nil {
+			return nil, keyErr
+		}
+		return nil, fmt.Errorf("no usable SSH auth method configured")
+	}
+
+	return auth, nil
+}
+
 // SSHClient represents an SSH client for executing commands on remote hosts
 type SSHClient struct {
 	config *config.SSHConfig
@@ -44,24 +81,15 @@ func (c *SSHClient) ExecuteWithTimeout(ip, command string, timeout time.Duration
 
 // ExecuteWithContext executes a command with a context for cancellation
 func (c *SSHClient) ExecuteWithContext(ctx context.Context, ip, command string) (stdout, stderr string, err error) {
-	// Read private key
-	key, err := os.ReadFile(c.config.KeyPath)
+	authMethods, err := c.buildAuthMethods()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read SSH key: %w", err)
-	}
-
-	// Parse private key
-	signer, err := ssh.ParsePrivateKey(key)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to parse SSH key: %w", err)
+		return "", "", err
 	}
 
 	// Create SSH client config
 	sshConfig := &ssh.ClientConfig{
-		User: c.config.User,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
+		User:            c.config.User,
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         5 * time.Second,
 	}
@@ -131,12 +159,15 @@ func (c *SSHClient) WaitForSSH(ip string, timeout time.Duration) error {
 func BuildSSHCommand(cfg *config.SSHConfig, ip, command string) []string {
 	cmd := []string{
 		"ssh",
-		"-i", cfg.KeyPath,
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 		"-o", "ConnectTimeout=5",
 		fmt.Sprintf("%s@%s", cfg.User, ip),
+	}
+
+	if cfg.KeyPath != "" {
+		cmd = append([]string{"ssh", "-i", cfg.KeyPath}, cmd[1:]...)
 	}
 
 	if command != "" {

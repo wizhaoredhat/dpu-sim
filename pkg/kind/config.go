@@ -29,9 +29,15 @@ func (m *KindManager) BuildKindConfig(clusterName string, clusterCfg config.Clus
 		IPFamily:      v1alpha4.IPv4Family,
 	}
 
-	// Disable default CNI for custom CNI installation
+	// Disable default CNI for custom CNI installation.
+	// Keep kube-proxy enabled for CNIs like flannel that rely on Service VIP routing.
 	if clusterCfg.CNI != "" && clusterCfg.CNI != "kindnet" {
 		cluster.Networking.DisableDefaultCNI = true
+	}
+
+	// OVN-Kubernetes in this project programs service handling itself, so disable
+	// kube-proxy only for OVN Kind clusters.
+	if clusterCfg.CNI == config.CNIOVNKubernetes {
 		cluster.Networking.KubeProxyMode = v1alpha4.ProxyMode("none")
 	}
 
@@ -104,7 +110,7 @@ nodeRegistration:
 	// per-host registry configuration from /etc/containerd/certs.d/.
 	// The actual host config files are written after cluster creation
 	// via ConfigureRegistryOnNodes.
-	if m.config.HasRegistry() {
+	if m.config.IsRegistryEnabled() {
 		cluster.ContainerdConfigPatches = append(cluster.ContainerdConfigPatches,
 			`[plugins."io.containerd.cri.v1.images".registry]
   config_path = "/etc/containerd/certs.d"`)

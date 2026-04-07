@@ -33,7 +33,41 @@ func (m *KindManager) InstallDependencies(cmdExec platform.CommandExecutor) erro
 			InstallFunc: linux.InstallOpenVSwitchWithoutSystemd,
 		},
 	}
+
+	if m.needsKindBridgeCNIPlugins() {
+		deps = append(deps, platform.Dependency{
+			Name:        "CNI plugins",
+			Reason:      "Required by flannel and multus on Kind nodes",
+			CheckFunc:   linux.CheckKindCNIPlugins,
+			InstallFunc: linux.InstallKindCNIPlugins,
+		})
+	}
+
 	return platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config)
+}
+
+// needsKindBridgeCNIPlugins returns true when Kind nodes need the standard CNI
+// bridge plugin set in /opt/cni/bin.
+//
+// Why: flannel delegates to the CNI bridge/host-local plugins, and multus in
+// this project chains to the cluster's primary CNI. If bridge binaries are
+// missing, pod sandbox creation fails after multus rollout with errors like:
+// "failed to find plugin bridge in path [/opt/cni/bin]".
+//
+// As a fix we gate plugin installation to clusters that use flannel directly or enable
+// multus, so OVN-only Kind runs do not install extra packages unnecessarily.
+func (m *KindManager) needsKindBridgeCNIPlugins() bool {
+	for _, clusterCfg := range m.config.Kubernetes.Clusters {
+		if clusterCfg.CNI == config.CNIFlannel {
+			return true
+		}
+		for _, addon := range clusterCfg.Addons {
+			if addon == config.AddonMultus {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *KindManager) InstallHostDependencies(cmdExec platform.CommandExecutor) error {
@@ -151,6 +185,11 @@ func (m *KindManager) InstallCNI() error {
 		if err := cniMgr.InstallCNI(cniType, clusterCfg.Name, apiServerIP); err != nil {
 			return fmt.Errorf("failed to install CNI on cluster %s: %w", clusterCfg.Name, err)
 		}
+
+		if err := cniMgr.InstallAddons(clusterCfg.Addons, clusterCfg.Name); err != nil {
+			return fmt.Errorf("failed to install addons: %w", err)
+		}
+
 	}
 
 	log.Info("\n✓ CNI installation complete on Kind clusters")
@@ -253,7 +292,7 @@ func (m *KindManager) ConfigureRegistryOnNode(cmdExec platform.CommandExecutor, 
 	hostsTOML := fmt.Sprintf("server = \"http://%s\"\n\n[host.\"http://%s\"]\n  capabilities = [\"pull\", \"resolve\"]\n",
 		registryAddr, registryAddr)
 
-	if err := cmdExec.WriteFile(hostsDir+"/hosts.toml", []byte(hostsTOML), 0644); err != nil {
+	if err := cmdExec.WriteFile(hostsDir+"/hosts.toml", []byte(hostsTOML), 0o644); err != nil {
 		return fmt.Errorf("failed to write hosts.toml: %w", err)
 	}
 
@@ -327,11 +366,11 @@ func (m *KindManager) GetKubeconfig(name string, kubeconfigPath string) error {
 	}
 
 	kubeconfigDir := filepath.Dir(kubeconfigPath)
-	if err := os.MkdirAll(kubeconfigDir, 0755); err != nil {
+	if err := os.MkdirAll(kubeconfigDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create kubeconfig directory %s: %w", kubeconfigDir, err)
 	}
 
-	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
+	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0o600); err != nil {
 		return fmt.Errorf("failed to write kubeconfig to %s: %w", kubeconfigPath, err)
 	}
 
@@ -387,7 +426,7 @@ func (m *KindManager) ExportLogs(clusterName, outputDir string) error {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 

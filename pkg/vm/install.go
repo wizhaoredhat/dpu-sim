@@ -3,6 +3,8 @@ package vm
 import (
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/cni"
@@ -52,6 +54,36 @@ func (m *VMManager) InstallKubernetes(vmName string) error {
 	return nil
 }
 
+func kubeJoinEndpoint(joinCommand string) (string, error) {
+	parts := strings.Fields(strings.TrimSpace(joinCommand))
+	if len(parts) < 3 || parts[0] != "kubeadm" || parts[1] != "join" {
+		return "", fmt.Errorf("unexpected kubeadm join command format")
+	}
+	return parts[2], nil
+}
+
+func rewriteKubeJoinEndpoint(joinCommand, endpoint string) (string, error) {
+	parts := strings.Fields(strings.TrimSpace(joinCommand))
+	if len(parts) < 3 || parts[0] != "kubeadm" || parts[1] != "join" {
+		return "", fmt.Errorf("unexpected kubeadm join command format")
+	}
+	parts[2] = endpoint
+	return strings.Join(parts, " "), nil
+}
+
+func endpointReachable(exec platform.CommandExecutor, endpoint string) bool {
+	host, port, ok := strings.Cut(endpoint, ":")
+	if !ok || host == "" || port == "" {
+		return false
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return false
+	}
+	checkCmd := fmt.Sprintf("timeout 4 bash -lc \"cat < /dev/null > /dev/tcp/%s/%s\"", host, port)
+	_, _, err := exec.ExecuteWithTimeout(checkCmd, 8*time.Second)
+	return err == nil
+}
+
 // setupOVNBrExForCluster sets up OVN br-ex on all VMs in the cluster
 func (m *VMManager) setupOVNBrExForCluster(clusterRoleMapping config.ClusterRoleMapping, k8sMgr *k8s.K8sMachineManager) error {
 	for role, vms := range clusterRoleMapping {
@@ -83,6 +115,7 @@ func (m *VMManager) setupOVNBrExForCluster(clusterRoleMapping config.ClusterRole
 // setupK8sCluster sets up a single Kubernetes cluster
 func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping config.ClusterRoleMapping) error {
 	k8sMgr := k8s.NewK8sMachineManager(m.config)
+	bareMetalRoleMapping := m.config.GetBareMetalClusterRoleMapping()[clusterName]
 
 	clusterCfg := m.config.GetClusterConfig(clusterName)
 	if clusterCfg == nil {
@@ -93,6 +126,9 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	masterVMs := clusterRoleMapping[config.ClusterRoleMaster]
 	if len(masterVMs) == 0 {
 		return fmt.Errorf("no master nodes found for cluster %s", clusterName)
+	}
+	if len(bareMetalRoleMapping[config.ClusterRoleMaster]) > 0 {
+		return fmt.Errorf("baremetal control-plane nodes are not yet supported for cluster %s", clusterName)
 	}
 
 	cniType := clusterCfg.CNI
@@ -154,7 +190,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	firstMasterExec := platform.NewSSHExecutor(&m.config.SSH, firstMasterMgmtIP)
 
 	log.Info("\n=== Initializing first control plane node: %s ===", firstMaster.Name)
-	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMasterExec, firstMaster.Name, firstMasterK8sIP, podCIDR, serviceCIDR)
+	clusterInfo, err := k8sMgr.InitializeControlPlane(firstMasterExec, firstMaster.Name, firstMasterMgmtIP, podCIDR, serviceCIDR, fmt.Sprintf("%s:6443", firstMasterMgmtIP), []string{firstMasterMgmtIP, firstMasterK8sIP})
 	if err != nil {
 		return fmt.Errorf("failed to initialize control plane on %s: %w", firstMaster.Name, err)
 	}
@@ -179,7 +215,16 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		}
 	}
 
-	// Join worker nodes to the cluster
+	if err := m.adoptAndJoinBareMetalWorkers(
+		k8sMgr,
+		bareMetalRoleMapping[config.ClusterRoleWorker],
+		clusterInfo,
+		firstMasterMgmtIP,
+		firstMasterExec,
+	); err != nil {
+		return err
+	}
+
 	workerVMs := clusterRoleMapping[config.ClusterRoleWorker]
 	if len(workerVMs) > 0 {
 		log.Info("=== Joining worker nodes ===")
@@ -206,7 +251,88 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("failed to install CNI: %w", err)
 	}
 
+	if err := cniMgr.InstallAddons(clusterCfg.Addons, clusterName); err != nil {
+		return fmt.Errorf("failed to install addons: %w", err)
+	}
 	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)
+	return nil
+}
+
+// adoptAndJoinBareMetalWorkers prepares baremetal worker nodes and joins them
+// to an initialized cluster.
+//
+// It handles bootstrap SSH access, optional bootc reconcile/reboot, node reset,
+// Kubernetes installation, hybrid-network preparation, and join endpoint
+// fallback when the default control-plane endpoint is not reachable.
+func (m *VMManager) adoptAndJoinBareMetalWorkers(k8sMgr *k8s.K8sMachineManager, bareMetalWorkers []config.BareMetalConfig, clusterInfo *k8s.ControlPlaneInfo, firstMasterMgmtIP string, firstMasterExec platform.CommandExecutor) error {
+	if len(bareMetalWorkers) == 0 {
+		return nil
+	}
+
+	log.Info("=== Adopting and joining baremetal worker nodes ===")
+	defaultJoinEndpoint, err := kubeJoinEndpoint(clusterInfo.WorkerJoinCommand)
+	if err != nil {
+		return fmt.Errorf("failed to parse worker join command endpoint: %w", err)
+	}
+	fallbackJoinEndpoint := fmt.Sprintf("%s:6443", firstMasterMgmtIP)
+
+	for _, node := range bareMetalWorkers {
+		workerExec, err := m.ensureBareMetalSSHAccess(node)
+		if err != nil {
+			return fmt.Errorf("failed to establish SSH access to baremetal node %s: %w", node.Name, err)
+		}
+
+		if err := m.maybeApplyBootc(node, workerExec); err != nil {
+			return fmt.Errorf("failed bootc reconcile on baremetal node %s: %w", node.Name, err)
+		}
+
+		// Recreate executor in case bootc rebooted and the previous SSH session is stale.
+		workerExec = m.globalSSHExecutor(node.MgmtIP)
+		if err := workerExec.WaitUntilReady(5 * time.Minute); err != nil {
+			return fmt.Errorf("baremetal node %s not reachable after bootc processing: %w", node.Name, err)
+		}
+
+		if err := m.resetBareMetalNode(node, workerExec); err != nil {
+			return fmt.Errorf("failed to reset baremetal node %s: %w", node.Name, err)
+		}
+
+		if err := k8sMgr.InstallKubernetes(workerExec, node.Name, m.config.Kubernetes.Version); err != nil {
+			return fmt.Errorf("failed to install Kubernetes on baremetal node %s: %w", node.Name, err)
+		}
+		if err := k8sMgr.EnsureOVNBrInt(workerExec); err != nil {
+			return fmt.Errorf("failed to ensure br-int on baremetal node %s: %w", node.Name, err)
+		}
+		if err := m.setKubeletNodeIP(node, workerExec); err != nil {
+			return fmt.Errorf("failed to set kubelet node-ip on baremetal node %s: %w", node.Name, err)
+		}
+		if err := m.ensureHybridNetworking(node, firstMasterExec); err != nil {
+			return fmt.Errorf("failed to prepare hybrid networking for baremetal node %s: %w", node.Name, err)
+		}
+
+		bareMetalJoinInfo := *clusterInfo
+		chosenJoinEndpoint := defaultJoinEndpoint
+		if !endpointReachable(workerExec, defaultJoinEndpoint) {
+			if endpointReachable(workerExec, fallbackJoinEndpoint) {
+				chosenJoinEndpoint = fallbackJoinEndpoint
+			} else {
+				return fmt.Errorf("baremetal node %s cannot reach kubeadm join endpoints %s or %s", node.Name, defaultJoinEndpoint, fallbackJoinEndpoint)
+			}
+		}
+
+		if chosenJoinEndpoint != defaultJoinEndpoint {
+			rewrittenJoinCmd, err := rewriteKubeJoinEndpoint(clusterInfo.WorkerJoinCommand, chosenJoinEndpoint)
+			if err != nil {
+				return fmt.Errorf("failed to rewrite worker join command endpoint: %w", err)
+			}
+			bareMetalJoinInfo.WorkerJoinCommand = rewrittenJoinCmd
+			log.Warn("Baremetal node %s cannot reach default join endpoint %s; falling back to %s", node.Name, defaultJoinEndpoint, chosenJoinEndpoint)
+		}
+
+		if err := k8sMgr.JoinWorker(workerExec, node.Name, &bareMetalJoinInfo); err != nil {
+			return fmt.Errorf("failed to join baremetal worker node %s: %w", node.Name, err)
+		}
+	}
+
 	return nil
 }
 

@@ -2,6 +2,7 @@ package cni
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/log"
@@ -14,7 +15,21 @@ const FlannelManifestURL = "https://github.com/flannel-io/flannel/releases/lates
 func (m *CNIManager) installFlannel(clusterName string) error {
 	log.Debug("Installing Flannel CNI on cluster %s...", clusterName)
 
-	if err := m.k8sClient.ApplyManifestFromURL(FlannelManifestURL); err != nil {
+	manifest, err := downloadManifest(FlannelManifestURL)
+	if err != nil {
+		return fmt.Errorf("failed to download Flannel manifest: %w", err)
+	}
+
+	if m.shouldUseWritableCNIBinDir() {
+		manifest = rewriteCNIBinPath(manifest, writableCNIBinDir)
+		log.Info("Detected bootc/read-only root setup, patching Flannel CNI binary path to %s", writableCNIBinDir)
+	}
+
+	if m.config.IsKindMode() {
+		manifest = disableFlannelIptablesForwardRules(manifest)
+	}
+
+	if err := m.k8sClient.ApplyManifest(manifest); err != nil {
 		return fmt.Errorf("failed to install Flannel: %w", err)
 	}
 
@@ -38,12 +53,30 @@ func (m *CNIManager) installFlannel(clusterName string) error {
 
 	log.Info("✓ Flannel is installed on cluster %s", clusterName)
 
-	// Wait for Flannel pods to be ready
+	// Wait for Flannel pods to be ready before installing addons that depend on
+	// the default network.
 	if err := m.k8sClient.WaitForPodsReady("kube-flannel", "", 3*time.Minute); err != nil {
-		log.Warn("Warning: Flannel pods may not be ready: %v", err)
+		return fmt.Errorf("flannel pods are not ready: %w", err)
 	}
 
 	return nil
+}
+
+// disableFlannelIptablesForwardRules disables Flannel's automatic FORWARD
+// chain rule management in Kind mode.
+//
+// Why: Kind nodes run inside containers and FORWARD chain policy/rules are
+// controlled by the container runtime/host. Letting Flannel mutate those rules
+// can introduce non-deterministic behavior across hosts (especially nftables
+// systems), causing flaky pod networking during addon rollout.
+func disableFlannelIptablesForwardRules(manifest []byte) []byte {
+	content := string(manifest)
+	if strings.Contains(content, "--iptables-forward-rules=false") {
+		return manifest
+	}
+
+	content = strings.Replace(content, "        - --kube-subnet-mgr", "        - --kube-subnet-mgr\n        - --iptables-forward-rules=false", 1)
+	return []byte(content)
 }
 
 // patchFlannelConfig patches the kube-flannel-cfg ConfigMap with the correct pod CIDR
