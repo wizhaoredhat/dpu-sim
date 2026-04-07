@@ -43,47 +43,6 @@ func (e *DockerEngine) Push(ctx context.Context, imageRef string, opts PushOptio
 	return e.baseEngine.push(ctx, imageRef, opts, "")
 }
 
-func (e *DockerEngine) TryRepairRunContainerFailure(_ context.Context, runErr error) (bool, error) {
-	if runErr == nil {
-		return false, nil
-	}
-	errText := strings.ToLower(runErr.Error())
-	needsRepair := strings.Contains(errText, "unable to enable dnat rule") ||
-		strings.Contains(errText, "no chain/target/match by that name") ||
-		strings.Contains(errText, "driver failed programming external connectivity")
-	if !needsRepair {
-		// Some command executors only return the exit status (e.g. "exit status 125")
-		// while streaming stderr to console. Probe the DOCKER nat chain explicitly.
-		_, _, probeErr := e.exec.Execute("iptables -w -t nat -nL DOCKER >/dev/null 2>&1")
-		needsRepair = probeErr != nil
-	}
-
-	if !needsRepair {
-		return false, nil
-	}
-
-	cmds := []string{
-		"sudo systemctl restart docker",
-		"systemctl restart docker",
-	}
-
-	var errs []string
-	for _, cmd := range cmds {
-		_, stderr, err := e.exec.Execute(cmd)
-		if err == nil {
-			_, _, infoErr := e.exec.Execute("docker info >/dev/null 2>&1")
-			if infoErr == nil {
-				return true, nil
-			}
-			errs = append(errs, fmt.Sprintf("%s succeeded but docker info failed: %v", cmd, infoErr))
-			continue
-		}
-		errs = append(errs, fmt.Sprintf("%s failed: %v (%s)", cmd, err, strings.TrimSpace(stderr)))
-	}
-
-	return false, fmt.Errorf("%s", strings.Join(errs, "; "))
-}
-
 type dockerRegistryConfig struct {
 	IndexConfigs          map[string]dockerRegistryIndexConfig `json:"IndexConfigs"`
 	InsecureRegistryCIDRs []string                             `json:"InsecureRegistryCIDRs"`
