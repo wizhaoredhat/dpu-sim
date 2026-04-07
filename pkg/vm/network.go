@@ -69,7 +69,9 @@ func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
 }
 
 // EnsureHostNetworkPrerequisites configures host-side libvirt networking prerequisites.
-// This must run before creating a libvirt connection used by VMManager.
+// This must run before creating a libvirt connection used by VMManager;
+// applying these host-level settings later during network creation was too late
+// on some Debian/Ubuntu nftables hosts and caused NAT bring-up failures.
 func EnsureHostNetworkPrerequisites() error {
 	if err := ensureLibvirtNATFirewallBackend(); err != nil {
 		return fmt.Errorf("failed to prepare libvirt firewall backend for NAT networks: %w", err)

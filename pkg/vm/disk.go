@@ -316,15 +316,37 @@ func copyFile(sourcePath, destPath string) error {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return err
 	}
-	dst, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	tmp, err := os.CreateTemp(filepath.Dir(destPath), filepath.Base(destPath)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer dst.Close()
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
-	if _, err := io.Copy(dst, src); err != nil {
+	if _, err := io.Copy(tmp, src); err != nil {
+		_ = tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		return err
+	}
+	cleanup = false
 	return nil
 }
 
@@ -357,7 +379,9 @@ func CreateVMDisk(vmName string, sizeGB int, baseImage string) (string, error) {
 		return "", fmt.Errorf("failed to create disk: %w, output: %s", err, string(output))
 	}
 
-	// Never shrink below backing image size. Only grow when requested size is larger.
+	// Treat disk_size as a minimum. Older code always ran resize, which failed
+	// when disk_size was smaller than the backing image virtual size. For qcow2
+	// overlays we only grow when requested size exceeds the base image size.
 	if requestedSizeBytes > baseVirtualSizeBytes {
 		resizeCmd := exec.Command("qemu-img", "resize", diskPath, fmt.Sprintf("%dG", sizeGB))
 		resizeOutput, resizeErr := resizeCmd.CombinedOutput()
