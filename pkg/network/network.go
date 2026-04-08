@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 
@@ -33,6 +34,11 @@ const (
 	HostDataIfFmt = "eth0-%d" // data interface in host (e.g. eth0-0, eth0-1)
 	DPUDataIfFmt  = "rep0-%d" // data representor in DPU (e.g. rep0-0, rep0-1)
 )
+
+// GetRegexForHostDataIf returns a regex that matches the host-to-DPU interface names.
+func GetRegexForHostDataIf() *regexp.Regexp {
+	return regexp.MustCompile(`^eth0-\d+$`)
+}
 
 // GetFreeIPv4AddressInSubnet picks the highest usable IPv4 address in subnet that is
 // not present in usedIPs. It walks from broadcast-1 down to network+1 and

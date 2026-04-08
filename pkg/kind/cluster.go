@@ -9,6 +9,7 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/deviceplugin"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/linux"
 	"github.com/wizhao/dpu-sim/pkg/log"
@@ -159,6 +160,11 @@ func (m *KindManager) InstallCNI() error {
 			if regContainer == nil {
 				if err := m.PullAndLoadImage(clusterCfg.Name, cni.DefaultOVNImage); err != nil {
 					return fmt.Errorf("failed to load OVN-Kubernetes image: %w", err)
+				}
+				if m.config.IsOffloadDPU() {
+					if err := m.PullAndLoadImage(clusterCfg.Name, deviceplugin.DevicePluginImage); err != nil {
+						return fmt.Errorf("failed to load OVN-Kubernetes image: %w", err)
+					}
 				}
 			} else {
 				log.Info("Using local registry image for OVN-Kubernetes (tag: %s)", regContainer.Tag)

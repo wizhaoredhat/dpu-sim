@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/containerengine"
+	"github.com/wizhao/dpu-sim/pkg/deviceplugin"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/log"
 	"github.com/wizhao/dpu-sim/pkg/platform"
@@ -156,8 +156,18 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) erro
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
-	if err := BuildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
+	engine, err := containerengine.NewProjectEngine(localExec)
+	if err != nil {
+		return fmt.Errorf("failed to create project engine: %w", err)
+	}
+
+	if err := BuildOVNKubernetesImageWithEngine(localExec, engine, DefaultOVNKubeImage, ""); err != nil {
 		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+	}
+
+	dpImageRef := deviceplugin.DevicePluginImage
+	if m.config.IsOffloadDPU() && m.config.HasRegistry() {
+		dpImageRef = m.config.GetRegistryImageRef(deviceplugin.DevicePluginImage)
 	}
 
 	ovnImage := DefaultOVNImage
@@ -179,6 +189,9 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) erro
 	case ovnkModeDPUHost:
 		if err := m.labelNodesForDPUHost(clusterName); err != nil {
 			return fmt.Errorf("failed to label DPU-host nodes: %w", err)
+		}
+		if err := deviceplugin.DeployDevicePlugin(m.k8sClient, dpImageRef); err != nil {
+			return fmt.Errorf("failed to deploy device plugin on DPU-host cluster: %w", err)
 		}
 	case ovnkModeDPU:
 		if err := m.labelNodesForDPU(clusterName); err != nil {
@@ -452,22 +465,9 @@ func (m *CNIManager) labelOVNMasterNodes(clusterName string) error {
 	return nil
 }
 
-// getProjectRoot returns the root directory of the dpu-sim project
-func getProjectRoot() (string, error) {
-	// Get the directory of the current source file
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", fmt.Errorf("failed to get current file path")
-	}
-
-	// Navigate from pkg/cni/ovn_kubernetes.go to project root (2 levels up from pkg/)
-	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(filename)))
-	return projectRoot, nil
-}
-
 // getOVNKubernetesPath returns the path to the ovn-kubernetes directory
 func getOVNKubernetesPath() (string, error) {
-	projectRoot, err := getProjectRoot()
+	projectRoot, err := platform.GetProjectRoot()
 	if err != nil {
 		return "", err
 	}
@@ -511,7 +511,7 @@ func EnsureOVNKubernetesSource(cmdExec platform.CommandExecutor) (string, error)
 		return "", fmt.Errorf("failed to get OVN-Kubernetes path: %w", err)
 	}
 
-	projectRoot, err := getProjectRoot()
+	projectRoot, err := platform.GetProjectRoot()
 	if err != nil {
 		return "", fmt.Errorf("failed to get project root: %w", err)
 	}
@@ -569,7 +569,6 @@ func EnsureOVNKubernetesSource(cmdExec platform.CommandExecutor) (string, error)
 	return ovnPath, nil
 }
 
-// BuildOVNKubernetesImage builds the OVN-Kubernetes container image from the local
 // BuildOVNKubernetesImage builds the OVN-Kubernetes container image from the local
 // source code using the Dockerfile.fedora in ovn-kubernetes/dist/images/.
 // imageName specifies the tag for the built image (e.g., "ovn-kube-fedora:latest").

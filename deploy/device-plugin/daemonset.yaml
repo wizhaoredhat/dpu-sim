@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dpu-sim-device-plugin
+  namespace: kube-system
+  labels:
+    app: dpu-sim-device-plugin
+spec:
+  selector:
+    matchLabels:
+      app: dpu-sim-device-plugin
+  template:
+    metadata:
+      labels:
+        app: dpu-sim-device-plugin
+    spec:
+      # Only run on nodes labeled as DPU-host workers.
+      nodeSelector:
+        k8s.ovn.org/dpu-host: ""
+      hostNetwork: true
+      tolerations:
+        - operator: Exists
+      priorityClassName: system-node-critical
+      containers:
+        - name: device-plugin
+          image: DPU_SIM_DP_IMAGE
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: device-plugin-socket
+              mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+        - name: device-plugin-socket
+          hostPath:
+            path: /var/lib/kubelet/device-plugins

@@ -10,6 +10,7 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/containerengine"
+	"github.com/wizhao/dpu-sim/pkg/deviceplugin"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/kind"
 	"github.com/wizhao/dpu-sim/pkg/log"
@@ -84,14 +85,15 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create registry manager once if configured; nil otherwise.
+	localExec := platform.NewLocalExecutor()
+	engine, err := containerengine.NewProjectEngine(localExec)
+	if err != nil {
+		return fmt.Errorf("failed to select container engine: %w", err)
+	}
+
 	var regMgr *registry.RegistryManager = nil
 	var buildCNIImage registry.BuildFunc
 	if cfg.IsRegistryEnabled() {
-		localExec := platform.NewLocalExecutor()
-		engine, err := containerengine.NewProjectEngine(localExec)
-		if err != nil {
-			return fmt.Errorf("failed to select container engine: %w", err)
-		}
 		regMgr = registry.NewRegistryManagerWithRuntime(cfg, localExec, engine)
 		buildCNIImage = cni.BuildCNIImageWithRuntime(localExec, engine)
 	}
@@ -108,6 +110,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		log.Info("\n=== Rebuilding CNI images ===")
 		if err := regMgr.SetupAll(buildCNIImage); err != nil {
 			return fmt.Errorf("failed to rebuild CNI images: %w", err)
+		}
+		if cfg.IsOffloadDPU() {
+			if _, err := deviceplugin.BuildAndLoadImage(localExec, engine, regMgr); err != nil {
+				return fmt.Errorf("failed to build/push device plugin image: %w", err)
+			}
 		}
 
 		if redeployCNI {
@@ -160,6 +167,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if regMgr != nil && !cleanupOnly {
 		if err := regMgr.SetupAll(buildCNIImage); err != nil {
 			return fmt.Errorf("registry setup failed: %w", err)
+		}
+		if cfg.IsOffloadDPU() {
+			if _, err := deviceplugin.BuildAndLoadImage(localExec, engine, regMgr); err != nil {
+				return fmt.Errorf("failed to build/push device plugin image: %w", err)
+			}
 		}
 	}
 
