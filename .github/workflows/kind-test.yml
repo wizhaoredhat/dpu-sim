@@ -33,11 +33,12 @@ jobs:
 
       - name: Install kind
         run: |
-          curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
-          curl -Lo /tmp/kind.sha256sum https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64.sha256sum
-          echo "$(awk '{print $1}' /tmp/kind.sha256sum)  /tmp/kind" | sha256sum -c -
-          chmod +x /tmp/kind
-          sudo mv /tmp/kind /usr/local/bin/kind
+          KIND_VERSION=v0.31.0
+          curl -fsSLo /tmp/kind-linux-amd64 "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLo /tmp/kind-linux-amd64.sha256sum "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          (cd /tmp && sha256sum -c kind-linux-amd64.sha256sum)
+          chmod +x /tmp/kind-linux-amd64
+          sudo mv /tmp/kind-linux-amd64 /usr/local/bin/kind
 
       - name: Build dpu-sim
         run: make build
