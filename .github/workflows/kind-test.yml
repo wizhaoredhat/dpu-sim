@@ -1,0 +1,84 @@
+name: Kind Mode
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install libvirt development headers
+        run: sudo apt-get update && sudo apt-get install -y libvirt-dev
+
+      # dpu-sim auto-detects the container engine (containerengine.NewProjectEngine).
+      # On ubuntu-24.04 runners podman is pre-installed and takes precedence, causing
+      # kind to create node containers via podman while DockerExecutor hardcodes
+      # 'docker exec'. Remove podman so Docker is selected consistently.
+      - name: Remove podman to ensure Docker is used by dpu-sim
+        run: sudo apt-get remove -y podman golang-github-containers-common || true
+
+      - name: Install kind
+        run: |
+          curl -Lo /tmp/kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
+          curl -Lo /tmp/kind.sha256sum https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64.sha256sum
+          echo "$(awk '{print $1}' /tmp/kind.sha256sum)  /tmp/kind" | sha256sum -c -
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+
+      - name: Build dpu-sim
+        run: make build
+
+      # Set inotify limits required by dpu-sim's InstallHostDependencies.
+      # Done separately so dpu-sim itself runs as the runner user, keeping
+      # kind-created Docker containers in the same user context as docker exec.
+      - name: Set inotify kernel parameters
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=8192
+          sudo sysctl -w fs.inotify.max_user_watches=1048576
+          sudo sysctl -w fs.inotify.max_queued_events=32768
+
+      - name: Deploy kind clusters (infrastructure only, skip CNI)
+        run: ./bin/dpu-sim --config config-kind-ci.yaml --skip-deps --skip-k8s
+
+      - name: Verify clusters are running
+        run: |
+          kind get clusters
+          kind get kubeconfig --name dpu-sim-host-kind > /tmp/kubeconfig-host.yaml
+          kind get kubeconfig --name dpu-sim-dpu-kind > /tmp/kubeconfig-dpu.yaml
+          # Nodes exist but are NotReady: dpu-sim disables the default kind CNI
+          # (kindnet) in favour of OVN-Kubernetes, which is installed separately.
+          # With --skip-k8s we verify that nodes are registered, not that they are Ready.
+          kubectl get nodes --kubeconfig /tmp/kubeconfig-host.yaml
+          kubectl get nodes --kubeconfig /tmp/kubeconfig-dpu.yaml
+
+      - name: Export kind logs on failure
+        if: failure()
+        run: |
+          kind export logs /tmp/kind-logs --name dpu-sim-host-kind 2>/dev/null || true
+          kind export logs /tmp/kind-logs --name dpu-sim-dpu-kind 2>/dev/null || true
+
+      - name: Upload kind logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kind-logs
+          path: /tmp/kind-logs
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: ./bin/dpu-sim --config config-kind-ci.yaml --skip-deps --cleanup || true
