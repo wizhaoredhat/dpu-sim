@@ -744,6 +744,46 @@ func ConfigureInotifyLimits(cmdExec platform.CommandExecutor, distro *platform.D
 	return nil
 }
 
+// CheckBrNetfilter verifies the br_netfilter module is loaded and the
+// bridge-nf-call-iptables sysctl is enabled. Kind nodes share the host
+// kernel, so this must be satisfied on the host for flannel to work inside
+// the containers.
+func CheckBrNetfilter(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	stdout, stderr, err := cmdExec.Execute("lsmod | grep br_netfilter")
+	if err != nil {
+		return fmt.Errorf("failed to check br_netfilter module: %w, stderr: %s", err, stderr)
+	}
+	if strings.TrimSpace(stdout) == "" {
+		return fmt.Errorf("br_netfilter kernel module is not loaded")
+	}
+
+	stdout, stderr, err = cmdExec.Execute("sysctl -n net.bridge.bridge-nf-call-iptables")
+	if err != nil {
+		return fmt.Errorf("failed to read net.bridge.bridge-nf-call-iptables: %w, stderr: %s", err, stderr)
+	}
+	if strings.TrimSpace(stdout) != "1" {
+		return fmt.Errorf("net.bridge.bridge-nf-call-iptables is not enabled")
+	}
+	return nil
+}
+
+// ConfigureBrNetfilter loads the br_netfilter module and enables the
+// bridge-nf-call-iptables sysctl on the host.
+func ConfigureBrNetfilter(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	sb := strings.Builder{}
+	sb.WriteString("set -e\n")
+	sb.WriteString("sudo modprobe br_netfilter\n")
+	sb.WriteString("echo 'br_netfilter' | sudo tee /etc/modules-load.d/br_netfilter.conf >/dev/null\n")
+	sb.WriteString("sudo sysctl -w net.bridge.bridge-nf-call-iptables=1\n")
+	sb.WriteString("sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1\n")
+
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(sb.String(), 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to configure br_netfilter: %w, stdout: %s, stderr: %s", err, stdout, stderr)
+	}
+	return nil
+}
+
 func CheckInotifyLimits(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	checks := []struct {
 		key      string

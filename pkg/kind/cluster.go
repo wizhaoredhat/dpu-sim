@@ -80,6 +80,16 @@ func (m *KindManager) InstallHostDependencies(cmdExec platform.CommandExecutor) 
 			InstallFunc: linux.ConfigureInotifyLimits,
 		},
 	}
+
+	if m.needsKindBridgeCNIPlugins() {
+		deps = append(deps, platform.Dependency{
+			Name:        "br_netfilter",
+			Reason:      "Required by flannel for bridge-nf-call-iptables inside Kind nodes",
+			CheckFunc:   linux.CheckBrNetfilter,
+			InstallFunc: linux.ConfigureBrNetfilter,
+		})
+	}
+
 	return platform.EnsureDependenciesWithExecutor(cmdExec, deps, m.config)
 }
 
