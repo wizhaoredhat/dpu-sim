@@ -117,10 +117,14 @@ kubernetes:
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"
+      addons:
+        - multus
     - name: "cluster-2"
       pod_cidr: "10.246.0.0/16"
       service_cidr: "10.247.0.0/16"
       cni: "ovn-kubernetes"
+      addons:
+        - multus
 
 registry:
   containers:
