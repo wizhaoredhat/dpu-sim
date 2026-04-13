@@ -76,27 +76,29 @@ func (m *CNIManager) InstallAddons(addons []config.AddonType, clusterName string
 }
 
 func resolveAddonInstallOrder(addons []config.AddonType) []config.AddonType {
-	ordered := make([]config.AddonType, 0, len(addons)+1)
-	hasMultus := false
-	hasWhereabouts := false
+	ordered := make([]config.AddonType, 0, len(addons))
 
+	hasWhereabouts := false
 	for _, addon := range addons {
-		if addon == config.AddonMultus {
-			hasMultus = true
-		}
 		if addon == config.AddonWhereabouts {
 			hasWhereabouts = true
+			break
 		}
 	}
 
-	injectedWhereabouts := false
-	for _, addon := range addons {
-		if addon == config.AddonMultus && hasMultus && !hasWhereabouts && !injectedWhereabouts {
-			log.Info("Whereabouts addon was not configured explicitly; installing it automatically before multus")
-			ordered = append(ordered, config.AddonWhereabouts)
-			injectedWhereabouts = true
+	// Install whereabouts before multus when both are explicitly configured.
+	if hasWhereabouts {
+		for _, addon := range addons {
+			if addon == config.AddonWhereabouts {
+				continue
+			}
+			if addon == config.AddonMultus {
+				ordered = append(ordered, config.AddonWhereabouts)
+			}
+			ordered = append(ordered, addon)
 		}
-		ordered = append(ordered, addon)
+	} else {
+		ordered = append(ordered, addons...)
 	}
 
 	return ordered
