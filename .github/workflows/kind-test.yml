@@ -24,13 +24,6 @@ jobs:
       - name: Install libvirt development headers
         run: sudo apt-get update && sudo apt-get install -y libvirt-dev
 
-      # dpu-sim auto-detects the container engine (containerengine.NewProjectEngine).
-      # On ubuntu-24.04 runners podman is pre-installed and takes precedence, causing
-      # kind to create node containers via podman while DockerExecutor hardcodes
-      # 'docker exec'. Remove podman so Docker is selected consistently.
-      - name: Remove podman to ensure Docker is used by dpu-sim
-        run: sudo apt-get remove -y podman golang-github-containers-common || true
-
       - name: Install kind
         run: |
           KIND_VERSION=v0.31.0
@@ -43,17 +36,8 @@ jobs:
       - name: Build dpu-sim
         run: make build
 
-      # Set inotify limits required by dpu-sim's InstallHostDependencies.
-      # Done separately so dpu-sim itself runs as the runner user, keeping
-      # kind-created Docker containers in the same user context as docker exec.
-      - name: Set inotify kernel parameters
-        run: |
-          sudo sysctl -w fs.inotify.max_user_instances=8192
-          sudo sysctl -w fs.inotify.max_user_watches=1048576
-          sudo sysctl -w fs.inotify.max_queued_events=32768
-
       - name: Deploy kind clusters (infrastructure only, skip CNI)
-        run: ./bin/dpu-sim --config config-kind-ci.yaml --skip-deps --skip-k8s
+        run: ./bin/dpu-sim --config config-kind-ci.yaml --skip-k8s
 
       - name: Verify clusters are running
         run: |
@@ -82,4 +66,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: ./bin/dpu-sim --config config-kind-ci.yaml --skip-deps --cleanup || true
+        run: ./bin/dpu-sim --config config-kind-ci.yaml --cleanup || true

@@ -417,11 +417,36 @@ func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distr
 	return nil
 }
 
-// Install Open vSwitch on the target machine
+// isSystemdAvailable returns true if systemd is the active init system.
+func isSystemdAvailable(cmdExec platform.CommandExecutor) bool {
+	_, _, err := cmdExec.Execute("systemctl is-system-running")
+	return err == nil
+}
+
+// Install Open vSwitch on the target machine.
+//
+// Behaviour varies by environment:
+//   - No systemd (containers, some CI): start OVS directly via ovs-ctl.
+//   - APT (Debian/Ubuntu) + systemd: apt auto-starts and enables the service on
+//     install, so no explicit systemctl calls are needed.
+//   - DNF (RHEL/Fedora) + systemd: rpm installs do not auto-start services;
+//     enable and start openvswitch manually and restart NetworkManager.
 func InstallSystemdOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
 	if err := InstallOpenVSwitch(cmdExec, distro, cfg, dep); err != nil {
 		return fmt.Errorf("failed to install openvswitch: %w", err)
 	}
+	if !isSystemdAvailable(cmdExec) {
+		log.Info("systemd not available, starting OVS via ovs-ctl")
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "/usr/share/openvswitch/scripts/ovs-ctl", "start", "--system-id=random"); err != nil {
+			return fmt.Errorf("failed to start OVS via ovs-ctl: %w", err)
+		}
+		return nil
+	}
+	if distro.PackageManager == platform.APT {
+		// Debian/Ubuntu: apt already started and enabled the service.
+		return nil
+	}
+	// RHEL/Fedora: manually enable and start the service.
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "openvswitch"); err != nil {
 		return fmt.Errorf("failed to enable openvswitch: %w", err)
 	}

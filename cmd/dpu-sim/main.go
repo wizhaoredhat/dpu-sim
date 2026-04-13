@@ -410,7 +410,7 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registr
 		}
 
 		for _, node := range info.Nodes {
-			dockerExec := platform.NewDockerExecutor(node.Name)
+			dockerExec := platform.NewDockerExecutor(node.Name, kindMgr.ContainerBin())
 			if err := kindMgr.InstallDependencies(dockerExec); err != nil {
 				return fmt.Errorf("failed to install Kind dependencies on %s: %w", node.Name, err)
 			}
