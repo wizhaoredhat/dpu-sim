@@ -213,8 +213,13 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) erro
 		log.Info("✓ OVN-Kubernetes pods are ready, installed via Helm successfully (mode=%s)", mode)
 	}
 
-	if err := m.k8sClient.DeleteDaemonSet("kube-system", "kube-proxy"); err != nil {
-		return fmt.Errorf("failed to delete kube-proxy DaemonSet: %w", err)
+	// In DPU mode the primary cluster CNI (e.g. flannel) relies on
+	// kube-proxy for service routing, so only delete it when OVN-K
+	// handles services itself (full and dpu-host modes).
+	if mode != ovnkModeDPU {
+		if err := m.k8sClient.DeleteDaemonSet("kube-system", "kube-proxy"); err != nil {
+			return fmt.Errorf("failed to delete kube-proxy DaemonSet: %w", err)
+		}
 	}
 
 	// DPU-host: create the service account secret for cross-cluster access

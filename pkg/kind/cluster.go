@@ -151,19 +151,21 @@ func (m *KindManager) InstallCNI() error {
 		log.Info("\n--- Installing CNI on cluster %s ---", clusterCfg.Name)
 		cniType := clusterCfg.CNI
 
-		if cniType == config.CNIOVNKubernetes {
-			// If a local registry is configured for this CNI, the image is
-			// already available in the registry and nodes can pull it directly.
-			// Otherwise, fall back to pulling to loading via
-			// `kind load docker-image`.
-			regContainer := m.config.GetRegistryContainerForCNI(clusterCfg.CNI)
+		// OVN-K images are needed when the cluster uses OVN-K directly, or
+		// when this is the DPU cluster in offload mode (OVN-K DPU mode is
+		// deployed automatically alongside the primary CNI).
+		needsOVNK := cniType == config.CNIOVNKubernetes ||
+			m.config.DPUClusterNeedsOVNK(clusterCfg.Name)
+
+		if needsOVNK {
+			regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
 			if regContainer == nil {
 				if err := m.PullAndLoadImage(clusterCfg.Name, cni.DefaultOVNImage); err != nil {
 					return fmt.Errorf("failed to load OVN-Kubernetes image: %w", err)
 				}
 				if m.config.IsOffloadDPU() {
 					if err := m.PullAndLoadImage(clusterCfg.Name, deviceplugin.DevicePluginImage); err != nil {
-						return fmt.Errorf("failed to load OVN-Kubernetes image: %w", err)
+						return fmt.Errorf("failed to load device plugin image: %w", err)
 					}
 				}
 			} else {
@@ -171,7 +173,7 @@ func (m *KindManager) InstallCNI() error {
 			}
 		}
 
-		if cniType == config.CNIOVNKubernetes && m.config.IsOffloadDPU() && m.config.IsDPUCluster(clusterCfg.Name) {
+		if m.config.DPUClusterNeedsOVNK(clusterCfg.Name) {
 			if err := m.setupOVNKubernetesOffloadToDPUOVS(clusterCfg.Name); err != nil {
 				return fmt.Errorf("failed to setup OVS on DPU containers: %w", err)
 			}

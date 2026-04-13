@@ -141,7 +141,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	//		return err
 	//	}
 	//}
-	if cniType == config.CNIOVNKubernetes && m.config.IsOffloadDPU() && m.config.IsDPUCluster(clusterCfg.Name) {
+	if m.config.DPUClusterNeedsOVNK(clusterCfg.Name) {
 		if err := m.setupOVNKubernetesOffloadToDPUOVS(clusterCfg.Name); err != nil {
 			return fmt.Errorf("failed to setup OVS on DPU VMs: %w", err)
 		}

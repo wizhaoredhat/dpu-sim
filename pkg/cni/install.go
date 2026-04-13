@@ -12,23 +12,41 @@ import (
 // InstallCNI installs the specified CNI on a cluster using the Kubernetes API.
 // For OVN-Kubernetes the deployment mode (full / DPU-host / DPU) and network
 // interfaces are determined automatically from the config.
+//
+// When DPU offloading is enabled and it is the DPU cluster, OVN-Kubernetes
+// in DPU mode is automatically deployed after the primary CNI so the cluster
+// has working pod networking (via flannel/kindnet) while still running the
+// OVN datapath offload for the host cluster.
 func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sIP string) error {
 	log.Info("\n=== Installing %s CNI on cluster %s ===", cniType, clusterName)
 
 	switch cniType {
 	case config.CNIFlannel:
-		return m.installFlannel(clusterName)
+		if err := m.installFlannel(clusterName); err != nil {
+			return err
+		}
 	case config.CNIOVNKubernetes:
-		return m.installOVNKubernetes(clusterName, k8sIP)
+		if err := m.installOVNKubernetes(clusterName, k8sIP); err != nil {
+			return err
+		}
 	case config.CNIKindnet:
 		if m.config.IsKindMode() {
 			log.Info("Kindnet is the default CNI for Kind clusters, no installation needed")
-			return nil
+		} else {
+			return fmt.Errorf("Kindnet is not supported for cluster %s", clusterName)
 		}
-		return fmt.Errorf("Kindnet is not supported for cluster %s", clusterName)
 	default:
 		return fmt.Errorf("unsupported CNI type: %s", cniType)
 	}
+
+	if cniType != config.CNIOVNKubernetes && m.config.DPUClusterNeedsOVNK(clusterName) {
+		log.Info("\n=== DPU offload enabled: auto-deploying OVN-Kubernetes in DPU mode on cluster %s ===", clusterName)
+		if err := m.installOVNKubernetes(clusterName, k8sIP); err != nil {
+			return fmt.Errorf("failed to install OVN-Kubernetes DPU mode on cluster %s: %w", clusterName, err)
+		}
+	}
+
+	return nil
 }
 
 func (m *CNIManager) InstallAddon(addonType config.AddonType, clusterName string) error {
@@ -128,6 +146,12 @@ func (m *CNIManager) RedeployCNI(clusterName string) error {
 		return m.redeployOVNKubernetes(clusterName)
 	default:
 		log.Info("CNI %q does not support redeployment, skipping cluster %s", cniType, clusterName)
-		return nil
 	}
+
+	if cniType != config.CNIOVNKubernetes && m.config.DPUClusterNeedsOVNK(clusterName) {
+		log.Info("DPU offload enabled: redeploying OVN-Kubernetes DPU mode on cluster %s", clusterName)
+		return m.redeployOVNKubernetes(clusterName)
+	}
+
+	return nil
 }

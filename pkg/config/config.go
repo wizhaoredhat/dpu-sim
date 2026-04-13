@@ -711,6 +711,18 @@ func (c *Config) IsOffloadDPU() bool {
 	return c.Kubernetes.OffloadDPU
 }
 
+// DPUClusterNeedsOVNK returns true when clusterName is the DPU cluster in an
+// offload topology whose host cluster uses OVN-Kubernetes. In that scenario
+// the DPU cluster must deploy OVN-K in DPU mode alongside its own primary CNI
+// (e.g. flannel) so the host cluster's networking can be offloaded.
+func (c *Config) DPUClusterNeedsOVNK(clusterName string) bool {
+	if !c.IsOffloadDPU() || !c.IsDPUCluster(clusterName) {
+		return false
+	}
+	hostCluster := c.GetDPUHostClusterName()
+	return hostCluster != "" && c.GetCNIType(hostCluster) == CNIOVNKubernetes
+}
+
 // IsDPUCluster returns true if the named cluster contains DPU-type nodes.
 func (c *Config) IsDPUCluster(clusterName string) bool {
 	for _, vm := range c.VMs {

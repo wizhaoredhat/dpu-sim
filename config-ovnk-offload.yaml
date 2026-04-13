@@ -122,7 +122,7 @@ kubernetes:
     - name: "cluster-2"
       pod_cidr: "10.246.0.0/16"
       service_cidr: "10.247.0.0/16"
-      cni: "ovn-kubernetes"
+      cni: "flannel"
       addons:
         - multus
 
