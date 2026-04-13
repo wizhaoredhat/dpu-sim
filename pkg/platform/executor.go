@@ -31,6 +31,10 @@ type CommandExecutor interface {
 	// ExecuteWithTimeout runs a command with a specific timeout
 	ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error)
 
+	// ExecuteRetryWithTimeout retries a command at the given interval until it
+	// succeeds or the overall timeout expires. Useful for waiting on conditions.
+	ExecuteRetryWithTimeout(command string, interval, timeout time.Duration) (stdout, stderr string, err error)
+
 	// RunCmd executes a command with arguments
 	// The level parameter controls output visibility:
 	// - If level <= global log level: output streams to stdout/stderr
@@ -94,6 +98,24 @@ type rawExecutor interface {
 	rawExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error)
 }
 
+// executeRetryWithTimeout is the shared implementation for
+// CommandExecutor.ExecuteRetryWithTimeout.
+func executeRetryWithTimeout(exec CommandExecutor, command string, interval, timeout time.Duration) (string, string, error) {
+	deadline := time.Now().Add(timeout)
+	var stdout, stderr string
+	var err error
+	for {
+		stdout, stderr, err = exec.ExecuteWithTimeout(command, interval)
+		if err == nil {
+			return stdout, stderr, nil
+		}
+		if time.Now().Add(interval).After(deadline) {
+			return stdout, stderr, fmt.Errorf("timed out after %s: %w", timeout, err)
+		}
+		time.Sleep(interval)
+	}
+}
+
 // probeSudo checks whether "sudo" is available on the target system.
 func probeSudo(cmdExec rawExecutor) bool {
 	_, _, err := cmdExec.rawExecuteWithTimeout("which sudo", 5*time.Second)
@@ -147,6 +169,11 @@ func (e *LocalExecutor) rawExecuteWithTimeout(command string, timeout time.Durat
 // ExecuteWithTimeout runs a command with a specific timeout
 func (e *LocalExecutor) ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
 	return e.rawExecuteWithTimeout(stripSudoScript(e.HasSudo(), command), timeout)
+}
+
+// ExecuteRetryWithTimeout retries a command until it succeeds or times out.
+func (e *LocalExecutor) ExecuteRetryWithTimeout(command string, interval, timeout time.Duration) (string, string, error) {
+	return executeRetryWithTimeout(e, command, interval, timeout)
 }
 
 // RunCmd executes a command with arguments
@@ -293,6 +320,11 @@ func (e *SSHExecutor) rawExecuteWithTimeout(command string, timeout time.Duratio
 // ExecuteWithTimeout runs a command with a specific timeout
 func (e *SSHExecutor) ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
 	return e.rawExecuteWithTimeout(stripSudoScript(e.HasSudo(), command), timeout)
+}
+
+// ExecuteRetryWithTimeout retries a command until it succeeds or times out.
+func (e *SSHExecutor) ExecuteRetryWithTimeout(command string, interval, timeout time.Duration) (string, string, error) {
+	return executeRetryWithTimeout(e, command, interval, timeout)
 }
 
 // RunCmd executes a command with arguments
@@ -467,6 +499,11 @@ func (e *DockerExecutor) rawExecuteWithTimeout(command string, timeout time.Dura
 // ExecuteWithTimeout runs a command with a specific timeout
 func (e *DockerExecutor) ExecuteWithTimeout(command string, timeout time.Duration) (stdout, stderr string, err error) {
 	return e.rawExecuteWithTimeout(stripSudoScript(e.HasSudo(), command), timeout)
+}
+
+// ExecuteRetryWithTimeout retries a command until it succeeds or times out.
+func (e *DockerExecutor) ExecuteRetryWithTimeout(command string, interval, timeout time.Duration) (string, string, error) {
+	return executeRetryWithTimeout(e, command, interval, timeout)
 }
 
 // RunCmd executes a command with arguments inside the container

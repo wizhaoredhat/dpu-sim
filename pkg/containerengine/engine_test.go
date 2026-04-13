@@ -46,6 +46,10 @@ func (f *fakeExecutor) ExecuteWithTimeout(command string, timeout time.Duration)
 	return f.Execute(command)
 }
 
+func (f *fakeExecutor) ExecuteRetryWithTimeout(command string, interval, timeout time.Duration) (stdout, stderr string, err error) {
+	return f.Execute(command)
+}
+
 func (f *fakeExecutor) RunCmd(level log.Level, name string, args ...string) error {
 	copied := make([]string, len(args))
 	copy(copied, args)

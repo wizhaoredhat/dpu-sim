@@ -429,6 +429,14 @@ func (m *VMManager) AssignDpuHostGatewayIPs() error {
 		}
 
 		sshExec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
+
+		// The virtio interface may not be renamed by udev yet; poll until it appears.
+		if _, _, err := sshExec.ExecuteRetryWithTimeout(
+			fmt.Sprintf("ip link show %s", gwIf), 2*time.Second, 60*time.Second,
+		); err != nil {
+			return fmt.Errorf("interface %s not ready on %s: %w", gwIf, pair.HostNode, err)
+		}
+
 		if err := sshExec.RunCmd(log.LevelDebug, "ip", "addr", "add", gwCIDR, "dev", gwIf, "noprefixroute"); err != nil {
 			return fmt.Errorf("failed to assign %s to %s on %s: %w", gwCIDR, gwIf, pair.HostNode, err)
 		}
