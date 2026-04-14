@@ -36,6 +36,20 @@ jobs:
       - name: Build dpu-sim
         run: make build
 
+      - name: Disable containerd image store
+        # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+        # Docker 27+ on ubuntu-24.04 enables the containerd snapshotter by default,
+        # which prevents kind from loading images into the cluster.
+        run: |
+          sudo mkdir -p /etc/docker
+          [ -s "/etc/docker/daemon.json" ] && {
+            cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+          } || {
+            echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+          }
+          sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+          sudo systemctl restart docker
+
       - name: Deploy kind clusters (infrastructure only, skip CNI)
         run: ./bin/dpu-sim --config config-kind-ci.yaml --skip-k8s
 
