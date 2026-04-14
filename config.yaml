@@ -73,7 +73,7 @@ vms:
     k8s_node_mac: "52:54:00:00:02:12"
     k8s_node_ip: "192.168.123.22"
     host: "host-1-1"
-    memory: 2048  # MB
+    memory: 4096  # MB
     vcpus: 2
     disk_size: 20  # GB
 
@@ -94,7 +94,7 @@ vms:
     k8s_node_mac: "52:54:00:00:02:13"
     k8s_node_ip: "192.168.123.23"
     host: "host-2-1"
-    memory: 2048  # MB
+    memory: 4096  # MB
     vcpus: 2
     disk_size: 20  # GB
 
