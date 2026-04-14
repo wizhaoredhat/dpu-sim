@@ -20,6 +20,10 @@ const (
 	DevicePluginImage         = "dpu-sim-dp:latest"
 	DevicePluginDaemonSetName = "dpu-sim-device-plugin"
 	DevicePluginNamespace     = "kube-system"
+
+	MgmtVFResourceName = "dpusim.io/mgmtvf"
+	// VFResourceName is the extended-resource name for simulated VFs.
+	VFResourceName = "dpusim.io/vf"
 )
 
 // ResourcePool describes one class of simulated device resources.
@@ -44,14 +48,14 @@ type ResourcePool struct {
 var ResourcePools = []ResourcePool{
 	/* TODO: Enable when we set Management port through resource pool.
 	{
-		ResourceName: "dpusim.io/mgmtvf",
+		ResourceName: MgmtVFResourceName,
 		SocketName:   "dpusim-mgmtvf.sock",
 		EnvVarName:   "PCIDEVICE_DPUSIM_IO_MGMTVF",
 		IfaceRegex:   regexp.MustCompile(`^eth0-1$`),
 	},
 	*/
 	{
-		ResourceName: "dpusim.io/vf",
+		ResourceName: VFResourceName,
 		SocketName:   "dpusim-vf.sock",
 		EnvVarName:   "PCIDEVICE_DPUSIM_IO_VF",
 		// matches eth0-2, eth0-3, …, eth0-10, etc. (any eth0-* except eth0-0 and eth0-1).

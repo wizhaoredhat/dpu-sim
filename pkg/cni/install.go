@@ -54,7 +54,7 @@ func (m *CNIManager) InstallAddon(addonType config.AddonType, clusterName string
 
 	switch addonType {
 	case config.AddonMultus:
-		return m.installMultus()
+		return m.installMultus(clusterName)
 	case config.AddonCertManager:
 		return m.installCertManager(clusterName)
 	case config.AddonWhereabouts:
