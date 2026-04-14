@@ -38,10 +38,11 @@ func (m *CNIManager) installMultus(clusterName string) error {
 
 	if m.clusterUsesOVNKubernetes(clusterName) {
 		manifest = patchMultusDaemonConfig(manifest, map[string]any{
-			"clusterNetwork":         "default/ovn-primary",
+			"multusNamespace":        "default",
+			"clusterNetwork":         "ovn-primary",
 			"readinessindicatorfile": "/host/etc/cni/net.d/10-ovn-kubernetes.conf",
 		})
-		log.Info("Patching Multus daemon config for OVN-Kubernetes (clusterNetwork=default/ovn-primary)")
+		log.Info("Patching Multus daemon config for OVN-Kubernetes (multusNamespace=default, clusterNetwork=ovn-primary)")
 	}
 
 	if err := m.k8sClient.ApplyManifest(manifest); err != nil {
