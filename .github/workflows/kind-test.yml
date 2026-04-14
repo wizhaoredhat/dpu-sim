@@ -55,14 +55,13 @@ jobs:
 
       - name: Verify clusters are running
         run: |
-          kind get clusters
-          kind get kubeconfig --name dpu-sim-host-kind > /tmp/kubeconfig-host.yaml
-          kind get kubeconfig --name dpu-sim-dpu-kind > /tmp/kubeconfig-dpu.yaml
-          # Nodes exist but are NotReady: dpu-sim disables the default kind CNI
-          # (kindnet) in favour of OVN-Kubernetes, which is installed separately.
-          # With --skip-k8s we verify that nodes are registered, not that they are Ready.
-          kubectl get nodes --kubeconfig /tmp/kubeconfig-host.yaml
-          kubectl get nodes --kubeconfig /tmp/kubeconfig-dpu.yaml
+          # dpu-sim saves kubeconfigs to kubeconfig/ during deployment.
+          # Using them directly avoids a dependency on the kind CLI's container
+          # runtime provider matching what dpu-sim detected (docker vs podman).
+          # Nodes are NotReady: dpu-sim disables kindnet in favour of OVN-Kubernetes,
+          # which is installed separately. With --skip-k8s we verify node registration only.
+          kubectl get nodes --kubeconfig kubeconfig/dpu-sim-host-kind.kubeconfig
+          kubectl get nodes --kubeconfig kubeconfig/dpu-sim-dpu-kind.kubeconfig
 
       - name: Export kind logs on failure
         if: failure()
