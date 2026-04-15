@@ -154,7 +154,7 @@ func NewContainerEngine(exec platform.CommandExecutor) (Engine, error) {
 			log.Debug("Auto-detected docker container engine for registry operations")
 			return NewDockerEngine(exec), nil
 		}
-		return nil, fmt.Errorf("No container engine was found, make sure that one is available in $PATH")
+		return nil, fmt.Errorf("no container engine was found, make sure that one is available in $PATH")
 	}
 }
 

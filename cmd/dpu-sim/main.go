@@ -228,7 +228,7 @@ func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManage
 	if !skipK8s {
 		log.Info("\n=== Installing Kubernetes and CNI ===")
 		if err := doVMInstallK8s(vmMgr); err != nil {
-			return fmt.Errorf("Kubernetes installation failed: %w", err)
+			return fmt.Errorf("kubernetes installation failed: %w", err)
 		}
 	} else {
 		log.Info("\nSkipping Kubernetes installation")
@@ -270,7 +270,7 @@ func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryMana
 
 		log.Info("\n=== Deploying Kind clusters ===")
 		if err := doKindDeploy(cfg, kindMgr, regMgr); err != nil {
-			return fmt.Errorf("Kind deployment failed: %w", err)
+			return fmt.Errorf("kind deployment failed: %w", err)
 		}
 	} else {
 		log.Info("\nSkipping Kind deployment")

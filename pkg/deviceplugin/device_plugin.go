@@ -89,7 +89,7 @@ func BuildDevicePluginImage(cmdExec platform.CommandExecutor, engine containeren
 		return fmt.Errorf("failed to check Dockerfile: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("Device Plugin Dockerfile not found at %s", dockerfile)
+		return fmt.Errorf("device plugin Dockerfile not found at %s", dockerfile)
 	}
 
 	targetArch, err := cmdExec.GetArchitecture()
