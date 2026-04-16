@@ -23,6 +23,9 @@ const (
 	DefaultRegistryImage = "registry:2"
 )
 
+// DPUHostNodeLabelKey is the node label used by OVN-Kubernetes for DPU Host Nodes
+const DPUHostNodeLabelKey = "k8s.ovn.org/dpu-host"
+
 // CNIType represents the type of CNI
 type CNIType string
 

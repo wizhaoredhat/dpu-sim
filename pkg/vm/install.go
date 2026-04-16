@@ -254,6 +254,10 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	if err := cniMgr.InstallAddons(clusterCfg.Addons, clusterName); err != nil {
 		return fmt.Errorf("failed to install addons: %w", err)
 	}
+
+	if err := cniMgr.PostInstall(clusterName); err != nil {
+		return fmt.Errorf("failed to patch cluster environment: %w", err)
+	}
 	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)
 	return nil
 }

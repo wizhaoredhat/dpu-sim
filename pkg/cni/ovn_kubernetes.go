@@ -875,7 +875,7 @@ func resolveGitRef(cmdExec platform.CommandExecutor, repo, ref string) (string, 
 }
 
 // labelNodesForDPUHost labels DPU-host worker nodes with the required
-// k8s.ovn.org/dpu-host label.
+// DPU Host node label.
 func (m *CNIManager) labelNodesForDPUHost(clusterName string) error {
 	dpuHostNodes := m.config.GetDPUHostNodeNames(clusterName)
 	if len(dpuHostNodes) == 0 {
@@ -886,12 +886,12 @@ func (m *CNIManager) labelNodesForDPUHost(clusterName string) error {
 	log.Info("Labeling DPU-host nodes in cluster %s...", clusterName)
 	for _, nodeName := range dpuHostNodes {
 		labels := map[string]string{
-			"k8s.ovn.org/dpu-host": "",
+			config.DPUHostNodeLabelKey: "",
 		}
 		if err := m.k8sClient.LabelNode(nodeName, labels); err != nil {
 			return fmt.Errorf("failed to label DPU-host node %s: %w", nodeName, err)
 		}
-		log.Debug("✓ Labeled node %s with k8s.ovn.org/dpu-host", nodeName)
+		log.Debug("✓ Labeled node %s with %s", nodeName, config.DPUHostNodeLabelKey)
 	}
 
 	log.Info("✓ DPU-host nodes labeled in cluster %s", clusterName)
