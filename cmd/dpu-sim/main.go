@@ -440,8 +440,14 @@ func doKindInstallCNI(kindMgr *kind.KindManager) error {
 }
 
 func main() {
-	if err := rootCmd.Execute(); err != nil {
+	start := time.Now()
+	err := rootCmd.Execute()
+	elapsed := time.Since(start).Round(time.Millisecond)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
+	fmt.Fprintf(os.Stderr, "dpu-sim total time: %s\n", elapsed)
+	if err != nil {
 		os.Exit(1)
 	}
 }
