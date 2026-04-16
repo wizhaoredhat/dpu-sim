@@ -12,6 +12,23 @@ import (
 const writableCNIBinDir = "/var/lib/cni/bin"
 
 func (m *CNIManager) shouldUseWritableCNIBinDir() bool {
+	// Kind node images stage plugins under /opt/cni/bin (see linux.InstallKindCNIPlugins).
+	if m.config.IsKindMode() {
+		return false
+	}
+
+	// VM and bare-metal installs run linux.EnsureCRIOCNIPluginPaths: it copies
+	// plugins into /var/lib/cni/bin and (when possible) symlinks the same names
+	// under /opt/cni/bin -> /usr/libexec/cni/... Multus thick defaults to
+	// binDir /opt/cni/bin; delegate plugins run from the Multus pod mount namespace.
+	// Symlinks under /opt/cni/bin then break: the target path is not mounted in
+	// the pod, so libcni reports e.g. "failed to find plugin portmap" even though
+	// `ls /opt/cni/bin/portmap` on the host succeeds. /var/lib/cni/bin holds real
+	// file copies, so point Multus/Flannel/Whereabouts there.
+	if m.config.IsVMMode() {
+		return true
+	}
+
 	if strings.TrimSpace(m.config.OperatingSystem.ImageRef) != "" {
 		return true
 	}

@@ -33,7 +33,7 @@ func (m *CNIManager) installMultus(clusterName string) error {
 		manifest = patchMultusDaemonConfig(manifest, map[string]any{
 			"binDir": writableCNIBinDir,
 		})
-		log.Info("Detected bootc/read-only root setup, patching Multus CNI binary path to %s", writableCNIBinDir)
+		log.Info("Patching Multus CNI host paths and binDir to %s (delegate plugins + shim)", writableCNIBinDir)
 	}
 
 	if m.clusterUsesOVNKubernetes(clusterName) {

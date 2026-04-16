@@ -22,7 +22,7 @@ func (m *CNIManager) installFlannel(clusterName string) error {
 
 	if m.shouldUseWritableCNIBinDir() {
 		manifest = rewriteCNIBinPath(manifest, writableCNIBinDir)
-		log.Info("Detected bootc/read-only root setup, patching Flannel CNI binary path to %s", writableCNIBinDir)
+		log.Info("Patching Flannel CNI binary path to %s", writableCNIBinDir)
 	}
 
 	if m.config.IsKindMode() {

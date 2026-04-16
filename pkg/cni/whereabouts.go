@@ -28,7 +28,7 @@ func (m *CNIManager) installWhereabouts(clusterName string) error {
 
 	if m.shouldUseWritableCNIBinDir() {
 		manifest = rewriteCNIHostPathOnly(manifest, writableCNIBinDir)
-		log.Info("Detected bootc/read-only root setup, patching Whereabouts CNI binary path to %s", writableCNIBinDir)
+		log.Info("Patching Whereabouts CNI binary path to %s", writableCNIBinDir)
 	}
 
 	if err := m.k8sClient.ApplyManifest(manifest); err != nil {

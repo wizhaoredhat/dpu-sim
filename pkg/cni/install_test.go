@@ -7,10 +7,10 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/config"
 )
 
-func TestResolveAddonInstallOrderInjectsWhereaboutsBeforeMultus(t *testing.T) {
+func TestResolveAddonInstallOrderPassthroughWithoutWhereaboutsAddon(t *testing.T) {
 	addons := []config.AddonType{config.AddonMultus, config.AddonCertManager}
 	ordered := resolveAddonInstallOrder(addons)
-	require.Equal(t, []config.AddonType{config.AddonWhereabouts, config.AddonMultus, config.AddonCertManager}, ordered)
+	require.Equal(t, addons, ordered)
 }
 
 func TestResolveAddonInstallOrderDoesNotDuplicateWhereabouts(t *testing.T) {
