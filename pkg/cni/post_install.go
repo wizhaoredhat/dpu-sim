@@ -16,10 +16,10 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/log"
 )
 
-// PostInstall applies cluster-environment patches after the CNI, device plugin (when
-// applicable), and addons are installed. For example, in OVN-Kubernetes DPU-host
-// mode it patches system Deployments so workloads request the simulated VF.
-func (m *CNIManager) PostInstall(clusterName string) error {
+// PostInstallPerCluster applies cluster-environment patches after the CNI, device plugin
+// (when applicable), and addons are installed on this cluster. For example, in
+// OVN-Kubernetes DPU-host mode it patches system Deployments so workloads request the simulated VF.
+func (m *CNIManager) PostInstallPerCluster(clusterName string) error {
 	mode := m.detectOVNKMode(clusterName)
 
 	if mode == ovnkModeDPUHost {
@@ -29,15 +29,41 @@ func (m *CNIManager) PostInstall(clusterName string) error {
 		}
 	}
 
-	// Recreate CoreDNS after Multus is active or a CNI is installed so pods pick up stable CNI wiring.
-	if err := m.k8sClient.RolloutRestartDeployment("kube-system", "coredns"); err != nil {
-		log.Warn("failed to restart coredns after multus install: %v", err)
+	return nil
+}
+
+// PostInstall runs after every configured cluster has been installed successfully.
+// It restarts CoreDNS on each cluster so system pods pick up stable CNI wiring.
+func PostInstall(cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("cni post-install: config is nil")
 	}
-	if err := m.k8sClient.WaitForDeploymentAvailable("kube-system", "coredns", 5*time.Minute); err != nil {
-		log.Warn("Warning: coredns deployment is not available after multus install: %v", err)
+
+	log.Info("\n=== Post-install (all clusters): restarting CoreDNS ===")
+	for _, clusterCfg := range cfg.ClustersOrderedForInstall() {
+		kubeconfigPath := k8s.GetKubeconfigPath(clusterCfg.Name, cfg.Kubernetes.GetKubeconfigDir())
+		cniMgr, err := NewCNIManagerWithKubeconfigFile(cfg, kubeconfigPath)
+		if err != nil {
+			return fmt.Errorf("cni post-install for cluster %s: %w", clusterCfg.Name, err)
+		}
+		log.Info("--- CoreDNS rollout: cluster %s ---", clusterCfg.Name)
+		rolloutRestartCoreDNS(cniMgr.K8sClient())
 	}
 
 	return nil
+}
+
+// rolloutRestartCoreDNS restarts CoreDNS and waits for it to be available
+func rolloutRestartCoreDNS(kc *k8s.K8sClient) {
+	if kc == nil {
+		return
+	}
+	if err := kc.RolloutRestartDeployment("kube-system", "coredns"); err != nil {
+		log.Warn("failed to restart coredns: %v", err)
+	}
+	if err := kc.WaitForDeploymentAvailable("kube-system", "coredns", 5*time.Minute); err != nil {
+		log.Warn("coredns deployment is not available after rollout: %v", err)
+	}
 }
 
 // ensureDPUHostSystemDeployments patches CoreDNS and (if present)

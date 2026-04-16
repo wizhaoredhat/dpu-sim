@@ -208,9 +208,13 @@ func (m *KindManager) InstallCNI() error {
 			return fmt.Errorf("failed to install addons: %w", err)
 		}
 
-		if err := cniMgr.PostInstall(clusterCfg.Name); err != nil {
+		if err := cniMgr.PostInstallPerCluster(clusterCfg.Name); err != nil {
 			return fmt.Errorf("failed to patch cluster environment on cluster %s: %w", clusterCfg.Name, err)
 		}
+	}
+
+	if err := cni.PostInstall(m.config); err != nil {
+		return fmt.Errorf("failed CNI post-install after all Kind clusters: %w", err)
 	}
 
 	log.Info("\n✓ CNI installation complete on Kind clusters")
