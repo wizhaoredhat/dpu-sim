@@ -29,6 +29,8 @@ func (m *CNIManager) PostInstallPerCluster(clusterName string) error {
 		}
 	}
 
+	m.RolloutRestartDeployments()
+
 	return nil
 }
 
@@ -39,30 +41,28 @@ func PostInstall(cfg *config.Config) error {
 		return fmt.Errorf("cni post-install: config is nil")
 	}
 
-	log.Info("\n=== Post-install (all clusters): restarting CoreDNS ===")
+	log.Info("\n=== Post-install (all clusters): restarting deployments ===")
 	for _, clusterCfg := range cfg.ClustersOrderedForInstall() {
 		kubeconfigPath := k8s.GetKubeconfigPath(clusterCfg.Name, cfg.Kubernetes.GetKubeconfigDir())
 		cniMgr, err := NewCNIManagerWithKubeconfigFile(cfg, kubeconfigPath)
 		if err != nil {
 			return fmt.Errorf("cni post-install for cluster %s: %w", clusterCfg.Name, err)
 		}
-		log.Info("--- CoreDNS rollout: cluster %s ---", clusterCfg.Name)
-		rolloutRestartCoreDNS(cniMgr.K8sClient())
+		log.Info("Rolling out deployments on cluster %s", clusterCfg.Name)
+		cniMgr.RolloutRestartDeployments()
 	}
 
 	return nil
 }
 
-// rolloutRestartCoreDNS restarts CoreDNS and waits for it to be available
-func rolloutRestartCoreDNS(kc *k8s.K8sClient) {
-	if kc == nil {
-		return
-	}
-	if err := kc.RolloutRestartDeployment("kube-system", "coredns"); err != nil {
+// RolloutRestartDeployments restarts CoreDNS and waits for it to be available
+func (m *CNIManager) RolloutRestartDeployments() {
+	if err := m.k8sClient.RolloutRestartDeployment("kube-system", "coredns"); err != nil {
 		log.Warn("failed to restart coredns: %v", err)
 	}
-	if err := kc.WaitForDeploymentAvailable("kube-system", "coredns", 5*time.Minute); err != nil {
-		log.Warn("coredns deployment is not available after rollout: %v", err)
+
+	if err := m.k8sClient.RolloutRestartDeployment("local-path-storage", "local-path-provisioner"); err != nil {
+		log.Warn("failed to restart local-path-provisioner: %v", err)
 	}
 }
 
