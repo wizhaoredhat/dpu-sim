@@ -1,0 +1,34 @@
+name: Build Check
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install libvirt development headers
+        run: sudo apt-get update && sudo apt-get install -y libvirt-dev
+
+      - name: Build binaries
+        run: make build
+
+      - name: Check dpu-sim basic function
+        run: ./bin/dpu-sim --help
+
+      - name: Check vmctl basic function
+        run: ./bin/vmctl --help

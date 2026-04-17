@@ -214,7 +214,7 @@ func TestLocalExecutor_String(t *testing.T) {
 }
 
 func TestDockerExecutor_String(t *testing.T) {
-	cmdExec := NewDockerExecutor("test-container")
+	cmdExec := NewDockerExecutor("test-container", "docker")
 	want := "docker://test-container"
 	if cmdExec.String() != want {
 		t.Errorf("String() = %q, want %q", cmdExec.String(), want)

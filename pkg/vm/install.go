@@ -39,7 +39,7 @@ func (m *VMManager) InstallKubernetes(vmName string) error {
 		// Get Kubernetes version from config
 		k8sVersion := m.config.Kubernetes.Version
 		if k8sVersion == "" {
-			return fmt.Errorf("Kubernetes version is not set")
+			return fmt.Errorf("kubernetes version is not set")
 		}
 
 		cmdExec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
@@ -85,7 +85,7 @@ func endpointReachable(exec platform.CommandExecutor, endpoint string) bool {
 }
 
 // setupOVNBrExForCluster sets up OVN br-ex on all VMs in the cluster
-func (m *VMManager) setupOVNBrExForCluster(clusterRoleMapping config.ClusterRoleMapping, k8sMgr *k8s.K8sMachineManager) error {
+func (m *VMManager) setupOVNBrExForCluster(clusterRoleMapping config.ClusterRoleMapping, k8sMgr *k8s.K8sMachineManager) error { //nolint:unused
 	for role, vms := range clusterRoleMapping {
 		for _, vmCfg := range vms {
 			vmMgmtIP, err := m.GetVMMgmtIP(vmCfg.Name)
@@ -151,7 +151,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	// has created their kernel datapaths / management sockets. Without this,
 	// ovs-ofctl fails with "<bridge> is not a bridge or a socket".
 	// This is a weird issue which might point to an issue with ovs-vswitchd,
-	// where it doesn't create the managment socket for bridges added after
+	// where it doesn't create the management socket for bridges added after
 	// startup.
 	// TODO: Investigate this further in the future.
 	isDPU := m.config.IsOffloadDPU() && m.config.IsDPUCluster(clusterCfg.Name)
