@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/log"
@@ -26,6 +27,10 @@ import (
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+// deploymentSuspendReplicasAnnotationKey stores the pre-scale-down replica count
+// on a Deployment while it is suspended at zero replicas (see SuspendDeployment).
+const deploymentSuspendReplicasAnnotationKey = "dpu-sim.io/suspend-replicas"
 
 // NewClient creates a new Kubernetes client from kubeconfig content
 func NewClient(kubeconfigContent string) (*K8sClient, error) {
@@ -687,13 +692,17 @@ func (c *K8sClient) RolloutRestartDaemonSet(namespace, name string) error {
 }
 
 // RolloutRestartDeployment triggers a rolling restart of a Deployment by updating
-// a pod template annotation with the current timestamp
-func (c *K8sClient) RolloutRestartDeployment(namespace, name string) error {
+// a pod template annotation with the current timestamp.
+// If ignoreNotFound is true and the Deployment does not exist, it returns nil.
+func (c *K8sClient) RolloutRestartDeployment(namespace, name string, ignoreNotFound bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	deployment, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
+		if ignoreNotFound && apierrors.IsNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, name, err)
 	}
 
@@ -708,6 +717,88 @@ func (c *K8sClient) RolloutRestartDeployment(namespace, name string) error {
 	}
 
 	log.Info("✓ Triggered rollout restart for deployment %s/%s", namespace, name)
+	return nil
+}
+
+// SuspendDeployment scales a Deployment to zero after recording the prior
+// .spec.replicas value in an annotation so ResumeDeployment can restore it.
+func (c *K8sClient) SuspendDeployment(namespace, name string, ignoreNotFound bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dep, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if ignoreNotFound && apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get deployment %s/%s: %w", namespace, name, err)
+	}
+
+	if dep.Spec.Replicas != nil && *dep.Spec.Replicas == 0 {
+		return nil
+	}
+
+	prev := int32(1)
+	if dep.Spec.Replicas != nil {
+		prev = *dep.Spec.Replicas
+	}
+	if dep.ObjectMeta.Annotations == nil {
+		dep.ObjectMeta.Annotations = map[string]string{}
+	}
+	if _, already := dep.ObjectMeta.Annotations[deploymentSuspendReplicasAnnotationKey]; !already {
+		dep.ObjectMeta.Annotations[deploymentSuspendReplicasAnnotationKey] = strconv.FormatInt(int64(prev), 10)
+	}
+
+	zero := int32(0)
+	dep.Spec.Replicas = &zero
+
+	if _, err := c.clientset.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("suspend deployment %s/%s: %w", namespace, name, err)
+	}
+	log.Info("✓ Scaled deployment %s/%s to 0 (saved replicas in %s)", namespace, name, deploymentSuspendReplicasAnnotationKey)
+	return nil
+}
+
+// ResumeDeployment restores .spec.replicas from the value saved by SuspendDeployment.
+// If that annotation is absent, .spec.replicas is set to 1.
+func (c *K8sClient) ResumeDeployment(namespace, name string, ignoreNotFound bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	dep, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if ignoreNotFound && apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get deployment %s/%s: %w", namespace, name, err)
+	}
+
+	saved := ""
+	if dep.ObjectMeta.Annotations != nil {
+		saved = dep.ObjectMeta.Annotations[deploymentSuspendReplicasAnnotationKey]
+	}
+
+	replicas := int32(1)
+	if saved != "" {
+		n, err := strconv.ParseInt(saved, 10, 32)
+		if err != nil || n < 1 {
+			log.Warn("invalid saved replica count %q on %s/%s, defaulting to 1", saved, namespace, name)
+			n = 1
+		}
+		replicas = int32(n)
+		if dep.ObjectMeta.Annotations != nil {
+			delete(dep.ObjectMeta.Annotations, deploymentSuspendReplicasAnnotationKey)
+		}
+	} else {
+		log.Warn("deployment %s/%s has no %s annotation; scaling to 1 replica", namespace, name, deploymentSuspendReplicasAnnotationKey)
+	}
+
+	dep.Spec.Replicas = &replicas
+
+	if _, err := c.clientset.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("resume deployment %s/%s: %w", namespace, name, err)
+	}
+	log.Info("✓ Restored deployment %s/%s to %d replicas", namespace, name, replicas)
 	return nil
 }
 

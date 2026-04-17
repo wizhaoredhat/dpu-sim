@@ -66,16 +66,6 @@ func (m *CNIManager) installMultus(clusterName string) error {
 		return fmt.Errorf("multus pods are not ready: %w", err)
 	}
 
-	// Recreate CoreDNS after Multus is active so pods pick up stable CNI wiring.
-	if !m.config.IsOffloadDPU() {
-		if err := m.k8sClient.RolloutRestartDeployment("kube-system", "coredns"); err != nil {
-			log.Warn("failed to restart coredns after multus install: %v", err)
-		}
-		if err := m.k8sClient.WaitForDeploymentAvailable("kube-system", "coredns", 5*time.Minute); err != nil {
-			log.Warn("Warning: coredns deployment is not available after multus install: %v", err)
-		}
-	}
-
 	return nil
 }
 

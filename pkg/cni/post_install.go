@@ -19,8 +19,14 @@ import (
 // PostInstallPerCluster applies cluster-environment patches after the CNI, device plugin
 // (when applicable), and addons are installed on this cluster. For example, in
 // OVN-Kubernetes DPU-host mode it patches system Deployments so workloads request the simulated VF.
+// It then scales CoreDNS and local-path-provisioner to zero; PostInstall restores them.
 func (m *CNIManager) PostInstallPerCluster(clusterName string) error {
 	mode := m.detectOVNKMode(clusterName)
+
+	// During Cluster installation, we suspend CoreDNS and local-path-provisioner
+	// Because certain components may not be ready (such as OVN-K in DPU Host and DPU modes)
+	// TODO: This should be fixed in such a way that we can recover.
+	m.suspendCoreDNSAndLocalPathProvisioner()
 
 	if mode == ovnkModeDPUHost {
 		log.Info("\n=== Patching cluster environment on %s ===", clusterName)
@@ -29,39 +35,62 @@ func (m *CNIManager) PostInstallPerCluster(clusterName string) error {
 		}
 	}
 
-	m.RolloutRestartDeployments()
-
 	return nil
 }
 
 // PostInstall runs after every configured cluster has been installed successfully.
-// It restarts CoreDNS on each cluster so system pods pick up stable CNI wiring.
+// It restores CoreDNS and local-path-provisioner replica counts, then rollout-restarts
+// them so new pods pick up stable CNI wiring.
 func PostInstall(cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("cni post-install: config is nil")
 	}
 
-	log.Info("\n=== Post-install (all clusters): restarting deployments ===")
+	log.Info("\n=== Post-install (all clusters): restoring CoreDNS / local-path-provisioner and rolling out ===")
 	for _, clusterCfg := range cfg.ClustersOrderedForInstall() {
 		kubeconfigPath := k8s.GetKubeconfigPath(clusterCfg.Name, cfg.Kubernetes.GetKubeconfigDir())
 		cniMgr, err := NewCNIManagerWithKubeconfigFile(cfg, kubeconfigPath)
 		if err != nil {
 			return fmt.Errorf("cni post-install for cluster %s: %w", clusterCfg.Name, err)
 		}
-		log.Info("Rolling out deployments on cluster %s", clusterCfg.Name)
-		cniMgr.RolloutRestartDeployments()
+		log.Info("Resuming system deployments on cluster %s", clusterCfg.Name)
+		cniMgr.resumeCoreDNSAndLocalPathProvisioner()
+		cniMgr.rolloutRestartCoreDNSAndLocalPathProvisioner()
 	}
 
 	return nil
 }
 
-// RolloutRestartDeployments restarts CoreDNS and waits for it to be available
-func (m *CNIManager) RolloutRestartDeployments() {
-	if err := m.k8sClient.RolloutRestartDeployment("kube-system", "coredns"); err != nil {
+// suspendCoreDNSAndLocalPathProvisioner scales CoreDNS and local-path-provisioner
+// to zero
+func (m *CNIManager) suspendCoreDNSAndLocalPathProvisioner() {
+	if err := m.k8sClient.SuspendDeployment("kube-system", "coredns", false); err != nil {
+		log.Warn("failed to suspend coredns: %v", err)
+	}
+	if err := m.k8sClient.SuspendDeployment("local-path-storage", "local-path-provisioner", true); err != nil {
+		log.Warn("failed to suspend local-path-provisioner: %v", err)
+	}
+}
+
+// resumeCoreDNSAndLocalPathProvisioner scales CoreDNS and local-path-provisioner
+// back to the original replica count
+func (m *CNIManager) resumeCoreDNSAndLocalPathProvisioner() {
+	if err := m.k8sClient.ResumeDeployment("kube-system", "coredns", false); err != nil {
+		log.Warn("failed to resume coredns: %v", err)
+	}
+	if err := m.k8sClient.ResumeDeployment("local-path-storage", "local-path-provisioner", true); err != nil {
+		log.Warn("failed to resume local-path-provisioner: %v", err)
+	}
+}
+
+// rolloutRestartCoreDNSAndLocalPathProvisioner restarts CoreDNS and local-path-provisioner by bumping
+// the pod template restartedAt annotation.
+func (m *CNIManager) rolloutRestartCoreDNSAndLocalPathProvisioner() {
+	if err := m.k8sClient.RolloutRestartDeployment("kube-system", "coredns", false); err != nil {
 		log.Warn("failed to restart coredns: %v", err)
 	}
 
-	if err := m.k8sClient.RolloutRestartDeployment("local-path-storage", "local-path-provisioner"); err != nil {
+	if err := m.k8sClient.RolloutRestartDeployment("local-path-storage", "local-path-provisioner", true); err != nil {
 		log.Warn("failed to restart local-path-provisioner: %v", err)
 	}
 }
