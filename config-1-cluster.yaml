@@ -29,7 +29,7 @@ networks:
 vms:
   - name: "master-1"
     type: "host"
-    k8s_cluster: "cluster-1"
+    k8s_cluster: "dpu-sim"
     k8s_role: "master"
     k8s_node_mac: "52:54:00:00:01:11"
     k8s_node_ip: "192.168.123.11"
@@ -39,7 +39,7 @@ vms:
 
   - name: "host-1"
     type: "host"
-    k8s_cluster: "cluster-1"
+    k8s_cluster: "dpu-sim"
     k8s_role: "worker"
     k8s_node_mac: "52:54:00:00:01:12"
     k8s_node_ip: "192.168.123.12"
@@ -49,7 +49,7 @@ vms:
 
   - name: "dpu-1"
     type: "dpu"
-    k8s_cluster: "cluster-1"
+    k8s_cluster: "dpu-sim"
     k8s_role: "worker"
     k8s_node_mac: "52:54:00:00:01:13"
     k8s_node_ip: "192.168.123.13"
@@ -72,7 +72,7 @@ kubernetes:
   version: "1.33"
   kubeconfig_dir: "kubeconfig"
   clusters:
-    - name: "cluster-1"
+    - name: "dpu-sim"
       pod_cidr: "10.244.0.0/16"
       service_cidr: "10.245.0.0/16"
       cni: "ovn-kubernetes"

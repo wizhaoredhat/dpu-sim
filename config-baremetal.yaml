@@ -33,7 +33,7 @@ networks:
 vms:
   - name: master-1
     type: host
-    k8s_cluster: cluster-1
+    k8s_cluster: dpu-sim
     k8s_role: master
     k8s_node_mac: 52:54:00:00:01:11
     k8s_node_ip: 192.168.123.11
@@ -43,7 +43,7 @@ vms:
 
   - name: master-2
     type: host
-    k8s_cluster: cluster-1
+    k8s_cluster: dpu-sim
     k8s_role: master
     k8s_node_mac: 52:54:00:00:02:11
     k8s_node_ip: 192.168.123.12
@@ -53,7 +53,7 @@ vms:
 
   - name: master-3
     type: host
-    k8s_cluster: cluster-1
+    k8s_cluster: dpu-sim
     k8s_role: master
     k8s_node_mac: 52:54:00:00:03:11
     k8s_node_ip: 192.168.123.13
@@ -64,7 +64,7 @@ vms:
 baremetal:
   - name: "dh4"
     type: "host"
-    k8s_cluster: "cluster-1"
+    k8s_cluster: "dpu-sim"
     k8s_role: "worker"
     mgmt_ip: "${MGMT_IP}"
     node_ip: "${NODE_IP}"
@@ -87,7 +87,7 @@ kubernetes:
   version: 1.33
   kubeconfig_dir: kubeconfig
   clusters:
-    - name: cluster-1
+    - name: dpu-sim
       pod_cidr: 10.244.0.0/16
       service_cidr: 10.245.0.0/16
       cni: flannel
