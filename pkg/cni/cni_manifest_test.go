@@ -25,16 +25,34 @@ func TestShouldUseWritableCNIBinDir(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "vm mode patches manifests to var lib cni bin",
+			name: "vm mode uses default upstream cni paths",
 			cfg: &config.Config{
 				VMs: []config.VMConfig{{Name: "vm1"}},
+			},
+			want: false,
+		},
+		{
+			name: "bare metal without bootc uses default upstream cni paths",
+			cfg: &config.Config{
+				BareMetal: []config.BareMetalConfig{{Name: "n1"}},
+			},
+			want: false,
+		},
+		{
+			name: "operating_system image_ref uses writable cni bin",
+			cfg: &config.Config{
+				VMs:             []config.VMConfig{{Name: "vm1"}},
+				OperatingSystem: config.OSConfig{ImageRef: "quay.io/example/os:latest"},
 			},
 			want: true,
 		},
 		{
-			name: "bare metal mode patches manifests to var lib cni bin",
+			name: "bare metal bootc uses writable cni bin",
 			cfg: &config.Config{
-				BareMetal: []config.BareMetalConfig{{Name: "n1"}},
+				BareMetal: []config.BareMetalConfig{{
+					Name:  "n1",
+					Bootc: &config.BareMetalBootcConfig{Enabled: true},
+				}},
 			},
 			want: true,
 		},

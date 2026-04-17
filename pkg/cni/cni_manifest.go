@@ -17,18 +17,12 @@ func (m *CNIManager) shouldUseWritableCNIBinDir() bool {
 		return false
 	}
 
-	// VM and bare-metal installs run linux.EnsureCRIOCNIPluginPaths: it copies
-	// plugins into /var/lib/cni/bin and (when possible) symlinks the same names
-	// under /opt/cni/bin -> /usr/libexec/cni/... Multus thick defaults to
-	// binDir /opt/cni/bin; delegate plugins run from the Multus pod mount namespace.
-	// Symlinks under /opt/cni/bin then break: the target path is not mounted in
-	// the pod, so libcni reports e.g. "failed to find plugin portmap" even though
-	// `ls /opt/cni/bin/portmap` on the host succeeds. /var/lib/cni/bin holds real
-	// file copies, so point Multus/Flannel/Whereabouts there.
-	if m.config.IsVMMode() {
-		return true
-	}
-
+	// Read-only / bootc hosts: stage CNI binaries under /var/lib/cni/bin and point
+	// Multus there. Normal VM installs mirror packaged plugins into /opt/cni/bin
+	// with real copies (linux.EnsureCRIOCNIPluginPaths) so Multus thick can use
+	// default binDir /opt/cni/bin: symlinks would break inside the Multus mount
+	// namespace, and OVN-Kubernetes only installs ovn-k8s-cni-overlay under
+	// /opt/cni/bin — that binary is absent from /var/lib/cni/bin.
 	if strings.TrimSpace(m.config.OperatingSystem.ImageRef) != "" {
 		return true
 	}

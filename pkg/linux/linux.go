@@ -262,10 +262,9 @@ func InstallCRIO(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg 
 		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "cri-o", "iproute-tc", "containernetworking-plugins"); err != nil {
 			return fmt.Errorf("failed to install CRI-O: %w", err)
 		}
-		// On Fedora, CNI plugins are installed to /usr/libexec/cni/. Always mirror
-		// plugins into /var/lib/cni/bin and pin CRI-O plugin_dirs order so all nodes
-		// resolve plugins consistently (important for mixed writable/read-only roots).
-		// Keep /opt/cni/bin symlinks best-effort only for compatibility.
+		// On Fedora, CNI plugins are installed to /usr/libexec/cni/. Mirror them into
+		// /var/lib/cni/bin and (when writable) into /opt/cni/bin with real copies so
+		// Multus thick's hostPath mount resolves delegates; pin CRI-O plugin_dirs order.
 		if err := EnsureCRIOCNIPluginPaths(cmdExec); err != nil {
 			return err
 		}
@@ -331,10 +330,10 @@ if [ "$SRC" = "/usr/libexec/cni" ] && sudo mkdir -p /opt/cni/bin 2>/dev/null; th
     sudo rm -f /opt/cni/bin/.dpu-sim-write-test
     for plugin in /usr/libexec/cni/*; do
       [ -e "$plugin" ] || continue
-      sudo ln -snf "$plugin" "/opt/cni/bin/$(basename "$plugin")"
+      sudo cp -f "$plugin" "/opt/cni/bin/$(basename "$plugin")"
     done
   else
-    echo "info: /opt/cni/bin not writable; skipping symlink step" >&2
+    echo "info: /opt/cni/bin not writable; skipping mirror and copy step" >&2
   fi
 fi`, 1*time.Minute); err != nil {
 		return fmt.Errorf("failed to ensure CNI plugin paths: %w, stderr: %s", err, stderr)
