@@ -124,7 +124,7 @@ func (m *KindManager) setupOVNKubernetesOffloadToDPUOVS(dpuClusterName string) e
 	}
 
 	for _, pair := range pairs {
-		dpuExec := platform.NewDockerExecutor(pair.DPUNode)
+		dpuExec := platform.NewDockerExecutor(pair.DPUNode, m.containerBin)
 
 		encapIP, err := m.getContainerIP(pair.DPUNode)
 		if err != nil {

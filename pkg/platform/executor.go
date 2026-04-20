@@ -449,17 +449,20 @@ func (e *SSHExecutor) String() string {
 	return fmt.Sprintf("ssh://%s@%s", e.config.User, e.ip)
 }
 
-// DockerExecutor executes commands inside a Docker container
+// DockerExecutor executes commands inside a container via docker or podman
 type DockerExecutor struct {
 	containerID  string
+	containerBin string // "docker" or "podman"
 	cachedDistro *Distro
 	cachedSudo   *bool
 }
 
-// NewDockerExecutor creates a new DockerExecutor for a specific container
-func NewDockerExecutor(containerID string) *DockerExecutor {
+// NewDockerExecutor creates a new DockerExecutor for a specific container.
+// containerBin selects the container runtime ("docker" or "podman").
+func NewDockerExecutor(containerID, containerBin string) *DockerExecutor {
 	return &DockerExecutor{
-		containerID: containerID,
+		containerID:  containerID,
+		containerBin: containerBin,
 	}
 }
 
@@ -487,7 +490,7 @@ func (e *DockerExecutor) rawExecuteWithTimeout(command string, timeout time.Dura
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "exec", e.containerID, "sh", "-c", command)
+	cmd := exec.CommandContext(ctx, e.containerBin, "exec", e.containerID, "sh", "-c", command)
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
@@ -512,7 +515,7 @@ func (e *DockerExecutor) RunCmd(level log.Level, name string, args ...string) er
 	dockerArgs := []string{"exec", e.containerID, name}
 	dockerArgs = append(dockerArgs, args...)
 
-	cmd := exec.Command("docker", dockerArgs...)
+	cmd := exec.Command(e.containerBin, dockerArgs...)
 
 	// If the requested level is visible, stream to stdout/stderr
 	if level <= log.GetLevel() {
@@ -543,7 +546,7 @@ func (e *DockerExecutor) RunCmdInDir(level log.Level, dir string, name string, a
 	}
 
 	dockerArgs := []string{"exec", e.containerID, "sh", "-c", command}
-	cmd := exec.Command("docker", dockerArgs...)
+	cmd := exec.Command(e.containerBin, dockerArgs...)
 
 	// If the requested level is visible, stream to stdout/stderr
 	if level <= log.GetLevel() {
@@ -585,7 +588,7 @@ func (e *DockerExecutor) ReadFile(path string) ([]byte, error) {
 // WriteFile writes content to a file inside the container
 func (e *DockerExecutor) WriteFile(path string, content []byte, mode os.FileMode) error {
 	// Use docker cp via stdin
-	cmd := exec.Command("docker", "exec", "-i", e.containerID, "sh", "-c",
+	cmd := exec.Command(e.containerBin, "exec", "-i", e.containerID, "sh", "-c",
 		fmt.Sprintf("cat > '%s' && chmod %o '%s'", path, mode, path))
 
 	stdin, err := cmd.StdinPipe()
@@ -635,5 +638,5 @@ func (e *DockerExecutor) GetArchitecture() (Architecture, error) {
 
 // String returns a description of this executor
 func (e *DockerExecutor) String() string {
-	return fmt.Sprintf("docker://%s", e.containerID)
+	return fmt.Sprintf("%s://%s", e.containerBin, e.containerID)
 }

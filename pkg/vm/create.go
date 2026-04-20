@@ -33,7 +33,7 @@ func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
 		return fmt.Errorf("failed to create VM disk: %w", err)
 	}
 
-	cloudInitPath, err := CreateCloudInitISO(vmCfg.Name, m.config.SSH, vmCfg, m.config)
+	cloudInitPath, err := CreateCloudInitISO(m.config.SSH, vmCfg, m.config)
 	if err != nil {
 		return fmt.Errorf("failed to create cloud-init ISO: %w", err)
 	}
@@ -145,7 +145,7 @@ func hostArchSpec(hostArch platform.Architecture) (archSpec, error) {
 			enableACPI:  true,
 		}, nil
 	default:
-		return archSpec{}, fmt.Errorf("unsupported Architecure: %v", hostArch)
+		return archSpec{}, fmt.Errorf("unsupported Architecture: %v", hostArch)
 	}
 }
 
@@ -169,7 +169,7 @@ func resolveQEMUEmulator(hostArch platform.Architecture) (string, error) {
 			"qemu-system-aarch64",
 		}
 	default:
-		return "", fmt.Errorf("unsupported Architecure: %v", hostArch)
+		return "", fmt.Errorf("unsupported Architecture: %v", hostArch)
 	}
 
 	emulator, ok := resolveFirstAvailableEmulator(candidates, fileExists, exec.LookPath)
@@ -249,7 +249,7 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func fileSize(path string) int64 {
+func fileSize(path string) int64 { //nolint:unused
 	info, err := os.Stat(path)
 	if err != nil {
 		return 0

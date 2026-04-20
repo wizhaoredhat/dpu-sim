@@ -46,6 +46,12 @@ func detectContainerBin() (string, []cluster.ProviderOption) {
 	}
 }
 
+// ContainerBin returns the container runtime binary ("docker" or "podman")
+// selected at startup for this manager.
+func (m *KindManager) ContainerBin() string {
+	return m.containerBin
+}
+
 // NewKindManager creates a new Kind cluster manager
 func NewKindManager(cfg *config.Config) *KindManager {
 	bin, opts := detectContainerBin()

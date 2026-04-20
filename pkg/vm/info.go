@@ -202,7 +202,7 @@ func (m *VMManager) GetVMInfo(vmName string, networkType string) (*VMInfo, error
 
 	return &VMInfo{
 		Name:      vmName,
-		State:     libvirtStateToVMState(libvirt.DomainState(state)),
+		State:     libvirtStateToVMState(state),
 		IP:        ip,
 		VCPUs:     info.NrVirtCpu,
 		MemoryMB:  info.Memory / 1024,

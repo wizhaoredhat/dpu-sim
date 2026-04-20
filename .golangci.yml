@@ -1,0 +1,48 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - copyloopvar
+    - misspell
+    - unconvert
+  exclusions:
+    # std-error-handling covers common deferred close/io patterns
+    presets:
+      - std-error-handling
+    rules:
+      # Test helper types intentionally defined for future use
+      - path: _test\.go
+        linters:
+          - unused
+      # Deprecated API warnings tracked as separate refactoring tasks
+      - linters:
+          - staticcheck
+        text: "SA1019:"
+      # Pure style quickfix suggestions are advisory, not enforced
+      - linters:
+          - staticcheck
+        text: "^QF"
+      # libvirt resource cleanup (Free) — idiomatic to ignore in defer
+      - linters:
+          - errcheck
+        text: "Free"
+      # Signal sent to SSH session on cleanup — safe to ignore
+      - linters:
+          - errcheck
+        text: "Signal"
+      # Network command runner — best-effort veth setup, non-fatal
+      - linters:
+          - errcheck
+        text: "RunCmd"
+      # K8s taint removal — non-fatal cleanup step
+      - linters:
+          - errcheck
+        text: "RemoveNodeTaint"
+
+formatters:
+  enable:
+    - gofmt

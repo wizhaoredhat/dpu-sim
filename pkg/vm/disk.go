@@ -469,8 +469,8 @@ func imageVirtualSizeBytes(imagePath string) (int64, error) {
 
 // CreateCloudInitISO creates a cloud-init ISO for VM initialization.
 // If cfg is non-nil, udev rules are added to rename interfaces by MAC to common names (mgmt, k8s, eth0-0, rep0-0, etc.).
-func CreateCloudInitISO(vmName string, sshConfig config.SSHConfig, vmConfig config.VMConfig, cfg *config.Config) (string, error) {
-	vmName = vmConfig.Name
+func CreateCloudInitISO(sshConfig config.SSHConfig, vmConfig config.VMConfig, cfg *config.Config) (string, error) {
+	vmName := vmConfig.Name
 	isoPath := filepath.Join(DefaultImageDir, fmt.Sprintf("%s-cloud-init.iso", vmName))
 
 	if _, err := os.Stat(isoPath); err == nil {

@@ -1,0 +1,82 @@
+name: Kind Mode
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install libvirt development headers
+        run: sudo apt-get update && sudo apt-get install -y libvirt-dev
+
+      - name: Install kind
+        run: |
+          KIND_VERSION=v0.31.0
+          curl -fsSLo /tmp/kind-linux-amd64 "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLo /tmp/kind-linux-amd64.sha256sum "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          (cd /tmp && sha256sum -c kind-linux-amd64.sha256sum)
+          chmod +x /tmp/kind-linux-amd64
+          sudo mv /tmp/kind-linux-amd64 /usr/local/bin/kind
+
+      - name: Build dpu-sim
+        run: make build
+
+      - name: Disable containerd image store
+        # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+        # Docker 27+ on ubuntu-24.04 enables the containerd snapshotter by default,
+        # which prevents kind from loading images into the cluster.
+        run: |
+          sudo mkdir -p /etc/docker
+          [ -s "/etc/docker/daemon.json" ] && {
+            cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+          } || {
+            echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+          }
+          sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Deploy kind clusters (infrastructure only, skip CNI)
+        run: ./bin/dpu-sim --config config-kind-ci.yaml --skip-k8s
+
+      - name: Verify clusters are running
+        run: |
+          # dpu-sim saves kubeconfigs to kubeconfig/ during deployment.
+          # Using them directly avoids a dependency on the kind CLI's container
+          # runtime provider matching what dpu-sim detected (docker vs podman).
+          # Nodes are NotReady: dpu-sim disables kindnet in favour of OVN-Kubernetes,
+          # which is installed separately. With --skip-k8s we verify node registration only.
+          kubectl get nodes --kubeconfig kubeconfig/dpu-sim-host-kind.kubeconfig
+          kubectl get nodes --kubeconfig kubeconfig/dpu-sim-dpu-kind.kubeconfig
+
+      - name: Export kind logs on failure
+        if: failure()
+        run: |
+          kind export logs /tmp/kind-logs --name dpu-sim-host-kind 2>/dev/null || true
+          kind export logs /tmp/kind-logs --name dpu-sim-dpu-kind 2>/dev/null || true
+
+      - name: Upload kind logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kind-logs
+          path: /tmp/kind-logs
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: ./bin/dpu-sim --config config-kind-ci.yaml --cleanup || true

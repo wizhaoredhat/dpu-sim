@@ -33,7 +33,7 @@ func (m *CNIManager) InstallCNI(cniType config.CNIType, clusterName string, k8sI
 		if m.config.IsKindMode() {
 			log.Info("Kindnet is the default CNI for Kind clusters, no installation needed")
 		} else {
-			return fmt.Errorf("Kindnet is not supported for cluster %s", clusterName)
+			return fmt.Errorf("kindnet is not supported for cluster %s", clusterName)
 		}
 	default:
 		return fmt.Errorf("unsupported CNI type: %s", cniType)

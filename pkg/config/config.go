@@ -91,7 +91,7 @@ func (c *Config) validateAndSetDefaults() error {
 			if c.Networks[i].Mode == "" {
 				c.Networks[i].Mode = "nat"
 			}
-			if c.Networks[i].UseOVS == false {
+			if !c.Networks[i].UseOVS {
 				c.Networks[i].UseOVS = false
 			}
 			if c.Networks[i].AttachTo == "" {

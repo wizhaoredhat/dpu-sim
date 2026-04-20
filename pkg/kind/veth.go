@@ -79,8 +79,8 @@ func (m *KindManager) CreateVethTopology(cmdExec platform.CommandExecutor, pairs
 			return fmt.Errorf("failed to get PID for DPU container %s: %w", pair.DPUNode, err)
 		}
 
-		hostContainerExec := platform.NewDockerExecutor(pair.HostNode)
-		dpuContainerExec := platform.NewDockerExecutor(pair.DPUNode)
+		hostContainerExec := platform.NewDockerExecutor(pair.HostNode, m.containerBin)
+		dpuContainerExec := platform.NewDockerExecutor(pair.DPUNode, m.containerBin)
 
 		if err := createDataVeths(cmdExec, hostContainerExec, dpuContainerExec, pair.HostNode, pair.DPUNode, pairIdx, hostPID, dpuPID, numPairs); err != nil {
 			return fmt.Errorf("failed to create data veths for pair %d: %w", pairIdx, err)
@@ -172,7 +172,7 @@ func (m *KindManager) GetKindSubnetAndAllocatedIPs() (*net.IPNet, []net.IP) {
 		}
 		for _, node := range nodes {
 			name := node.String()
-			ip, ipNet, err := getKindNodeNetworkCIDR(platform.NewDockerExecutor(name))
+			ip, ipNet, err := getKindNodeNetworkCIDR(platform.NewDockerExecutor(name, m.containerBin))
 			if err != nil {
 				log.Warn("Could not read eth0 from %s: %v", name, err)
 				continue
