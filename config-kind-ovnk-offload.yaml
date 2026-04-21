@@ -63,3 +63,26 @@ registry:
     - name: "ovn-kube"
       cni: "ovn-kubernetes"
       tag: "ovn-kube:dpu-sim"
+
+
+tft:
+  - name: "Test 1"
+    namespace: "default"
+    test_cases: "1-24"
+    duration: "10"
+    pre_provision: "true"
+    connections:
+      - name: "Connection_1"
+        type: "iperf-tcp"
+        instances: 1
+        server:
+          - name: "dpu-sim-host-worker"
+            persistent: "false"
+            sriov: "true"
+            default_network: "default/ovn-primary"
+        client:
+          - name: "dpu-sim-host-worker2"
+            sriov: "true"
+            default_network: "default/ovn-primary"
+        resource_name: "dpusim.io/vf"
+kubeconfig: "kubeconfig/dpu-sim-host.kubeconfig"
