@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -652,4 +653,44 @@ func TestValidateRegistryInsecureEndpoints(t *testing.T) {
 	err := cfg.validateAndSetDefaults()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "registry.insecure_endpoints[0]")
+}
+
+func TestLoadConfigKindWithTrafficFlowFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	content := `
+networks:
+  - name: "host-to-dpu-link"
+    type: "HostToDpu"
+    num_pairs: 1
+kind:
+  nodes:
+    - name: "cp"
+      k8s_role: "control-plane"
+      k8s_cluster: "dpu-sim-host"
+kubernetes:
+  version: "1.33"
+  clusters:
+    - name: "dpu-sim-host"
+      cni: "ovn-kubernetes"
+operating_system:
+  image_name: "unused-in-kind"
+ssh:
+  user: "root"
+  key_path: "/tmp/dpu-sim-test-key"
+tft:
+  - name: "Test 1"
+    namespace: "default"
+    test_cases: "1"
+    duration: "5"
+    connections: []
+kubeconfig: "kc/host.kubeconfig"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+	cfg, err := LoadConfig(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.TFT)
+	require.NotNil(t, cfg.TFT.Node())
+	assert.Equal(t, yaml.SequenceNode, cfg.TFT.Node().Kind)
+	assert.Equal(t, "kc/host.kubeconfig", cfg.TrafficFlowTestsKubeconfig)
 }

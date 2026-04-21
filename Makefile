@@ -1,4 +1,4 @@
-.PHONY: build test clean install lint fmt vet help
+.PHONY: build test clean install lint fmt vet help tft-venv tft-run
 
 # Binary names
 BINARIES = dpu-sim vmctl
@@ -108,6 +108,15 @@ deps: ## Download dependencies
 help: ## Display this help message
 	@echo "DPU Simulator - Makefile commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# Traffic flow tests (kubernetes-traffic-flow-tests submodule; Kind or VM config)
+CONFIG ?= config-kind-ovnk-offload.yaml
+
+tft-venv: build ## Create TFT Python venv (needs Python >= 3.11; pass PYTHON= if needed)
+	./bin/dpu-sim tft venv --config "$(CONFIG)"
+
+tft-run: build ## Run TFT via dpu-sim (set CONFIG=path/to.yaml; uses submodule .tft-venv if present)
+	./bin/dpu-sim tft run --config "$(CONFIG)"
 
 # Default target
 .DEFAULT_GOAL := help
