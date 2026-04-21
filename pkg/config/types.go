@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"net"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -53,6 +55,33 @@ type Config struct {
 	SSH             SSHConfig         `yaml:"ssh"`
 	Kubernetes      KubernetesConfig  `yaml:"kubernetes"`
 	Registry        *RegistryConfig   `yaml:"registry,omitempty"`
+	// TFT is the kubernetes-traffic-flow-tests "tft" document subtree (optional).
+	// Used by `dpu-sim tft run` to generate a TFT config when --tft-config is not set.
+	TFT *TrafficFlowTestsSubtree `yaml:"tft,omitempty"`
+	// TrafficFlowTestsKubeconfig is the kubeconfig path for TFT (yaml key "kubeconfig").
+	// When empty, tft run defaults to the first kubernetes.clusters entry (Kind or VM).
+	TrafficFlowTestsKubeconfig string `yaml:"kubeconfig,omitempty"`
+}
+
+// TrafficFlowTestsSubtree holds the raw tft: YAML value (sequence or mapping) for the TFT harness.
+type TrafficFlowTestsSubtree struct {
+	n yaml.Node
+}
+
+func (t *TrafficFlowTestsSubtree) UnmarshalYAML(value *yaml.Node) error {
+	if value == nil {
+		return nil
+	}
+	t.n = *value
+	return nil
+}
+
+// Node returns the decoded tft subtree, or nil if unset.
+func (t *TrafficFlowTestsSubtree) Node() *yaml.Node {
+	if t == nil || t.n.Kind == 0 {
+		return nil
+	}
+	return &t.n
 }
 
 // RegistryConfig represents the local container registry configuration.

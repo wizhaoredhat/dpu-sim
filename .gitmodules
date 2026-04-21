@@ -1,3 +1,6 @@
 [submodule "ovn-kubernetes"]
 	path = ovn-kubernetes
 	url = https://github.com/ovn-org/ovn-kubernetes.git
+[submodule "kubernetes-traffic-flow-tests"]
+	path = kubernetes-traffic-flow-tests
+	url = https://github.com/ovn-kubernetes/kubernetes-traffic-flow-tests
