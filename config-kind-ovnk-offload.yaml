@@ -59,6 +59,7 @@ kubernetes:
         - multus
 
 registry:
+  enabled: false
   containers:
     - name: "ovn-kube"
       cni: "ovn-kubernetes"

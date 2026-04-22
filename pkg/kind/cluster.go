@@ -169,17 +169,20 @@ func (m *KindManager) InstallCNI() error {
 
 		if needsOVNK {
 			regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
-			if regContainer == nil {
+			switch {
+			case regContainer == nil:
 				if err := m.PullAndLoadImage(clusterCfg.Name, cni.DefaultOVNImage); err != nil {
 					return fmt.Errorf("failed to load OVN-Kubernetes image: %w", err)
 				}
 				if m.config.IsOffloadDPU() {
-					if err := m.PullAndLoadImage(clusterCfg.Name, deviceplugin.DevicePluginImage); err != nil {
+					if err := m.PullAndLoadImage(clusterCfg.Name, deviceplugin.DefaultDevicePluginImage); err != nil {
 						return fmt.Errorf("failed to load device plugin image: %w", err)
 					}
 				}
-			} else {
+			case m.config.IsRegistryEnabled():
 				log.Info("Using local registry image for OVN-Kubernetes (tag: %s)", regContainer.Tag)
+			default:
+				log.Info("OVN-Kubernetes image was built and loaded into Kind (registry disabled; tag: %s)", regContainer.Tag)
 			}
 		}
 
@@ -411,34 +414,57 @@ func (m *KindManager) GetKubeconfigContent(name string) (string, error) {
 	return m.provider.KubeConfig(name, false)
 }
 
-// LoadImage loads a Docker image into a Kind cluster
+// kindCLIEnv is the environment for external `kind` subprocesses. The in-process
+// cluster.Provider may use Podman (ProviderWithPodman); the kind CLI defaults to
+// Docker unless KIND_EXPERIMENTAL_PROVIDER is set, which breaks load/list against
+// Podman-backed clusters ("no nodes found for cluster ...").
+func (m *KindManager) kindCLIEnv() []string {
+	env := os.Environ()
+	if m.containerBin == "podman" {
+		return append(env, "KIND_EXPERIMENTAL_PROVIDER=podman")
+	}
+	return env
+}
+
+// LoadImage loads a container image from the local runtime (same engine Kind uses:
+// docker or podman) into a Kind cluster.
+//
+// We use "kind load image-archive" after a local "docker/podman save" instead of
+// "kind load docker-image" because the latter only consults the Docker daemon's
+// classic image list. That breaks when images live only in the containerd image
+// store (Docker 27+ default; see kubernetes-sigs/kind#3795) or when images were
+// built with Podman while Kind is configured for the podman provider.
 func (m *KindManager) LoadImage(clusterName, imageName string) error {
 	if !m.ClusterExists(clusterName) {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
-	log.Info("Loading image %s into cluster %s...", imageName, clusterName)
+	log.Info("Loading image %s into cluster %s (via %s save + kind load image-archive)...", imageName, clusterName, m.containerBin)
 
-	// Get the nodes for this cluster
-	nodes, err := m.provider.ListNodes(clusterName)
+	tmpFile, err := os.CreateTemp("", "dpu-sim-kind-image-*.tar")
 	if err != nil {
-		return fmt.Errorf("failed to list nodes for cluster %s: %w", clusterName, err)
+		return fmt.Errorf("create temp file for kind image load: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close temp file for kind image load: %w", err)
+	}
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	saveCmd := exec.Command(m.containerBin, "save", "-o", tmpPath, imageName)
+	saveCmd.Stdout = os.Stdout
+	saveCmd.Stderr = os.Stderr
+	if err := saveCmd.Run(); err != nil {
+		return fmt.Errorf("failed to save image %q with %s: %w", imageName, m.containerBin, err)
 	}
 
-	// Convert nodes to node names for LoadImageArchive
-	nodeNames := make([]string, len(nodes))
-	for i, node := range nodes {
-		nodeNames[i] = node.String()
-	}
-
-	// Use the provider's internal node loading - fall back to exec for now
-	// as the library doesn't expose a simple LoadImage function
-	cmd := exec.Command("kind", "load", "docker-image", imageName, "--name", clusterName)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to load image %s: %w", imageName, err)
+	loadCmd := exec.Command("kind", "load", "image-archive", tmpPath, "--name", clusterName)
+	loadCmd.Env = m.kindCLIEnv()
+	loadCmd.Stdout = os.Stdout
+	loadCmd.Stderr = os.Stderr
+	if err := loadCmd.Run(); err != nil {
+		return fmt.Errorf("failed to kind load image archive for %s: %w", imageName, err)
 	}
 
 	log.Info("✓ Loaded image: %s", imageName)

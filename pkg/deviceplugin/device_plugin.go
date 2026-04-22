@@ -18,6 +18,7 @@ import (
 
 const (
 	DevicePluginImage         = "dpu-sim-dp:latest"
+	DefaultDevicePluginImage  = "quay.io/wizhao/dpu-sim-dp:latest"
 	DevicePluginDaemonSetName = "dpu-sim-device-plugin"
 	DevicePluginNamespace     = "kube-system"
 

@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 )
 
 // deploymentSuspendReplicasAnnotationKey stores the pre-scale-down replica count
@@ -443,80 +444,86 @@ func (c *K8sClient) GetNode(name string) (*corev1.Node, error) {
 
 // LabelNode adds or updates labels on a node
 func (c *K8sClient) LabelNode(name string, labels map[string]string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get node %s: %w", name, err)
-	}
+		node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get node %s: %w", name, err)
+		}
 
-	if node.Labels == nil {
-		node.Labels = make(map[string]string)
-	}
-	for k, v := range labels {
-		node.Labels[k] = v
-	}
+		if node.Labels == nil {
+			node.Labels = make(map[string]string)
+		}
+		for k, v := range labels {
+			node.Labels[k] = v
+		}
 
-	_, err = c.clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		_, err = c.clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update node %s labels: %w", name, err)
 	}
-
 	return nil
 }
 
 // AnnotateNode adds or updates annotations on a node
 func (c *K8sClient) AnnotateNode(name string, annotations map[string]string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get node %s: %w", name, err)
-	}
+		node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get node %s: %w", name, err)
+		}
 
-	if node.Annotations == nil {
-		node.Annotations = make(map[string]string)
-	}
-	for k, v := range annotations {
-		node.Annotations[k] = v
-	}
+		if node.Annotations == nil {
+			node.Annotations = make(map[string]string)
+		}
+		for k, v := range annotations {
+			node.Annotations[k] = v
+		}
 
-	_, err = c.clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		_, err = c.clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update node %s annotations: %w", name, err)
 	}
-
 	return nil
 }
 
 // RemoveNodeTaint removes a taint from a node by key and effect (best effort, ignores if not found)
 func (c *K8sClient) RemoveNodeTaint(name string, taintKey string, effect corev1.TaintEffect) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get node %s: %w", name, err)
-	}
-
-	// Filter out the taint we want to remove
-	newTaints := []corev1.Taint{}
-	for _, taint := range node.Spec.Taints {
-		if taint.Key == taintKey && taint.Effect == effect {
-			continue // Skip this taint (remove it)
+		node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get node %s: %w", name, err)
 		}
-		newTaints = append(newTaints, taint)
-	}
 
-	node.Spec.Taints = newTaints
+		// Filter out the taint we want to remove
+		newTaints := []corev1.Taint{}
+		for _, taint := range node.Spec.Taints {
+			if taint.Key == taintKey && taint.Effect == effect {
+				continue // Skip this taint (remove it)
+			}
+			newTaints = append(newTaints, taint)
+		}
 
-	_, err = c.clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		node.Spec.Taints = newTaints
+
+		_, err = c.clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update node %s taints: %w", name, err)
 	}
-
 	return nil
 }
 

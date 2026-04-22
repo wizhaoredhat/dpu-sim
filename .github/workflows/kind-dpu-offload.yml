@@ -1,4 +1,4 @@
-name: Kind Mode
+name: Kind Mode DPU Offload
 
 on:
   pull_request:
@@ -7,15 +7,19 @@ on:
       - main
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: kind-dpu-offload-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  kind-test:
+  kind-dpu-offload:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Checkout OVN-Kubernetes submodule
+        run: git submodule update --init --recursive ovn-kubernetes
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -25,6 +29,9 @@ jobs:
 
       - name: Install libvirt development headers
         run: sudo apt-get update && sudo apt-get install -y libvirt-dev
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
 
       - name: Install kind
         run: |
@@ -52,33 +59,30 @@ jobs:
           sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
           sudo systemctl restart docker
 
-      - name: Deploy kind clusters (infrastructure only, skip CNI)
-        run: ./bin/dpu-sim --config config-kind-ci.yaml --skip-k8s
+      - name: Deploy Kind clusters (OVN-Kubernetes from submodule source)
+        run: ./bin/dpu-sim --config config-kind-ovnk-offload.yaml
 
-      - name: Verify clusters are running
+      - name: Verify clusters are ready
         run: |
-          # dpu-sim saves kubeconfigs to kubeconfig/ during deployment.
-          # Using them directly avoids a dependency on the kind CLI's container
-          # runtime provider matching what dpu-sim detected (docker vs podman).
-          # Nodes are NotReady: dpu-sim disables kindnet in favour of OVN-Kubernetes,
-          # which is installed separately. With --skip-k8s we verify node registration only.
-          kubectl get nodes --kubeconfig kubeconfig/dpu-sim-host-kind.kubeconfig
-          kubectl get nodes --kubeconfig kubeconfig/dpu-sim-dpu-kind.kubeconfig
+          kubectl wait --for=condition=Ready nodes --all \
+            --kubeconfig kubeconfig/dpu-sim-host.kubeconfig --timeout=25m
+          kubectl wait --for=condition=Ready nodes --all \
+            --kubeconfig kubeconfig/dpu-sim-dpu.kubeconfig --timeout=25m
 
       - name: Export kind logs on failure
         if: failure()
         run: |
-          kind export logs /tmp/kind-logs --name dpu-sim-host-kind 2>/dev/null || true
-          kind export logs /tmp/kind-logs --name dpu-sim-dpu-kind 2>/dev/null || true
+          kind export logs /tmp/kind-offload-logs --name dpu-sim-host-kind 2>/dev/null || true
+          kind export logs /tmp/kind-offload-logs --name dpu-sim-dpu-kind 2>/dev/null || true
 
       - name: Upload kind logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: kind-logs
-          path: /tmp/kind-logs
+          name: kind-dpu-offload-logs
+          path: /tmp/kind-offload-logs
           if-no-files-found: ignore
 
       - name: Cleanup
         if: always()
-        run: ./bin/dpu-sim --config config-kind-ci.yaml --cleanup || true
+        run: ./bin/dpu-sim --config config-kind-ovnk-offload.yaml --cleanup || true

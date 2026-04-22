@@ -85,8 +85,11 @@ func (t *TrafficFlowTestsSubtree) Node() *yaml.Node {
 }
 
 // RegistryConfig represents the local container registry configuration.
-// When specified, a local Docker registry is started and made accessible
-// to nodes in both VM and Kind modes.
+// With registry.enabled true (default when omitted), dpu-sim starts a local
+// registry, builds configured images, and pushes them for cluster pulls.
+//
+// With registry.enabled false in Kind mode, dpu-sim still builds those images
+// but loads them into Kind nodes ("kind load") instead of using a registry.
 type RegistryConfig struct {
 	// Enabled controls whether dpu-sim should manage the local registry.
 	// Defaults to true when the registry section is present.

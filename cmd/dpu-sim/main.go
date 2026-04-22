@@ -278,6 +278,9 @@ func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryMana
 
 	if !skipK8s {
 		log.Info("\n=== Installing CNI ===")
+		if err := buildAndLoadKindRegistryImages(cfg, kindMgr); err != nil {
+			return fmt.Errorf("failed to build/load registry images into Kind: %w", err)
+		}
 		if err := doKindInstallCNI(kindMgr); err != nil {
 			return fmt.Errorf("CNI installation failed: %w", err)
 		}
@@ -371,6 +374,21 @@ func doVMInstallK8s(vmMgr *vm.VMManager) error {
 		return fmt.Errorf("failed to setup Kubernetes clusters: %w", err)
 	}
 
+	return nil
+}
+
+func buildAndLoadKindRegistryImages(cfg *config.Config, kindMgr *kind.KindManager) error {
+	if !(cfg.IsRegistryImageBuildOnly() && cfg.IsKindMode()) {
+		return nil
+	}
+	localExec := platform.NewLocalExecutor()
+	engine, err := containerengine.NewProjectEngine(localExec)
+	if err != nil {
+		return fmt.Errorf("failed to select container engine: %w", err)
+	}
+	if err := kindMgr.BuildAndLoadImagesFromRegistryConfig(localExec, engine); err != nil {
+		return fmt.Errorf("failed to build/load registry images into Kind: %w", err)
+	}
 	return nil
 }
 
