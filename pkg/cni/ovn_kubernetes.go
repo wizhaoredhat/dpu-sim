@@ -156,25 +156,33 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) erro
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
-	engine, err := containerengine.NewProjectEngine(localExec)
-	if err != nil {
-		return fmt.Errorf("failed to create project engine: %w", err)
-	}
-
-	if err := BuildOVNKubernetesImageWithEngine(localExec, engine, DefaultOVNKubeImage, ""); err != nil {
-		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
-	}
-
-	dpImageRef := deviceplugin.DevicePluginImage
-	if m.config.IsOffloadDPU() && m.config.HasRegistry() {
-		dpImageRef = m.config.GetRegistryImageRef(deviceplugin.DevicePluginImage)
-	}
-
-	ovnImage := DefaultOVNImage
 	regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
+	needsInstallTimeOVNKBuild := regContainer != nil &&
+		!m.config.IsRegistryEnabled() &&
+		!(m.config.IsRegistryImageBuildOnly() && m.config.IsKindMode())
+	if needsInstallTimeOVNKBuild {
+		engine, err := containerengine.NewProjectEngine(localExec)
+		if err != nil {
+			return fmt.Errorf("failed to create project engine: %w", err)
+		}
+		if err := BuildOVNKubernetesImageWithEngine(localExec, engine, regContainer.Tag, ""); err != nil {
+			return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
+		}
+	}
+
+	dpImageRef := deviceplugin.DefaultDevicePluginImage
+	if m.config.IsOffloadDPU() {
+		switch {
+		case m.config.IsRegistryEnabled():
+			dpImageRef = m.config.GetRegistryImageRef(deviceplugin.DefaultDevicePluginImage)
+		case m.config.IsRegistryImageBuildOnly() && m.config.IsKindMode():
+			dpImageRef = config.KindNodeLocalImageRef(deviceplugin.DevicePluginImage)
+		}
+	}
+
+	ovnImage := m.config.OvnKubernetesImageForHelm(DefaultOVNImage)
 	if regContainer != nil {
-		ovnImage = m.config.GetRegistryImageRef(regContainer.Tag)
-		log.Info("Using local registry image for OVN-Kubernetes Helm deployment: %s", ovnImage)
+		log.Info("OVN-Kubernetes Helm image: %s", ovnImage)
 	}
 
 	if err := m.labelNodesForSingleNodeZones(); err != nil {
@@ -241,6 +249,11 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, ap
 	chartPath := filepath.Join(ovnkRepoPath, "helm", "ovn-kubernetes")
 	imageRepo, imageTag := splitImageRef(ovnImage)
 
+	pullPolicy := "Always"
+	if m.config.IsKindMode() && !m.config.IsRegistryEnabled() {
+		pullPolicy = "IfNotPresent"
+	}
+
 	args := []string{"install", "ovn-kubernetes", "."}
 
 	switch mode {
@@ -253,7 +266,7 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, ap
 			"--set", "mtu=1400",
 			"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
 			"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
-			"--set", "global.image.pullPolicy=Always",
+			"--set", fmt.Sprintf("global.image.pullPolicy=%s", pullPolicy),
 			"--set", "global.enableAdminNetworkPolicy=true",
 			"--set", "global.enableEgressIp=true",
 			"--set", "global.egressIpHealthCheckPort=9107",
@@ -294,7 +307,7 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, ap
 			"--set", "global.enableOvnKubeIdentity=false",
 			"--set", fmt.Sprintf("global.dpuImage.repository=%s", imageRepo),
 			"--set", fmt.Sprintf("global.dpuImage.tag=%s", imageTag),
-			"--set", "global.dpuImage.pullPolicy=Always",
+			"--set", fmt.Sprintf("global.dpuImage.pullPolicy=%s", pullPolicy),
 			"--set", fmt.Sprintf("global.dpuHostClusterK8sAPIServer=%s", creds.APIServer),
 			"--set", fmt.Sprintf("global.dpuHostClusterK8sToken=%s", creds.Token),
 			"--set", fmt.Sprintf("global.dpuHostClusterK8sCACertData=%s", creds.CACert),
@@ -395,11 +408,7 @@ func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
 
 	chartPath := filepath.Join(ovnKPath, "helm", "ovn-kubernetes")
 
-	ovnImage := DefaultOVNImage
-	regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
-	if regContainer != nil {
-		ovnImage = m.config.GetRegistryImageRef(regContainer.Tag)
-	}
+	ovnImage := m.config.OvnKubernetesImageForHelm(DefaultOVNImage)
 	imageRepo, imageTag := splitImageRef(ovnImage)
 
 	args := []string{
@@ -1127,11 +1136,10 @@ func (m *CNIManager) installOVNKubernetesDaemonset(clusterName string, k8sIP str
 		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
 	}
 
-	ovnImage := DefaultOVNImage
 	regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
+	ovnImage := m.config.OvnKubernetesImageForHelm(DefaultOVNImage)
 	if regContainer != nil {
-		ovnImage = m.config.GetRegistryImageRef(regContainer.Tag)
-		log.Info("Using local registry image for OVN-Kubernetes daemonsets: %s", ovnImage)
+		log.Info("OVN-Kubernetes daemonset image: %s", ovnImage)
 	}
 
 	if err := m.runDaemonsetScript(ovnKPath, apiServerURL, podCIDR, serviceCIDR, ovnImage, gatewayInterface); err != nil {

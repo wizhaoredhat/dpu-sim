@@ -574,6 +574,67 @@ func TestRegistryEnablementModes(t *testing.T) {
 	}
 }
 
+func TestIsRegistryImageBuildOnly(t *testing.T) {
+	falseVal := false
+	ovnCont := []RegistryContainerConfig{{Name: "ovn", CNI: string(CNIOVNKubernetes), Tag: "ovn-kube:dpu-sim"}}
+
+	assert.False(t, (&Config{}).IsRegistryImageBuildOnly())
+	assert.False(t, (&Config{Registry: &RegistryConfig{Enabled: &falseVal}}).IsRegistryImageBuildOnly())
+	assert.True(t, (&Config{Registry: &RegistryConfig{Enabled: &falseVal, Containers: ovnCont}}).IsRegistryImageBuildOnly())
+	assert.False(t, (&Config{Registry: &RegistryConfig{Containers: ovnCont}}).IsRegistryImageBuildOnly())
+}
+
+func TestOvnKubernetesImageForHelm(t *testing.T) {
+	falseVal := false
+	ovnCont := []RegistryContainerConfig{{Name: "ovn", CNI: string(CNIOVNKubernetes), Tag: "ovn-kube:dpu-sim"}}
+	kindCfg := &Config{
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "k", CNI: CNIOVNKubernetes}}},
+		Kind:       &KindConfig{Nodes: []KindNodeConfig{{Name: "cp", K8sRole: "control-plane", K8sCluster: "k"}}},
+	}
+
+	t.Run("no ovn registry entry uses default", func(t *testing.T) {
+		assert.Equal(t, "ghcr.io/upstream:master", kindCfg.OvnKubernetesImageForHelm("ghcr.io/upstream:master"))
+	})
+
+	t.Run("kind registry build-only uses localhost ref for kind load", func(t *testing.T) {
+		cfg := *kindCfg
+		cfg.Registry = &RegistryConfig{Enabled: &falseVal, Containers: ovnCont}
+		assert.Equal(t, "localhost/ovn-kube:dpu-sim", (&cfg).OvnKubernetesImageForHelm("ghcr.io/upstream:master"))
+	})
+
+	t.Run("registry enabled uses node endpoint ref", func(t *testing.T) {
+		cfg := *kindCfg
+		cfg.Registry = &RegistryConfig{Containers: ovnCont}
+		assert.Equal(t, "localhost:5000/ovn-kube:dpu-sim", (&cfg).OvnKubernetesImageForHelm("ghcr.io/upstream:master"))
+	})
+}
+
+func TestKindNodeLocalImageRef(t *testing.T) {
+	assert.Equal(t, "", KindNodeLocalImageRef(""))
+	assert.Equal(t, "localhost/ovn-kube:dpu-sim", KindNodeLocalImageRef("ovn-kube:dpu-sim"))
+	assert.Equal(t, "localhost/foo/bar:latest", KindNodeLocalImageRef("foo/bar:latest"))
+	assert.Equal(t, "localhost/ovn-kube:dpu-sim", KindNodeLocalImageRef("localhost/ovn-kube:dpu-sim"))
+	assert.Equal(t, "ghcr.io/ovn-org/ovn-kube:tag", KindNodeLocalImageRef("ghcr.io/ovn-org/ovn-kube:tag"))
+	assert.Equal(t, "registry:5000/ns/img:v1", KindNodeLocalImageRef("registry:5000/ns/img:v1"))
+}
+
+func TestClusterNeedsOVNKubernetesImage(t *testing.T) {
+	host := ClusterConfig{Name: "host", CNI: CNIOVNKubernetes}
+	dpu := ClusterConfig{Name: "dpu", CNI: CNIFlannel}
+	cfg := &Config{
+		Kubernetes: KubernetesConfig{OffloadDPU: true, Clusters: []ClusterConfig{host, dpu}},
+		Kind: &KindConfig{Nodes: []KindNodeConfig{
+			{Name: "h", Type: HostType, K8sRole: "worker", K8sCluster: "host"},
+			{Name: "d", Type: DpuType, K8sRole: "worker", K8sCluster: "dpu", Host: "h"},
+		}},
+	}
+	assert.True(t, cfg.ClusterNeedsOVNKubernetesImage("host"))
+	assert.True(t, cfg.ClusterNeedsOVNKubernetesImage("dpu"))
+	assert.False(t, (&Config{
+		Kubernetes: KubernetesConfig{Clusters: []ClusterConfig{{Name: "x", CNI: CNIFlannel}}},
+	}).ClusterNeedsOVNKubernetesImage("x"))
+}
+
 func TestGetRegistryInsecureEndpoints(t *testing.T) {
 	t.Run("returns empty when registry is not enabled", func(t *testing.T) {
 		cfg := Config{

@@ -343,6 +343,13 @@ func (c *Config) validateAndSetDefaults() error {
 		}
 	}
 
+	if c.IsRegistryImageBuildOnly() {
+		mode, modeErr := c.GetDeploymentMode()
+		if modeErr == nil && mode != KindDeploymentMode {
+			errors = append(errors, "registry.enabled=false with registry.containers is only supported in Kind mode")
+		}
+	}
+
 	// Validate DPU host references exist
 	if len(c.VMs) > 0 {
 		hostNames := make(map[string]bool)
@@ -899,6 +906,90 @@ func (c *Config) IsRegistryEnabled() bool {
 		return true
 	}
 	return *c.Registry.Enabled
+}
+
+// IsRegistryImageBuildOnly is true when registry.containers defines images to
+// build but registry.enabled is false. In Kind mode, those images are built and
+// loaded into clusters instead of being pushed to a local registry.
+func (c *Config) IsRegistryImageBuildOnly() bool {
+	return c.HasRegistry() && !c.IsRegistryEnabled()
+}
+
+// ClusterNeedsOVNKubernetesImage reports whether clusterName installs or runs
+// an OVN-Kubernetes image (primary CNI or DPU-mode OVN on the DPU cluster).
+func (c *Config) ClusterNeedsOVNKubernetesImage(clusterName string) bool {
+	clusterCfg := c.GetClusterConfig(clusterName)
+	if clusterCfg == nil {
+		return false
+	}
+	if clusterCfg.CNI == CNIOVNKubernetes {
+		return true
+	}
+	return c.DPUClusterNeedsOVNK(clusterName)
+}
+
+// KindNodeLocalImageRef returns an image reference that matches how containerd
+// stores images after "kind load image-archive" for short names: the node shows
+// localhost/<repository>:<tag>, while an unqualified "repo:tag" in a pod spec is
+// resolved to docker.io/library/repo:tag — a different reference, which forces
+// an unwanted pull.
+func KindNodeLocalImageRef(image string) string {
+	image = strings.TrimSpace(image)
+	if image == "" || strings.HasPrefix(image, "localhost/") {
+		return image
+	}
+	repo, tag := splitContainerImageRef(image)
+	if imageRefRepoLooksLikeRegistry(repo) {
+		return image
+	}
+	return "localhost/" + repo + ":" + tag
+}
+
+// splitContainerImageRef splits a container image reference into repository and tag.
+func splitContainerImageRef(image string) (repo, tag string) {
+	lastColon := strings.LastIndex(image, ":")
+	lastSlash := strings.LastIndex(image, "/")
+	if lastColon > lastSlash && lastColon >= 0 {
+		return image[:lastColon], image[lastColon+1:]
+	}
+	return image, "latest"
+}
+
+// imageRefRepoLooksLikeRegistry returns true if the repository looks like a registry.
+func imageRefRepoLooksLikeRegistry(repo string) bool {
+	first := repo
+	if i := strings.Index(repo, "/"); i >= 0 {
+		first = repo[:i]
+	}
+	if strings.EqualFold(first, "localhost") {
+		return true
+	}
+	if strings.Contains(first, ".") {
+		return true
+	}
+	if strings.Contains(first, ":") {
+		return true
+	}
+	return false
+}
+
+// OvnKubernetesImageForHelm returns the image reference passed to OVN-Kubernetes Helm.
+// defaultImage is used when no registry container entry targets ovn-kubernetes.
+func (c *Config) OvnKubernetesImageForHelm(defaultImage string) string {
+	rc := c.GetRegistryContainerForCNI(CNIOVNKubernetes)
+	if rc == nil {
+		return defaultImage
+	}
+	if c.IsRegistryEnabled() {
+		return c.GetRegistryImageRef(rc.Tag)
+	}
+	if c.IsKindMode() {
+		if c.IsRegistryImageBuildOnly() {
+			return KindNodeLocalImageRef(rc.Tag)
+		}
+		return rc.Tag
+	}
+	return c.GetRegistryImageRef(rc.Tag)
 }
 
 // GetRegistryInsecureEndpoints returns the node-side registry endpoints
