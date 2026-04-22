@@ -1,8 +1,10 @@
 name: Kind Mode DPU Offload
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - main
 
 concurrency:
   group: kind-dpu-offload-${{ github.ref }}
