@@ -174,7 +174,7 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) erro
 	if m.config.IsOffloadDPU() {
 		switch {
 		case m.config.IsRegistryEnabled():
-			dpImageRef = m.config.GetRegistryImageRef(deviceplugin.DefaultDevicePluginImage)
+			dpImageRef = m.config.GetRegistryImageRef(deviceplugin.DevicePluginImage)
 		case m.config.IsRegistryImageBuildOnly() && m.config.IsKindMode():
 			dpImageRef = config.KindNodeLocalImageRef(deviceplugin.DevicePluginImage)
 		}
