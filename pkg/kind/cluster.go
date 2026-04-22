@@ -414,6 +414,18 @@ func (m *KindManager) GetKubeconfigContent(name string) (string, error) {
 	return m.provider.KubeConfig(name, false)
 }
 
+// kindCLIEnv is the environment for external `kind` subprocesses. The in-process
+// cluster.Provider may use Podman (ProviderWithPodman); the kind CLI defaults to
+// Docker unless KIND_EXPERIMENTAL_PROVIDER is set, which breaks load/list against
+// Podman-backed clusters ("no nodes found for cluster ...").
+func (m *KindManager) kindCLIEnv() []string {
+	env := os.Environ()
+	if m.containerBin == "podman" {
+		return append(env, "KIND_EXPERIMENTAL_PROVIDER=podman")
+	}
+	return env
+}
+
 // LoadImage loads a container image from the local runtime (same engine Kind uses:
 // docker or podman) into a Kind cluster.
 //
@@ -448,6 +460,7 @@ func (m *KindManager) LoadImage(clusterName, imageName string) error {
 	}
 
 	loadCmd := exec.Command("kind", "load", "image-archive", tmpPath, "--name", clusterName)
+	loadCmd.Env = m.kindCLIEnv()
 	loadCmd.Stdout = os.Stdout
 	loadCmd.Stderr = os.Stderr
 	if err := loadCmd.Run(); err != nil {
