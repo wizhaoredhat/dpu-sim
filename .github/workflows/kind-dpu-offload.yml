@@ -65,9 +65,9 @@ jobs:
       - name: Verify clusters are ready
         run: |
           kubectl wait --for=condition=Ready nodes --all \
-            --kubeconfig kubeconfig/dpu-sim-host-kind.kubeconfig --timeout=25m
+            --kubeconfig kubeconfig/dpu-sim-host.kubeconfig --timeout=25m
           kubectl wait --for=condition=Ready nodes --all \
-            --kubeconfig kubeconfig/dpu-sim-dpu-kind.kubeconfig --timeout=25m
+            --kubeconfig kubeconfig/dpu-sim-dpu.kubeconfig --timeout=25m
 
       - name: Export kind logs on failure
         if: failure()
