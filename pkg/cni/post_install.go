@@ -9,6 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/deviceplugin"
@@ -120,32 +121,43 @@ func (m *CNIManager) ensureDPUHostSystemDeployments() error {
 // requires scheduling onto nodes labeled DPU Host.
 // ignoreNotFound treats a missing Deployment as success (for optional add-ons).
 func patchDeploymentForDPUHostPodNetworking(c *k8s.K8sClient, namespace, deploymentName, vfResourceName string, ignoreNotFound bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	dep, err := c.Clientset().AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
-	if err != nil {
-		if ignoreNotFound && apierrors.IsNotFound(err) {
-			log.Info("Deployment %s/%s not found, skipping DPU-host simulated VF patch", namespace, deploymentName)
-			return nil
-		}
-		return fmt.Errorf("get deployment %s/%s: %w", namespace, deploymentName, err)
-	}
-
 	qty := resource.MustParse("1")
 	rn := corev1.ResourceName(vfResourceName)
-	pod := &dep.Spec.Template.Spec
 
-	for i := range pod.InitContainers {
-		patchContainerVFRequest(&pod.InitContainers[i], rn, qty)
-	}
-	for i := range pod.Containers {
-		patchContainerVFRequest(&pod.Containers[i], rn, qty)
-	}
-	mergeDPUHostNodeAffinity(pod)
+	var skippedNotFound bool
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	if _, err := c.Clientset().AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("update deployment %s/%s for DPU-host simulated VF: %w", namespace, deploymentName, err)
+		dep, err := c.Clientset().AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+		if err != nil {
+			if ignoreNotFound && apierrors.IsNotFound(err) {
+				log.Info("Deployment %s/%s not found, skipping DPU-host simulated VF patch", namespace, deploymentName)
+				skippedNotFound = true
+				return nil
+			}
+			return fmt.Errorf("get deployment %s/%s: %w", namespace, deploymentName, err)
+		}
+
+		pod := &dep.Spec.Template.Spec
+		for i := range pod.InitContainers {
+			patchContainerVFRequest(&pod.InitContainers[i], rn, qty)
+		}
+		for i := range pod.Containers {
+			patchContainerVFRequest(&pod.Containers[i], rn, qty)
+		}
+		mergeDPUHostNodeAffinity(pod)
+
+		if _, err := c.Clientset().AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("update deployment %s/%s for DPU-host simulated VF: %w", namespace, deploymentName, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if skippedNotFound {
+		return nil
 	}
 
 	log.Info("✓ Patched deployment %s/%s for DPU-host simulated VF (%s)", namespace, deploymentName, vfResourceName)
