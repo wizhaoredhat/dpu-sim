@@ -417,7 +417,7 @@ func (m *KindManager) GetKubeconfigContent(name string) (string, error) {
 // kindCLIEnv is the environment for external `kind` subprocesses. The in-process
 // cluster.Provider may use Podman (ProviderWithPodman); the kind CLI defaults to
 // Docker unless KIND_EXPERIMENTAL_PROVIDER is set, which breaks load/list against
-// Podman-backed clusters ("no nodes found for cluster ...").
+// Podman-backed clusters (e.g. "no nodes found for cluster ...").
 func (m *KindManager) kindCLIEnv() []string {
 	env := os.Environ()
 	if m.containerBin == "podman" {
@@ -426,7 +426,7 @@ func (m *KindManager) kindCLIEnv() []string {
 	return env
 }
 
-// LoadImage loads a container image from the local runtime (same engine Kind uses:
+// KindLoadImage loads a container image from the local runtime (same engine Kind uses:
 // docker or podman) into a Kind cluster.
 //
 // We use "kind load image-archive" after a local "docker/podman save" instead of
@@ -434,7 +434,7 @@ func (m *KindManager) kindCLIEnv() []string {
 // classic image list. That breaks when images live only in the containerd image
 // store (Docker 27+ default; see kubernetes-sigs/kind#3795) or when images were
 // built with Podman while Kind is configured for the podman provider.
-func (m *KindManager) LoadImage(clusterName, imageName string) error {
+func (m *KindManager) KindLoadImage(clusterName, imageName string) error {
 	if !m.ClusterExists(clusterName) {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
 	}
@@ -508,8 +508,7 @@ func (m *KindManager) GetInternalAPIServerIP(clusterName string) (string, error)
 	return nodeIP, nil
 }
 
-// PullAndLoadImage pulls a Docker image from a registry and loads it into a Kind cluster.
-// If the image already exists locally, it skips the pull step.
+// PullAndLoadImage pulls a container image from a registry and loads it into a Kind cluster.
 func (m *KindManager) PullAndLoadImage(clusterName, imageName string) error {
 	if !m.ClusterExists(clusterName) {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
@@ -520,7 +519,6 @@ func (m *KindManager) PullAndLoadImage(clusterName, imageName string) error {
 	pullCmd := exec.Command(m.containerBin, "pull", imageName)
 	pullCmd.Stdout = os.Stdout
 	pullCmd.Stderr = os.Stderr
-
 	if err := pullCmd.Run(); err != nil {
 		return fmt.Errorf("failed to pull image %s: %w", imageName, err)
 	}
@@ -528,5 +526,5 @@ func (m *KindManager) PullAndLoadImage(clusterName, imageName string) error {
 	log.Info("✓ Pulled image: %s", imageName)
 
 	// Load the image into Kind
-	return m.LoadImage(clusterName, imageName)
+	return m.KindLoadImage(clusterName, imageName)
 }

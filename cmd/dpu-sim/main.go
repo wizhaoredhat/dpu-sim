@@ -244,7 +244,10 @@ func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryMana
 	log.Info("║      Kind-Based Deployment Workflow           ║")
 	log.Info("╚═══════════════════════════════════════════════╝")
 
-	kindMgr := kind.NewKindManager(cfg)
+	kindMgr, err := kind.NewKindManager(cfg)
+	if err != nil {
+		return fmt.Errorf("kind manager: %w", err)
+	}
 
 	if !skipCleanup || cleanupOnly {
 		log.Info("\n=== Cleaning up existing kind clusters ===")

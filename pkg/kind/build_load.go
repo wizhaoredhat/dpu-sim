@@ -3,7 +3,6 @@ package kind
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
@@ -41,7 +40,7 @@ func (m *KindManager) BuildAndLoadImagesFromRegistryConfig(cmdExec platform.Comm
 				if !cfg.ClusterNeedsOVNKubernetesImage(cl.Name) {
 					continue
 				}
-				if err := m.LoadImage(cl.Name, kindRef); err != nil {
+				if err := m.KindLoadImage(cl.Name, kindRef); err != nil {
 					return fmt.Errorf("kind load %q into cluster %q: %w", kindRef, cl.Name, err)
 				}
 				log.Info("✓ OVN-Kubernetes image loaded into cluster %s", cl.Name)
@@ -61,7 +60,7 @@ func (m *KindManager) BuildAndLoadImagesFromRegistryConfig(cmdExec platform.Comm
 			if err != nil {
 				return fmt.Errorf("prepare device plugin image for Kind: %w", err)
 			}
-			if err := m.LoadImage(hostCluster, kindRef); err != nil {
+			if err := m.KindLoadImage(hostCluster, kindRef); err != nil {
 				return fmt.Errorf("kind load device plugin into cluster %q: %w", hostCluster, err)
 			}
 			log.Info("✓ Device plugin image loaded into cluster %s", hostCluster)
@@ -72,49 +71,8 @@ func (m *KindManager) BuildAndLoadImagesFromRegistryConfig(cmdExec platform.Comm
 	return nil
 }
 
-func engineRuntimeBin(n containerengine.Name) (string, error) {
-	switch n {
-	case containerengine.EngineDocker:
-		return "docker", nil
-	case containerengine.EnginePodman:
-		return "podman", nil
-	default:
-		return "", fmt.Errorf("unsupported container engine %q for Kind image load (need docker or podman)", n)
-	}
-}
-
-func (m *KindManager) assertImageInKindRuntime(cmdExec platform.CommandExecutor, imageRef string) error {
-	_, _, err := cmdExec.Execute(fmt.Sprintf("%s image inspect %q >/dev/null 2>&1", m.containerBin, imageRef))
-	if err != nil {
-		return fmt.Errorf("image %q is not present in local %s (required before kind load image-archive)", imageRef, m.containerBin)
-	}
-	return nil
-}
-
-// transferImageToKindRuntime copies a tagged image from one local runtime to another via save/load.
-func transferImageToKindRuntime(cmdExec platform.CommandExecutor, fromBin, toBin, imageRef string) error {
-	tmpFile, err := os.CreateTemp("", "dpu-sim-kind-runtime-transfer-*.tar")
-	if err != nil {
-		return fmt.Errorf("create temp archive for %s→%s image transfer: %w", fromBin, toBin, err)
-	}
-	tmpPath := tmpFile.Name()
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close temp archive for image transfer: %w", err)
-	}
-	defer func() { _ = os.Remove(tmpPath) }()
-
-	if err := cmdExec.RunCmd(log.LevelInfo, fromBin, "save", "-o", tmpPath, imageRef); err != nil {
-		return fmt.Errorf("%s save %q for transfer to %s: %w", fromBin, imageRef, toBin, err)
-	}
-	if err := cmdExec.RunCmd(log.LevelInfo, toBin, "load", "-i", tmpPath); err != nil {
-		return fmt.Errorf("%s load archive produced by %s for image %q: %w", toBin, fromBin, imageRef, err)
-	}
-	return nil
-}
-
 // prepareBuiltImageForKindLoad ensures builtRef exists under config.KindNodeLocalImageRef(builtRef) in
-// m.containerBin's image store so LoadImage can save it for kind load image-archive.
+// m.containerBin's image store so KindLoadImage can save it for kind load image-archive.
 func (m *KindManager) prepareBuiltImageForKindLoad(
 	ctx context.Context,
 	cmdExec platform.CommandExecutor,
@@ -126,10 +84,7 @@ func (m *KindManager) prepareBuiltImageForKindLoad(
 		return "", fmt.Errorf("empty Kind node-local image ref derived from %q", builtRef)
 	}
 
-	engineBin, err := engineRuntimeBin(engine.Name())
-	if err != nil {
-		return "", err
-	}
+	engineBin := string(engine.Name())
 
 	if engineBin != m.containerBin {
 		if nodeLocal != builtRef {
@@ -140,14 +95,14 @@ func (m *KindManager) prepareBuiltImageForKindLoad(
 				)
 			}
 		}
-		if err := transferImageToKindRuntime(cmdExec, engineBin, m.containerBin, nodeLocal); err != nil {
+		if err := containerengine.TransferImageBetweenRuntimes(cmdExec, engineBin, m.containerBin, nodeLocal); err != nil {
 			return "", fmt.Errorf(
 				"copy image into %s after build with %s (engine/runtime mismatch): %w",
 				m.containerBin, engineBin, err,
 			)
 		}
-		if err := m.assertImageInKindRuntime(cmdExec, nodeLocal); err != nil {
-			return "", err
+		if err := containerengine.ImagePresentInRuntime(cmdExec, m.containerBin, nodeLocal); err != nil {
+			return "", fmt.Errorf("%w (required before kind load image-archive)", err)
 		}
 		return nodeLocal, nil
 	}
@@ -160,8 +115,8 @@ func (m *KindManager) prepareBuiltImageForKindLoad(
 			)
 		}
 	}
-	if err := m.assertImageInKindRuntime(cmdExec, nodeLocal); err != nil {
-		return "", err
+	if err := containerengine.ImagePresentInRuntime(cmdExec, m.containerBin, nodeLocal); err != nil {
+		return "", fmt.Errorf("%w (required before kind load image-archive)", err)
 	}
 	return nodeLocal, nil
 }
