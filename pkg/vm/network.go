@@ -3,8 +3,8 @@ package vm
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
@@ -39,7 +39,7 @@ func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
 	case "l2-bridge":
 		if netCfg.UseOVS {
 			// For OVS networks, create the OVS bridge first, then the libvirt network
-			if err := CreateOVSBridge(netCfg.BridgeName); err != nil {
+			if err := CreateOVSBridge(m.hostExec, netCfg.BridgeName); err != nil {
 				return fmt.Errorf("failed to create OVS bridge %s: %w", netCfg.BridgeName, err)
 			}
 			xml = generateOVSNetworkXML(netCfg.Name, netCfg.BridgeName)
@@ -72,8 +72,8 @@ func (m *VMManager) CreateNetwork(netCfg config.NetworkConfig) error {
 // This must run before creating a libvirt connection used by VMManager;
 // applying these host-level settings later during network creation was too late
 // on some Debian/Ubuntu nftables hosts and caused NAT bring-up failures.
-func EnsureHostNetworkPrerequisites() error {
-	if err := ensureLibvirtNATFirewallBackend(); err != nil {
+func EnsureHostNetworkPrerequisites(cmdExec platform.CommandExecutor) error {
+	if err := ensureLibvirtNATFirewallBackend(cmdExec); err != nil {
 		return fmt.Errorf("failed to prepare libvirt firewall backend for NAT networks: %w", err)
 	}
 	return nil
@@ -86,7 +86,7 @@ func EnsureHostNetworkPrerequisites() error {
 // host iptables alternative and libvirt firewall backend are not aligned.
 //
 // Scope: no-op for non-Debian-like distros.
-func ensureLibvirtNATFirewallBackend() error {
+func ensureLibvirtNATFirewallBackend(cmdExec platform.CommandExecutor) error {
 	distro, err := platform.GetHostDistro()
 	if err != nil {
 		return fmt.Errorf("failed to detect host distro: %w", err)
@@ -95,7 +95,7 @@ func ensureLibvirtNATFirewallBackend() error {
 		return nil
 	}
 
-	legacyChanged, err := ensureIptablesLegacyForLibvirtNAT()
+	legacyChanged, err := ensureIptablesLegacyForLibvirtNAT(cmdExec)
 	if err != nil {
 		return err
 	}
@@ -127,12 +127,12 @@ func ensureLibvirtNATFirewallBackend() error {
 		return fmt.Errorf("failed to close temp libvirt config: %w", err)
 	}
 
-	installCmd := exec.Command("sudo", "install", "-m", "0644", tmpPath, confPath)
-	if output, err := installCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to install %s: %w, output: %s", confPath, err, string(output))
+	out, errOut, err := platform.RunCommandInDir(cmdExec, "", "sudo", []string{"install", "-m", "0644", tmpPath, confPath}, 2*time.Minute)
+	if err != nil {
+		return fmt.Errorf("failed to install %s: %w, output: %s", confPath, err, platform.CombinedCmdOutput(out, errOut))
 	}
 
-	if err := restartLibvirtForNetworkFirewallChange(); err != nil {
+	if err := restartLibvirtForNetworkFirewallChange(cmdExec); err != nil {
 		return err
 	}
 
@@ -150,10 +150,10 @@ func ensureLibvirtNATFirewallBackend() error {
 //
 // This was observed in our VM bring-up on Ubuntu 22.04.5 LTS with errors like:
 // "table `nat` is incompatible, use 'nft' tool" during libvirt NAT probing.
-func ensureIptablesLegacyForLibvirtNAT() (bool, error) {
-	probe := exec.Command("iptables", "-w", "--table", "nat", "--list-rules")
-	if output, err := probe.CombinedOutput(); err == nil {
-		if !strings.Contains(string(output), "table `nat' is incompatible, use 'nft' tool") {
+func ensureIptablesLegacyForLibvirtNAT(cmdExec platform.CommandExecutor) (bool, error) {
+	probeOut, probeErr, err := platform.RunCommandInDir(cmdExec, "", "iptables", []string{"-w", "--table", "nat", "--list-rules"}, 30*time.Second)
+	if err == nil {
+		if !strings.Contains(platform.CombinedCmdOutput(probeOut, probeErr), "table `nat' is incompatible, use 'nft' tool") {
 			return false, nil
 		}
 	}
@@ -172,15 +172,14 @@ func ensureIptablesLegacyForLibvirtNAT() (bool, error) {
 			continue
 		}
 
-		check := exec.Command(p.name, "--version")
-		currentOut, err := check.CombinedOutput()
-		if err == nil && strings.Contains(strings.ToLower(string(currentOut)), "legacy") {
+		verOut, verErr, err := platform.RunCommandInDir(cmdExec, "", p.name, []string{"--version"}, 30*time.Second)
+		if err == nil && strings.Contains(strings.ToLower(platform.CombinedCmdOutput(verOut, verErr)), "legacy") {
 			continue
 		}
 
-		setCmd := exec.Command("sudo", "update-alternatives", "--set", p.name, p.path)
-		if output, err := setCmd.CombinedOutput(); err != nil {
-			return changed, fmt.Errorf("failed to set %s alternative to %s: %w, output: %s", p.name, p.path, err, string(output))
+		so, se, err := platform.RunCommandInDir(cmdExec, "", "sudo", []string{"update-alternatives", "--set", p.name, p.path}, 2*time.Minute)
+		if err != nil {
+			return changed, fmt.Errorf("failed to set %s alternative to %s: %w, output: %s", p.name, p.path, err, platform.CombinedCmdOutput(so, se))
 		}
 		changed = true
 	}
@@ -191,16 +190,15 @@ func ensureIptablesLegacyForLibvirtNAT() (bool, error) {
 // restartLibvirtForNetworkFirewallChange restarts the first available libvirt
 // service that manages networking after firewall backend updates.
 // Different distros expose different service names (virtnetworkd/libvirtd).
-func restartLibvirtForNetworkFirewallChange() error {
+func restartLibvirtForNetworkFirewallChange(cmdExec platform.CommandExecutor) error {
 	services := []string{"virtnetworkd", "libvirtd"}
 	for _, svc := range services {
-		restartCmd := exec.Command("sudo", "systemctl", "restart", svc)
-		if output, err := restartCmd.CombinedOutput(); err == nil {
+		so, se, err := platform.RunCommandInDir(cmdExec, "", "sudo", []string{"systemctl", "restart", svc}, 3*time.Minute)
+		if err == nil {
 			log.Debug("Restarted %s after libvirt firewall backend update", svc)
 			return nil
-		} else {
-			log.Debug("Failed restarting %s: %v (output: %s)", svc, err, strings.TrimSpace(string(output)))
 		}
+		log.Debug("Failed restarting %s: %v (output: %s)", svc, err, strings.TrimSpace(platform.CombinedCmdOutput(so, se)))
 	}
 
 	return fmt.Errorf("failed to restart libvirt service after updating firewall backend")
@@ -316,21 +314,21 @@ func generateOVSNetworkXML(networkName, bridgeName string) string {
 }
 
 // CreateOVSBridge creates an OVS bridge
-func CreateOVSBridge(bridgeName string) error {
-	checkCmd := exec.Command("ovs-vsctl", "br-exists", bridgeName)
-	if err := checkCmd.Run(); err == nil {
+func CreateOVSBridge(cmdExec platform.CommandExecutor, bridgeName string) error {
+	_, _, err := platform.RunCommandInDir(cmdExec, "", "ovs-vsctl", []string{"br-exists", bridgeName}, 30*time.Second)
+	if err == nil {
 		log.Info("OVS bridge %s already exists, skipping creation", bridgeName)
 		return nil
 	}
 
-	createCmd := exec.Command("ovs-vsctl", "add-br", bridgeName)
-	if output, err := createCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to create OVS bridge %s: %w, output: %s", bridgeName, err, string(output))
+	co, ce, err := platform.RunCommandInDir(cmdExec, "", "ovs-vsctl", []string{"add-br", bridgeName}, 2*time.Minute)
+	if err != nil {
+		return fmt.Errorf("failed to create OVS bridge %s: %w, output: %s", bridgeName, err, platform.CombinedCmdOutput(co, ce))
 	}
 
-	bringUpCmd := exec.Command("ip", "link", "set", bridgeName, "up")
-	if output, err := bringUpCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring up OVS bridge %s: %w, output: %s", bridgeName, err, string(output))
+	bo, be, err := platform.RunCommandInDir(cmdExec, "", "ip", []string{"link", "set", bridgeName, "up"}, 2*time.Minute)
+	if err != nil {
+		return fmt.Errorf("failed to bring up OVS bridge %s: %w, output: %s", bridgeName, err, platform.CombinedCmdOutput(bo, be))
 	}
 
 	log.Info("✓ Created OVS bridge: %s", bridgeName)
@@ -338,16 +336,16 @@ func CreateOVSBridge(bridgeName string) error {
 }
 
 // DeleteOVSBridge deletes an OVS bridge
-func DeleteOVSBridge(bridgeName string) error {
-	checkCmd := exec.Command("ovs-vsctl", "br-exists", bridgeName)
-	if err := checkCmd.Run(); err != nil {
+func DeleteOVSBridge(cmdExec platform.CommandExecutor, bridgeName string) error {
+	_, _, err := platform.RunCommandInDir(cmdExec, "", "ovs-vsctl", []string{"br-exists", bridgeName}, 30*time.Second)
+	if err != nil {
 		log.Info("OVS bridge %s doesn't exist, skipping deletion", bridgeName)
 		return nil
 	}
 
-	deleteCmd := exec.Command("ovs-vsctl", "del-br", bridgeName)
-	if output, err := deleteCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to delete OVS bridge %s: %w, output: %s", bridgeName, err, string(output))
+	do, de, err := platform.RunCommandInDir(cmdExec, "", "ovs-vsctl", []string{"del-br", bridgeName}, 2*time.Minute)
+	if err != nil {
+		return fmt.Errorf("failed to delete OVS bridge %s: %w, output: %s", bridgeName, err, platform.CombinedCmdOutput(do, de))
 	}
 
 	return nil
@@ -363,7 +361,7 @@ func (m *VMManager) CreateHostToDPUNetwork(hostName, dpuName string, index int) 
 		return fmt.Errorf("host-to-DPU network %s already exists", networkName)
 	}
 
-	if err := CreateOVSBridge(bridgeName); err != nil {
+	if err := CreateOVSBridge(m.hostExec, bridgeName); err != nil {
 		return fmt.Errorf("failed to create OVS bridge for host-to-DPU: %w", err)
 	}
 
@@ -467,7 +465,7 @@ func (m *VMManager) CleanupNetworks() error {
 
 		if netCfg.UseOVS {
 			log.Debug("Cleaning up OVS bridge: %s...", netCfg.BridgeName)
-			if err := DeleteOVSBridge(netCfg.BridgeName); err != nil {
+			if err := DeleteOVSBridge(m.hostExec, netCfg.BridgeName); err != nil {
 				log.Error("✗ Failed to remove OVS bridge %s: %v", netCfg.BridgeName, err)
 				errors = append(errors, fmt.Sprintf("failed to remove OVS bridge %s: %v", netCfg.BridgeName, err))
 				continue
@@ -494,7 +492,7 @@ func (m *VMManager) CleanupNetworks() error {
 				}
 
 				log.Debug("Cleaning up host-to-DPU OVS bridge: %s...", bridgeName)
-				if err := DeleteOVSBridge(bridgeName); err != nil {
+				if err := DeleteOVSBridge(m.hostExec, bridgeName); err != nil {
 					log.Error("✗ Failed to remove OVS bridge %s: %v", bridgeName, err)
 					errors = append(errors, fmt.Sprintf("failed to remove OVS bridge %s: %v", bridgeName, err))
 					continue

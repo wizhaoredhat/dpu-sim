@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wizhao/dpu-sim/pkg/platform"
+
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
@@ -37,8 +39,10 @@ var pullCloudImageFromOCI = pullOCICloudImage
 // TODO: Add documentation on how to build and publish OCI artifacts using oras
 // A relevant gh actions workflow can be seen here: https://github.com/SamD2021/dpu-image-factory/blob/a0ebfd28991586594bfd24bd1d851e73e05a7960/.github/workflows/build.yml
 
+const cloudImageDownloadTimeout = 4 * time.Hour
+
 // EnsureCloudImage makes sure the configured cloud image exists locally.
-func EnsureCloudImage(osConfig config.OSConfig, destPath string) error {
+func EnsureCloudImage(cmdExec platform.CommandExecutor, osConfig config.OSConfig, destPath string) error {
 	// Check if file already exists
 	if _, err := os.Stat(destPath); err == nil {
 		log.Info("✓ Image already exists at %s, skipping download", destPath)
@@ -49,13 +53,13 @@ func EnsureCloudImage(osConfig config.OSConfig, destPath string) error {
 		return pullCloudImageFromOCI(osConfig.ImageRef, osConfig.ImageName, destPath)
 	}
 	if osConfig.ImageURL != "" {
-		return DownloadCloudImage(osConfig.ImageURL, destPath)
+		return DownloadCloudImage(cmdExec, osConfig.ImageURL, destPath)
 	}
 	return errors.New("operating_system image source is not configured")
 }
 
 // DownloadCloudImage downloads a cloud image if it doesn't exist
-func DownloadCloudImage(url, destPath string) error {
+func DownloadCloudImage(cmdExec platform.CommandExecutor, url, destPath string) error {
 	// Check if file already exists
 	if _, err := os.Stat(destPath); err == nil {
 		log.Info("✓ Image already exists at %s, skipping download", destPath)
@@ -69,10 +73,9 @@ func DownloadCloudImage(url, destPath string) error {
 	}
 
 	log.Info("Downloading cloud image from %s to %s...", url, destPath)
-	cmd := exec.Command("wget", "-O", destPath, url)
-	output, err := cmd.CombinedOutput()
+	stdout, stderr, err := platform.RunCommandInDir(cmdExec, "", "wget", []string{"-O", destPath, url}, cloudImageDownloadTimeout)
 	if err != nil {
-		return fmt.Errorf("failed to download image: %w, output: %s", err, string(output))
+		return fmt.Errorf("failed to download image: %w, output: %s", err, platform.CombinedCmdOutput(stdout, stderr))
 	}
 
 	log.Info("✓ Downloaded image to %s", destPath)
@@ -351,7 +354,7 @@ func copyFile(sourcePath, destPath string) error {
 }
 
 // CreateVMDisk creates a disk image for a VM using qemu-img
-func CreateVMDisk(vmName string, sizeGB int, baseImage string) (string, error) {
+func CreateVMDisk(cmdExec platform.CommandExecutor, vmName string, sizeGB int, baseImage string) (string, error) {
 	diskPath := filepath.Join(DefaultImageDir, fmt.Sprintf("%s.qcow2", vmName))
 
 	// Check if disk already exists
@@ -365,28 +368,27 @@ func CreateVMDisk(vmName string, sizeGB int, baseImage string) (string, error) {
 		return "", fmt.Errorf("failed to create image directory: %w", err)
 	}
 
-	baseVirtualSizeBytes, err := imageVirtualSizeBytes(baseImage)
+	baseVirtualSizeBytes, err := imageVirtualSizeBytes(cmdExec, baseImage)
 	if err != nil {
 		return "", fmt.Errorf("failed to inspect base image size %s: %w", baseImage, err)
 	}
 	requestedSizeBytes := int64(sizeGB) * 1024 * 1024 * 1024
 
 	log.Debug("Creating disk for %s based on %s...", vmName, baseImage)
-	cmd := exec.Command("qemu-img", "create", "-f", "qcow2",
-		"-F", "qcow2", "-b", baseImage, diskPath)
-	output, err := cmd.CombinedOutput()
+	out, errOut, err := platform.RunCommandInDir(cmdExec, "", "qemu-img", []string{
+		"create", "-f", "qcow2", "-F", "qcow2", "-b", baseImage, diskPath,
+	}, 30*time.Minute)
 	if err != nil {
-		return "", fmt.Errorf("failed to create disk: %w, output: %s", err, string(output))
+		return "", fmt.Errorf("failed to create disk: %w, output: %s", err, platform.CombinedCmdOutput(out, errOut))
 	}
 
 	// Treat disk_size as a minimum. Older code always ran resize, which failed
 	// when disk_size was smaller than the backing image virtual size. For qcow2
 	// overlays we only grow when requested size exceeds the base image size.
 	if requestedSizeBytes > baseVirtualSizeBytes {
-		resizeCmd := exec.Command("qemu-img", "resize", diskPath, fmt.Sprintf("%dG", sizeGB))
-		resizeOutput, resizeErr := resizeCmd.CombinedOutput()
+		ro, rerr, resizeErr := platform.RunCommandInDir(cmdExec, "", "qemu-img", []string{"resize", diskPath, fmt.Sprintf("%dG", sizeGB)}, 30*time.Minute)
 		if resizeErr != nil {
-			return "", fmt.Errorf("failed to resize disk %s: %w, output: %s", diskPath, resizeErr, string(resizeOutput))
+			return "", fmt.Errorf("failed to resize disk %s: %w, output: %s", diskPath, resizeErr, platform.CombinedCmdOutput(ro, rerr))
 		}
 	}
 
@@ -447,17 +449,16 @@ func getInterfaceNamesAndMACs(cfg *config.Config, vmConfig config.VMConfig) []if
 	return out
 }
 
-func imageVirtualSizeBytes(imagePath string) (int64, error) {
-	cmd := exec.Command("qemu-img", "info", "--output=json", imagePath)
-	output, err := cmd.CombinedOutput()
+func imageVirtualSizeBytes(cmdExec platform.CommandExecutor, imagePath string) (int64, error) {
+	stdout, stderr, err := platform.RunCommandInDir(cmdExec, "", "qemu-img", []string{"info", "--output=json", imagePath}, 2*time.Minute)
 	if err != nil {
-		return 0, fmt.Errorf("qemu-img info failed: %w, output: %s", err, string(output))
+		return 0, fmt.Errorf("qemu-img info failed: %w, output: %s", err, platform.CombinedCmdOutput(stdout, stderr))
 	}
 
 	var info struct {
 		VirtualSize int64 `json:"virtual-size"`
 	}
-	if err := json.Unmarshal(output, &info); err != nil {
+	if err := json.Unmarshal([]byte(stdout), &info); err != nil {
 		return 0, fmt.Errorf("failed to parse qemu-img info json: %w", err)
 	}
 	if info.VirtualSize <= 0 {
@@ -469,7 +470,7 @@ func imageVirtualSizeBytes(imagePath string) (int64, error) {
 
 // CreateCloudInitISO creates a cloud-init ISO for VM initialization.
 // If cfg is non-nil, udev rules are added to rename interfaces by MAC to common names (mgmt, k8s, eth0-0, rep0-0, etc.).
-func CreateCloudInitISO(sshConfig config.SSHConfig, vmConfig config.VMConfig, cfg *config.Config) (string, error) {
+func CreateCloudInitISO(cmdExec platform.CommandExecutor, sshConfig config.SSHConfig, vmConfig config.VMConfig, cfg *config.Config) (string, error) {
 	vmName := vmConfig.Name
 	isoPath := filepath.Join(DefaultImageDir, fmt.Sprintf("%s-cloud-init.iso", vmName))
 
@@ -513,11 +514,11 @@ func CreateCloudInitISO(sshConfig config.SSHConfig, vmConfig config.VMConfig, cf
 		return "", fmt.Errorf("genisoimage not found in PATH err:%s", err)
 	}
 
-	cmd := exec.Command("genisoimage", "-output", isoPath, "-volid", "cidata",
-		"-joliet", "-rock", userDataPath, metaDataPath)
-	output, err := cmd.CombinedOutput()
+	out, errOut, err := platform.RunCommandInDir(cmdExec, "", "genisoimage", []string{
+		"-output", isoPath, "-volid", "cidata", "-joliet", "-rock", userDataPath, metaDataPath,
+	}, 10*time.Minute)
 	if err != nil {
-		return "", fmt.Errorf("failed to create cloud-init ISO: %w, output: %s", err, string(output))
+		return "", fmt.Errorf("failed to create cloud-init ISO: %w, output: %s", err, platform.CombinedCmdOutput(out, errOut))
 	}
 
 	log.Info("✓ Created cloud-init ISO: %s", isoPath)
