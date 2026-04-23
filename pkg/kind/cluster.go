@@ -3,9 +3,9 @@ package kind
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/cni"
 	"github.com/wizhao/dpu-sim/pkg/config"
@@ -117,7 +117,7 @@ func (m *KindManager) DeployAllClusters() error {
 // setupOVNKubernetesOffloadToDPUOVS installs OVS inside each DPU Kind container and
 // configures the external_ids that ovnkube-node DPU mode requires. This
 // mirrors the VM flow where OVS is pre-installed on the DPU hardware.
-func (m *KindManager) setupOVNKubernetesOffloadToDPUOVS(dpuClusterName string) error {
+func (m *KindManager) setupOVNKubernetesOffloadToDPUOVS(cmdExec platform.CommandExecutor, dpuClusterName string) error {
 	pairs := m.config.GetHostDPUPairs(dpuClusterName)
 	if len(pairs) == 0 {
 		return nil
@@ -126,7 +126,7 @@ func (m *KindManager) setupOVNKubernetesOffloadToDPUOVS(dpuClusterName string) e
 	for _, pair := range pairs {
 		dpuExec := platform.NewDockerExecutor(pair.DPUNode, m.containerBin)
 
-		encapIP, err := m.getContainerIP(pair.DPUNode)
+		encapIP, err := m.getContainerIP(cmdExec, pair.DPUNode)
 		if err != nil {
 			return fmt.Errorf("failed to get IP for DPU container %s: %w", pair.DPUNode, err)
 		}
@@ -141,14 +141,18 @@ func (m *KindManager) setupOVNKubernetesOffloadToDPUOVS(dpuClusterName string) e
 
 // getContainerIP returns the IP address of a Kind container on the kind
 // Docker network.
-func (m *KindManager) getContainerIP(containerName string) (string, error) {
-	cmd := exec.Command(m.containerBin, "inspect", "-f",
-		"{{.NetworkSettings.Networks.kind.IPAddress}}", containerName)
-	output, err := cmd.Output()
+func (m *KindManager) getContainerIP(cmdExec platform.CommandExecutor, containerName string) (string, error) {
+	// CommandExecutor.Execute runs via sh -c; keep the inspect format in single quotes
+	// and shell-quote the binary and container name.
+	shCmd := fmt.Sprintf(
+		`%q inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' %q`,
+		m.containerBin, containerName,
+	)
+	stdout, stderr, err := cmdExec.ExecuteWithTimeout(shCmd, 30*time.Second)
 	if err != nil {
-		return "", fmt.Errorf("failed to get IP for container %s: %w", containerName, err)
+		return "", fmt.Errorf("failed to get IP for container %s: %w\nstderr: %s", containerName, err, strings.TrimSpace(stderr))
 	}
-	ip := strings.TrimSpace(string(output))
+	ip := strings.TrimSpace(stdout)
 	if ip == "" {
 		return "", fmt.Errorf("IP is empty for container %s", containerName)
 	}
@@ -156,7 +160,7 @@ func (m *KindManager) getContainerIP(containerName string) (string, error) {
 }
 
 // InstallCNI installs the CNI on every Kind cluster.
-func (m *KindManager) InstallCNI() error {
+func (m *KindManager) InstallCNI(cmdExec platform.CommandExecutor) error {
 	for _, clusterCfg := range m.config.ClustersOrderedForInstall() {
 		log.Info("\n--- Installing CNI on cluster %s ---", clusterCfg.Name)
 		cniType := clusterCfg.CNI
@@ -171,11 +175,11 @@ func (m *KindManager) InstallCNI() error {
 			regContainer := m.config.GetRegistryContainerForCNI(config.CNIOVNKubernetes)
 			switch {
 			case regContainer == nil:
-				if err := m.PullAndLoadImage(clusterCfg.Name, cni.DefaultOVNImage); err != nil {
+				if err := m.PullAndLoadImage(cmdExec, clusterCfg.Name, cni.DefaultOVNImage); err != nil {
 					return fmt.Errorf("failed to load OVN-Kubernetes image: %w", err)
 				}
 				if m.config.IsOffloadDPU() {
-					if err := m.PullAndLoadImage(clusterCfg.Name, deviceplugin.DefaultDevicePluginImage); err != nil {
+					if err := m.PullAndLoadImage(cmdExec, clusterCfg.Name, deviceplugin.DefaultDevicePluginImage); err != nil {
 						return fmt.Errorf("failed to load device plugin image: %w", err)
 					}
 				}
@@ -187,7 +191,7 @@ func (m *KindManager) InstallCNI() error {
 		}
 
 		if m.config.DPUClusterNeedsOVNK(clusterCfg.Name) {
-			if err := m.setupOVNKubernetesOffloadToDPUOVS(clusterCfg.Name); err != nil {
+			if err := m.setupOVNKubernetesOffloadToDPUOVS(cmdExec, clusterCfg.Name); err != nil {
 				return fmt.Errorf("failed to setup OVS on DPU containers: %w", err)
 			}
 		}
@@ -198,7 +202,7 @@ func (m *KindManager) InstallCNI() error {
 			return fmt.Errorf("failed to create CNI manager: %w", err)
 		}
 
-		apiServerIP, err := m.GetInternalAPIServerIP(clusterCfg.Name)
+		apiServerIP, err := m.GetInternalAPIServerIP(cmdExec, clusterCfg.Name)
 		if err != nil {
 			return fmt.Errorf("failed to get internal API server IP for cluster %s: %w", clusterCfg.Name, err)
 		}
@@ -328,7 +332,7 @@ func (m *KindManager) ConfigureRegistryOnNode(cmdExec platform.CommandExecutor, 
 }
 
 // GetClusterInfo retrieves information about a Kind cluster
-func (m *KindManager) GetClusterInfo(name string) (*ClusterInfo, error) {
+func (m *KindManager) GetClusterInfo(cmdExec platform.CommandExecutor, name string) (*ClusterInfo, error) {
 	if !m.ClusterExists(name) {
 		return nil, fmt.Errorf("cluster %s does not exist", name)
 	}
@@ -354,12 +358,15 @@ func (m *KindManager) GetClusterInfo(name string) (*ClusterInfo, error) {
 
 		// Check node status using kubectl (still needed for detailed status)
 		status := "Unknown"
-		cmd := exec.Command("kubectl", "get", "node", nodeName,
-			"--context", fmt.Sprintf("kind-%s", name),
-			"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-		output, err := cmd.Output()
+		ctxName := fmt.Sprintf("kind-%s", name)
+		// Execute runs via sh -c; double-quote jsonpath so single quotes inside the filter stay literal.
+		shCmd := fmt.Sprintf(
+			`kubectl get node %q --context %q -o "jsonpath={.status.conditions[?(@.type=='Ready')].status}"`,
+			nodeName, ctxName,
+		)
+		output, _, err := cmdExec.ExecuteWithTimeout(shCmd, 30*time.Second)
 		if err == nil {
-			if strings.TrimSpace(string(output)) == "True" {
+			if strings.TrimSpace(output) == "True" {
 				status = "Ready"
 			} else {
 				status = "NotReady"
@@ -414,16 +421,15 @@ func (m *KindManager) GetKubeconfigContent(name string) (string, error) {
 	return m.provider.KubeConfig(name, false)
 }
 
-// kindCLIEnv is the environment for external `kind` subprocesses. The in-process
-// cluster.Provider may use Podman (ProviderWithPodman); the kind CLI defaults to
-// Docker unless KIND_EXPERIMENTAL_PROVIDER is set, which breaks load/list against
-// Podman-backed clusters (e.g. "no nodes found for cluster ...").
-func (m *KindManager) kindCLIEnv() []string {
-	env := os.Environ()
+// kindExperimentalProviderEnv returns extra environment for external `kind` subprocesses
+// when the node runtime is Podman. The in-process cluster.Provider may use Podman
+// (ProviderWithPodman); the kind CLI defaults to Docker unless KIND_EXPERIMENTAL_PROVIDER
+// is set, which breaks load/list against Podman-backed clusters (e.g. "no nodes found for cluster ...").
+func (m *KindManager) kindExperimentalProviderEnv() []string {
 	if m.containerBin == "podman" {
-		return append(env, "KIND_EXPERIMENTAL_PROVIDER=podman")
+		return []string{"KIND_EXPERIMENTAL_PROVIDER=podman"}
 	}
-	return env
+	return nil
 }
 
 // KindLoadImage loads a container image from the local runtime (same engine Kind uses:
@@ -434,7 +440,7 @@ func (m *KindManager) kindCLIEnv() []string {
 // classic image list. That breaks when images live only in the containerd image
 // store (Docker 27+ default; see kubernetes-sigs/kind#3795) or when images were
 // built with Podman while Kind is configured for the podman provider.
-func (m *KindManager) KindLoadImage(clusterName, imageName string) error {
+func (m *KindManager) KindLoadImage(cmdExec platform.CommandExecutor, clusterName, imageName string) error {
 	if !m.ClusterExists(clusterName) {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
 	}
@@ -452,18 +458,11 @@ func (m *KindManager) KindLoadImage(clusterName, imageName string) error {
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	saveCmd := exec.Command(m.containerBin, "save", "-o", tmpPath, imageName)
-	saveCmd.Stdout = os.Stdout
-	saveCmd.Stderr = os.Stderr
-	if err := saveCmd.Run(); err != nil {
+	if err := cmdExec.RunCmd(log.LevelInfo, m.containerBin, "save", "-o", tmpPath, imageName); err != nil {
 		return fmt.Errorf("failed to save image %q with %s: %w", imageName, m.containerBin, err)
 	}
 
-	loadCmd := exec.Command("kind", "load", "image-archive", tmpPath, "--name", clusterName)
-	loadCmd.Env = m.kindCLIEnv()
-	loadCmd.Stdout = os.Stdout
-	loadCmd.Stderr = os.Stderr
-	if err := loadCmd.Run(); err != nil {
+	if err := cmdExec.RunCmdWithExtraEnv(log.LevelInfo, m.kindExperimentalProviderEnv(), "kind", "load", "image-archive", tmpPath, "--name", clusterName); err != nil {
 		return fmt.Errorf("failed to kind load image archive for %s: %w", imageName, err)
 	}
 
@@ -494,12 +493,12 @@ func (m *KindManager) ExportLogs(clusterName, outputDir string) error {
 // GetInternalAPIServerIP retrieves the internal API server IP for a Kind cluster.
 // This returns the control plane node's IP address on the kind container network,
 // suitable for in-cluster communication (e.g., https://172.18.0.2:6443).
-func (m *KindManager) GetInternalAPIServerIP(clusterName string) (string, error) {
+func (m *KindManager) GetInternalAPIServerIP(cmdExec platform.CommandExecutor, clusterName string) (string, error) {
 	if !m.ClusterExists(clusterName) {
 		return "", fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
-	nodeIP, err := m.getContainerIP(controlPlaneContainer(clusterName))
+	nodeIP, err := m.getContainerIP(cmdExec, controlPlaneContainer(clusterName))
 	if err != nil {
 		return "", err
 	}
@@ -509,22 +508,18 @@ func (m *KindManager) GetInternalAPIServerIP(clusterName string) (string, error)
 }
 
 // PullAndLoadImage pulls a container image from a registry and loads it into a Kind cluster.
-func (m *KindManager) PullAndLoadImage(clusterName, imageName string) error {
+func (m *KindManager) PullAndLoadImage(cmdExec platform.CommandExecutor, clusterName, imageName string) error {
 	if !m.ClusterExists(clusterName) {
 		return fmt.Errorf("cluster %s does not exist", clusterName)
 	}
 
 	log.Info("Pulling image %s...", imageName)
 
-	pullCmd := exec.Command(m.containerBin, "pull", imageName)
-	pullCmd.Stdout = os.Stdout
-	pullCmd.Stderr = os.Stderr
-	if err := pullCmd.Run(); err != nil {
+	if err := cmdExec.RunCmd(log.LevelInfo, m.containerBin, "pull", imageName); err != nil {
 		return fmt.Errorf("failed to pull image %s: %w", imageName, err)
 	}
 
 	log.Info("✓ Pulled image: %s", imageName)
 
-	// Load the image into Kind
-	return m.KindLoadImage(clusterName, imageName)
+	return m.KindLoadImage(cmdExec, clusterName, imageName)
 }

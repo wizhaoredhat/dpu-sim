@@ -40,7 +40,7 @@ func (m *KindManager) BuildAndLoadImagesFromRegistryConfig(cmdExec platform.Comm
 				if !cfg.ClusterNeedsOVNKubernetesImage(cl.Name) {
 					continue
 				}
-				if err := m.KindLoadImage(cl.Name, kindRef); err != nil {
+				if err := m.KindLoadImage(cmdExec, cl.Name, kindRef); err != nil {
 					return fmt.Errorf("kind load %q into cluster %q: %w", kindRef, cl.Name, err)
 				}
 				log.Info("✓ OVN-Kubernetes image loaded into cluster %s", cl.Name)
@@ -60,7 +60,7 @@ func (m *KindManager) BuildAndLoadImagesFromRegistryConfig(cmdExec platform.Comm
 			if err != nil {
 				return fmt.Errorf("prepare device plugin image for Kind: %w", err)
 			}
-			if err := m.KindLoadImage(hostCluster, kindRef); err != nil {
+			if err := m.KindLoadImage(cmdExec, hostCluster, kindRef); err != nil {
 				return fmt.Errorf("kind load device plugin into cluster %q: %w", hostCluster, err)
 			}
 			log.Info("✓ Device plugin image loaded into cluster %s", hostCluster)

@@ -61,6 +61,10 @@ func (f *fakeExecutor) RunCmdInDir(level log.Level, dir string, name string, arg
 	return f.RunCmd(level, name, args...)
 }
 
+func (f *fakeExecutor) RunCmdWithExtraEnv(level log.Level, extraEnv []string, name string, args ...string) error {
+	return f.RunCmd(level, name, args...)
+}
+
 func (f *fakeExecutor) FileExists(path string) (bool, error)                          { return false, nil }
 func (f *fakeExecutor) ReadFile(path string) ([]byte, error)                          { return nil, nil }
 func (f *fakeExecutor) WriteFile(path string, content []byte, mode os.FileMode) error { return nil }

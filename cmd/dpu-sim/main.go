@@ -284,7 +284,7 @@ func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryMana
 		if err := buildAndLoadKindRegistryImages(cfg, kindMgr); err != nil {
 			return fmt.Errorf("failed to build/load registry images into Kind: %w", err)
 		}
-		if err := doKindInstallCNI(kindMgr); err != nil {
+		if err := doKindInstallCNI(kindMgr, platform.NewLocalExecutor()); err != nil {
 			return fmt.Errorf("CNI installation failed: %w", err)
 		}
 	} else {
@@ -416,8 +416,9 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registr
 		log.Info("Registry IP on kind network: %s", registryIP)
 	}
 
+	hostExec := platform.NewLocalExecutor()
 	for _, cluster := range cfg.Kubernetes.Clusters {
-		info, err := kindMgr.GetClusterInfo(cluster.Name)
+		info, err := kindMgr.GetClusterInfo(hostExec, cluster.Name)
 		if err != nil {
 			log.Warn("Warning: failed to get info for %s: %v", cluster.Name, err)
 			continue
@@ -451,10 +452,10 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registr
 	return nil
 }
 
-func doKindInstallCNI(kindMgr *kind.KindManager) error {
+func doKindInstallCNI(kindMgr *kind.KindManager, cmdExec platform.CommandExecutor) error {
 	log.Info("\n=== Installing CNI on Kind clusters ===")
 
-	if err := kindMgr.InstallCNI(); err != nil {
+	if err := kindMgr.InstallCNI(cmdExec); err != nil {
 		return fmt.Errorf("failed to deploy CNI: %w", err)
 	}
 	return nil
