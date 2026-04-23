@@ -225,8 +225,9 @@ func (e *LocalExecutor) RunCmd(level log.Level, name string, args ...string) err
 	name, args = stripSudoCmd(e.HasSudo(), name, args)
 	cmd := exec.Command(name, args...)
 
-	// If the requested level is visible, stream to stdout/stderr
+	// If the requested level is visible, stream to stdout/stderr/stdin
 	if level <= log.GetLevel() {
+		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
@@ -250,8 +251,9 @@ func (e *LocalExecutor) RunCmdInDir(level log.Level, dir string, name string, ar
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 
-	// If the requested level is visible, stream to stdout/stderr
+	// If the requested level is visible, stream to stdout/stderr/stdin
 	if level <= log.GetLevel() {
+		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
@@ -278,6 +280,7 @@ func (e *LocalExecutor) RunCmdWithExtraEnv(level log.Level, extraEnv []string, n
 	}
 
 	if level <= log.GetLevel() {
+		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 const tftVenvDir = ".tft-venv"
@@ -116,7 +117,7 @@ func PythonForTFTRun(tftRepo, override string) (string, error) {
 
 // EnsureVenv creates tftRepo/.tft-venv when missing (using hostPython), then pip installs requirements.txt.
 // If a venv already exists, python -m venv is skipped; pip steps still run.
-func EnsureVenv(tftRepo, hostPython string) error {
+func EnsureVenv(cmdExec platform.CommandExecutor, tftRepo, hostPython string) error {
 	tftRepo = strings.TrimSpace(tftRepo)
 	if tftRepo == "" {
 		return fmt.Errorf("tft repo path is empty")
@@ -142,13 +143,9 @@ func EnsureVenv(tftRepo, hostPython string) error {
 		}
 
 		log.Info("Creating TFT venv at %s using %s", venvPath, hostPy)
-		create := exec.Command(hostPy, "-m", "venv", venvPath)
-		create.Dir = tftRepo
-		out, err := create.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("python -m venv: %w\n%s", err, strings.TrimSpace(string(out)))
+		if err := cmdExec.RunCmdInDir(log.LevelInfo, tftRepo, hostPy, "-m", "venv", venvPath); err != nil {
+			return fmt.Errorf("python -m venv: %w", err)
 		}
-		_ = out
 		py, ok = VenvPython(tftRepo)
 		if !ok {
 			return fmt.Errorf("venv python not found under %s after venv create", venvPath)
@@ -159,15 +156,12 @@ func EnsureVenv(tftRepo, hostPython string) error {
 	if err := CheckTFTPythonVersion(py); err != nil {
 		return fmt.Errorf("TFT venv interpreter %s: %w", py, err)
 	}
-	for _, args := range [][]string{
-		{py, "-m", "pip", "install", "-U", "pip"},
-		{py, "-m", "pip", "install", "-r", "requirements.txt"},
+	for _, step := range [][]string{
+		{"-m", "pip", "install", "-U", "pip"},
+		{"-m", "pip", "install", "-r", "requirements.txt"},
 	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = tftRepo
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		args := append([]string{py}, step...)
+		if err := cmdExec.RunCmdInDir(log.LevelInfo, tftRepo, args[0], args[1:]...); err != nil {
 			return fmt.Errorf("%s: %w", strings.Join(args, " "), err)
 		}
 	}
