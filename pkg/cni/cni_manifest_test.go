@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 func TestShouldUseWritableCNIBinDir(t *testing.T) {
@@ -60,7 +61,7 @@ func TestShouldUseWritableCNIBinDir(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			m, err := NewCNIManager(tt.cfg)
+			m, err := NewCNIManager(tt.cfg, platform.NewLocalExecutor())
 			if err != nil {
 				t.Fatal(err)
 			}

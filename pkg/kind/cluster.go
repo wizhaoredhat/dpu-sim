@@ -197,7 +197,7 @@ func (m *KindManager) InstallCNI(cmdExec platform.CommandExecutor) error {
 		}
 
 		kubeconfigPath := k8s.GetKubeconfigPath(clusterCfg.Name, m.config.Kubernetes.GetKubeconfigDir())
-		cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath)
+		cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath, cmdExec)
 		if err != nil {
 			return fmt.Errorf("failed to create CNI manager: %w", err)
 		}
@@ -220,7 +220,7 @@ func (m *KindManager) InstallCNI(cmdExec platform.CommandExecutor) error {
 		}
 	}
 
-	if err := cni.PostInstall(m.config); err != nil {
+	if err := cni.PostInstall(m.config, cmdExec); err != nil {
 		return fmt.Errorf("failed CNI post-install after all Kind clusters: %w", err)
 	}
 

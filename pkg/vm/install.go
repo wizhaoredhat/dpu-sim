@@ -242,7 +242,8 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 	}
 
 	kubeconfigPath := k8s.GetKubeconfigPath(clusterName, m.config.Kubernetes.KubeconfigDir)
-	cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath)
+	hostLocalExec := platform.NewLocalExecutor()
+	cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath, hostLocalExec)
 	if err != nil {
 		return fmt.Errorf("failed to create CNI manager: %w", err)
 	}
@@ -379,7 +380,7 @@ func (m *VMManager) SetupAllK8sClusters() error {
 			return fmt.Errorf("failed to setup Kubernetes cluster %s: %w", clusterCfg.Name, err)
 		}
 	}
-	if err := cni.PostInstall(m.config); err != nil {
+	if err := cni.PostInstall(m.config, platform.NewLocalExecutor()); err != nil {
 		return fmt.Errorf("failed CNI post-install after all clusters: %w", err)
 	}
 	return nil

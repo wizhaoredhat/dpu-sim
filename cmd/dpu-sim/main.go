@@ -119,7 +119,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 		if redeployCNI {
 			log.Info("\n=== Redeploying CNI images ===")
-			cniMgr, err := cni.NewCNIManager(cfg)
+			cniMgr, err := cni.NewCNIManager(cfg, localExec)
 			if err != nil {
 				return fmt.Errorf("failed to create CNI manager: %w", err)
 			}
@@ -179,7 +179,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	case config.VMDeploymentMode:
 		return runVMDeploymentWorkflow(cfg, regMgr)
 	case config.KindDeploymentMode:
-		return runKindDeploymentWorkflow(cfg, regMgr)
+		return runKindDeploymentWorkflow(cfg, regMgr, localExec)
 	default:
 		return fmt.Errorf("unknown deployment mode: %s", deployMode)
 	}
@@ -238,7 +238,7 @@ func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManage
 	return nil
 }
 
-func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManager) error {
+func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManager, hostExec platform.CommandExecutor) error {
 	log.Info("")
 	log.Info("╔═══════════════════════════════════════════════╗")
 	log.Info("║      Kind-Based Deployment Workflow           ║")
@@ -267,12 +267,12 @@ func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryMana
 
 	if !skipDeploy {
 		log.Info("\n=== Ensuring Kind host prerequisites ===")
-		if err := kindMgr.InstallHostDependencies(platform.NewLocalExecutor()); err != nil {
+		if err := kindMgr.InstallHostDependencies(hostExec); err != nil {
 			return fmt.Errorf("failed to configure Kind host prerequisites: %w", err)
 		}
 
 		log.Info("\n=== Deploying Kind clusters ===")
-		if err := doKindDeploy(cfg, kindMgr, regMgr); err != nil {
+		if err := doKindDeploy(cfg, kindMgr, regMgr, hostExec); err != nil {
 			return fmt.Errorf("kind deployment failed: %w", err)
 		}
 	} else {
@@ -281,10 +281,10 @@ func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryMana
 
 	if !skipK8s {
 		log.Info("\n=== Installing CNI ===")
-		if err := buildAndLoadKindRegistryImages(cfg, kindMgr); err != nil {
+		if err := buildAndLoadKindRegistryImages(cfg, kindMgr, hostExec); err != nil {
 			return fmt.Errorf("failed to build/load registry images into Kind: %w", err)
 		}
-		if err := doKindInstallCNI(kindMgr, platform.NewLocalExecutor()); err != nil {
+		if err := doKindInstallCNI(kindMgr, hostExec); err != nil {
 			return fmt.Errorf("CNI installation failed: %w", err)
 		}
 	} else {
@@ -380,22 +380,21 @@ func doVMInstallK8s(vmMgr *vm.VMManager) error {
 	return nil
 }
 
-func buildAndLoadKindRegistryImages(cfg *config.Config, kindMgr *kind.KindManager) error {
+func buildAndLoadKindRegistryImages(cfg *config.Config, kindMgr *kind.KindManager, hostExec platform.CommandExecutor) error {
 	if !(cfg.IsRegistryImageBuildOnly() && cfg.IsKindMode()) {
 		return nil
 	}
-	localExec := platform.NewLocalExecutor()
-	engine, err := containerengine.NewProjectEngine(localExec)
+	engine, err := containerengine.NewProjectEngine(hostExec)
 	if err != nil {
 		return fmt.Errorf("failed to select container engine: %w", err)
 	}
-	if err := kindMgr.BuildAndLoadImagesFromRegistryConfig(localExec, engine); err != nil {
+	if err := kindMgr.BuildAndLoadImagesFromRegistryConfig(hostExec, engine); err != nil {
 		return fmt.Errorf("failed to build/load registry images into Kind: %w", err)
 	}
 	return nil
 }
 
-func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registry.RegistryManager) error {
+func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registry.RegistryManager, hostExec platform.CommandExecutor) error {
 	log.Info("\n=== Creating Kind Clusters ===")
 	if err := kindMgr.DeployAllClusters(); err != nil {
 		return fmt.Errorf("failed to deploy Kind clusters: %w", err)
@@ -416,7 +415,6 @@ func doKindDeploy(cfg *config.Config, kindMgr *kind.KindManager, regMgr *registr
 		log.Info("Registry IP on kind network: %s", registryIP)
 	}
 
-	hostExec := platform.NewLocalExecutor()
 	for _, cluster := range cfg.Kubernetes.Clusters {
 		info, err := kindMgr.GetClusterInfo(hostExec, cluster.Name)
 		if err != nil {

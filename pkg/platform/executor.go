@@ -76,6 +76,46 @@ type CommandExecutor interface {
 	String() string
 }
 
+// ShQuote returns s wrapped in single quotes for use in POSIX shell commands,
+// with any embedded single quotes escaped for sh -c.
+func ShQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// RunCommandInDir runs name with args in the executor's shell via ExecuteWithTimeout,
+// optionally prefixing with cd dir when dir is non-empty.
+func RunCommandInDir(
+	cmdExec CommandExecutor,
+	dir string,
+	name string,
+	args []string,
+	timeout time.Duration,
+) (stdout, stderr string, err error) {
+	var sb strings.Builder
+	if dir != "" {
+		sb.WriteString("cd ")
+		sb.WriteString(ShQuote(dir))
+		sb.WriteString(" && ")
+	}
+	sb.WriteString(ShQuote(name))
+	for _, a := range args {
+		sb.WriteString(" ")
+		sb.WriteString(ShQuote(a))
+	}
+	return cmdExec.ExecuteWithTimeout(sb.String(), timeout)
+}
+
+// CombinedCmdOutput joins stdout and stderr similarly to exec.Cmd.CombinedOutput for logs and errors.
+func CombinedCmdOutput(stdout, stderr string) string {
+	if stderr == "" {
+		return stdout
+	}
+	if stdout == "" {
+		return stderr
+	}
+	return stdout + "\n" + stderr
+}
+
 // stripSudoCmd removes "sudo" from RunCmd-style arguments when sudo is
 // unavailable.
 func stripSudoCmd(hasSudo bool, name string, args []string) (string, []string) {

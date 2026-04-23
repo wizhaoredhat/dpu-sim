@@ -14,6 +14,7 @@ import (
 	"github.com/wizhao/dpu-sim/pkg/deviceplugin"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // PostInstallPerCluster applies cluster-environment patches after the CNI, device plugin
@@ -41,15 +42,19 @@ func (m *CNIManager) PostInstallPerCluster(clusterName string) error {
 // PostInstall runs after every configured cluster has been installed successfully.
 // It restores CoreDNS and local-path-provisioner replica counts, then rollout-restarts
 // them so new pods pick up stable CNI wiring.
-func PostInstall(cfg *config.Config) error {
+// cmdExec is required and forwarded to each cluster's CNIManager (use the same executor as CNI install when applicable).
+func PostInstall(cfg *config.Config, cmdExec platform.CommandExecutor) error {
 	if cfg == nil {
 		return fmt.Errorf("cni post-install: config is nil")
+	}
+	if cmdExec == nil {
+		return fmt.Errorf("cni post-install: command executor is nil")
 	}
 
 	log.Info("\n=== Post-install (all clusters): restoring CoreDNS / local-path-provisioner and rolling out ===")
 	for _, clusterCfg := range cfg.ClustersOrderedForInstall() {
 		kubeconfigPath := k8s.GetKubeconfigPath(clusterCfg.Name, cfg.Kubernetes.GetKubeconfigDir())
-		cniMgr, err := NewCNIManagerWithKubeconfigFile(cfg, kubeconfigPath)
+		cniMgr, err := NewCNIManagerWithKubeconfigFile(cfg, kubeconfigPath, cmdExec)
 		if err != nil {
 			return fmt.Errorf("cni post-install for cluster %s: %w", clusterCfg.Name, err)
 		}

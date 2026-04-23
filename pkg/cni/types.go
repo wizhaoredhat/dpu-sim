@@ -6,6 +6,7 @@ import (
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 const (
@@ -16,6 +17,8 @@ const (
 // CNIManager manages CNI installations
 type CNIManager struct {
 	config *config.Config
+	// cmdExec runs external tools (helm, etc.) in the environment where kubeconfigPath is valid.
+	cmdExec platform.CommandExecutor
 	// k8sClient is an optional Kubernetes client for direct API access
 	k8sClient *k8s.K8sClient
 	// kubeconfigPath is the path to the kubeconfig file used for the
@@ -26,17 +29,25 @@ type CNIManager struct {
 
 // NewCNIManager creates a new CNI manager with only a config.
 // Use this for operations that do not require Kubernetes API access.
-func NewCNIManager(cfg *config.Config) (*CNIManager, error) {
+// cmdExec is required; it runs host-local tools such as helm (typically platform.NewLocalExecutor()).
+func NewCNIManager(cfg *config.Config, cmdExec platform.CommandExecutor) (*CNIManager, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("failed to create CNI manager: config is nil")
 	}
-	return &CNIManager{config: cfg}, nil
+	if cmdExec == nil {
+		return nil, fmt.Errorf("failed to create CNI manager: command executor is nil")
+	}
+	return &CNIManager{config: cfg, cmdExec: cmdExec}, nil
 }
 
-// NewCNIManagerWithKubeconfig creates a new CNI manager with Kubernetes client from kubeconfig content
-func NewCNIManagerWithKubeconfigFile(cfg *config.Config, kubeconfigPath string) (*CNIManager, error) {
+// NewCNIManagerWithKubeconfigFile creates a CNI manager with a Kubernetes client loaded from kubeconfigPath.
+// cmdExec is required; it runs host-local tools such as helm (typically platform.NewLocalExecutor()).
+func NewCNIManagerWithKubeconfigFile(cfg *config.Config, kubeconfigPath string, cmdExec platform.CommandExecutor) (*CNIManager, error) {
 	if kubeconfigPath == "" {
 		return nil, fmt.Errorf("failed to create Kubernetes client from kubeconfig file: kubeconfig file path is empty")
+	}
+	if cmdExec == nil {
+		return nil, fmt.Errorf("failed to create CNI manager: command executor is nil")
 	}
 
 	absPath, err := filepath.Abs(kubeconfigPath)
@@ -51,6 +62,7 @@ func NewCNIManagerWithKubeconfigFile(cfg *config.Config, kubeconfigPath string) 
 
 	return &CNIManager{
 		config:         cfg,
+		cmdExec:        cmdExec,
 		k8sClient:      k8sClient,
 		kubeconfigPath: absPath,
 	}, nil
