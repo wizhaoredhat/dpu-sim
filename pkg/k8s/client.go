@@ -444,10 +444,10 @@ func (c *K8sClient) GetNode(name string) (*corev1.Node, error) {
 
 // LabelNode adds or updates labels on a node
 func (c *K8sClient) LabelNode(name string, labels map[string]string) error {
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get node %s: %w", name, err)
@@ -471,10 +471,10 @@ func (c *K8sClient) LabelNode(name string, labels map[string]string) error {
 
 // AnnotateNode adds or updates annotations on a node
 func (c *K8sClient) AnnotateNode(name string, annotations map[string]string) error {
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get node %s: %w", name, err)
@@ -498,10 +498,10 @@ func (c *K8sClient) AnnotateNode(name string, annotations map[string]string) err
 
 // RemoveNodeTaint removes a taint from a node by key and effect (best effort, ignores if not found)
 func (c *K8sClient) RemoveNodeTaint(name string, taintKey string, effect corev1.TaintEffect) error {
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		node, err := c.clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get node %s: %w", name, err)

@@ -112,6 +112,25 @@ func TestLocalExecutor_RunCmd(t *testing.T) {
 	})
 }
 
+func TestLocalExecutor_RunCmdWithExtraEnv(t *testing.T) {
+	cmdExec := NewLocalExecutor()
+	log.SetLevel(log.LevelInfo)
+
+	err := cmdExec.RunCmdWithExtraEnv(
+		log.LevelInfo,
+		[]string{"DPU_SIM_EXECUTOR_TEST=xyzzy"},
+		"sh", "-c", `test "$DPU_SIM_EXECUTOR_TEST" = xyzzy`,
+	)
+	if err != nil {
+		t.Errorf("RunCmdWithExtraEnv() unexpected error: %v", err)
+	}
+
+	err = cmdExec.RunCmdWithExtraEnv(log.LevelInfo, nil, "true")
+	if err != nil {
+		t.Errorf("RunCmdWithExtraEnv(nil extraEnv) unexpected error: %v", err)
+	}
+}
+
 func TestLocalExecutor_WriteFile(t *testing.T) {
 	cmdExec := NewLocalExecutor()
 
@@ -257,6 +276,25 @@ func (e *MockExecutor) ExecuteWithTimeout(command string, timeout time.Duration)
 
 func (e *MockExecutor) RunCmd(level log.Level, name string, args ...string) error {
 	cmd := name
+	for _, arg := range args {
+		cmd += " " + arg
+	}
+	e.Commands = append(e.Commands, cmd)
+	if e.ShouldFail || e.FailOnCommands[cmd] {
+		return os.ErrNotExist
+	}
+	return nil
+}
+
+func (e *MockExecutor) RunCmdWithExtraEnv(level log.Level, extraEnv []string, name string, args ...string) error {
+	if len(extraEnv) == 0 {
+		return e.RunCmd(level, name, args...)
+	}
+	cmd := "env"
+	for _, kv := range extraEnv {
+		cmd += " " + kv
+	}
+	cmd += " " + name
 	for _, arg := range args {
 		cmd += " " + arg
 	}

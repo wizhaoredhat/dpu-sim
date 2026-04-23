@@ -139,7 +139,7 @@ func BuildCNIImageWithRuntime(
 
 // RedeployCNI triggers a rolling restart of the CNI components on the specified
 // cluster so that pods pick up the newly built image. Requires a Kubernetes
-// client (use NewCNIManagerWithKubeconfig or NewCNIManagerWithKubeconfigFile).
+// client and CommandExecutor.
 func (m *CNIManager) RedeployCNI(clusterName string) error {
 	cniType := m.config.GetCNIType(clusterName)
 

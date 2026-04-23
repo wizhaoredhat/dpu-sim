@@ -1,12 +1,11 @@
 package cni
 
 import (
-	"bytes"
 	"fmt"
-	"os/exec"
 	"time"
 
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 const (
@@ -62,16 +61,10 @@ func (m *CNIManager) renderWhereaboutsHelmManifest() ([]byte, error) {
 		args = append(args, "--kubeconfig", m.kubeconfigPath)
 	}
 
-	cmd := exec.Command("helm", args...)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	stdout, stderr, err := platform.RunCommandInDir(m.cmdExec, "", "helm", args, 15*time.Minute)
 	if err != nil {
-		return nil, fmt.Errorf("failed to render whereabouts helm chart: %s\n%s", err, stderr.String())
+		return nil, fmt.Errorf("failed to render whereabouts helm chart: %w\n%s", err, platform.CombinedCmdOutput(stdout, stderr))
 	}
 
-	return stdout.Bytes(), nil
+	return []byte(stdout), nil
 }

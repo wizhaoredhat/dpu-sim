@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -149,9 +148,7 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) erro
 		return fmt.Errorf("failed to patch CoreDNS: %w", err)
 	}
 
-	localExec := platform.NewLocalExecutor()
-
-	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
+	ovnKPath, err := EnsureOVNKubernetesSource(m.cmdExec)
 	if err != nil {
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
@@ -161,11 +158,11 @@ func (m *CNIManager) installOVNKubernetes(clusterName string, k8sIP string) erro
 		!m.config.IsRegistryEnabled() &&
 		!(m.config.IsRegistryImageBuildOnly() && m.config.IsKindMode())
 	if needsInstallTimeOVNKBuild {
-		engine, err := containerengine.NewProjectEngine(localExec)
+		engine, err := containerengine.NewProjectEngine(m.cmdExec)
 		if err != nil {
 			return fmt.Errorf("failed to create project engine: %w", err)
 		}
-		if err := BuildOVNKubernetesImageWithEngine(localExec, engine, regContainer.Tag, ""); err != nil {
+		if err := BuildOVNKubernetesImageWithEngine(m.cmdExec, engine, regContainer.Tag, ""); err != nil {
 			return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
 		}
 	}
@@ -332,16 +329,14 @@ func (m *CNIManager) runHelmInstall(mode ovnkMode, clusterName, ovnkRepoPath, ap
 	log.Info("Running Helm install for OVN-Kubernetes (mode=%s, chart: %s)...", mode, chartPath)
 	log.Debug("Helm args: %v", args)
 
-	cmd := exec.Command("helm", args...)
-	cmd.Dir = chartPath
-
-	output, err := cmd.CombinedOutput()
+	stdout, stderr, err := platform.RunCommandInDir(m.cmdExec, chartPath, "helm", args, 45*time.Minute)
+	output := platform.CombinedCmdOutput(stdout, stderr)
 	if err != nil {
-		return fmt.Errorf("helm install failed (mode=%s): %s\n%s", mode, err, string(output))
+		return fmt.Errorf("helm install failed (mode=%s): %w\n%s", mode, err, output)
 	}
 
 	log.Info("✓ Helm install completed successfully (mode=%s)", mode)
-	log.Debug("Helm output: %s", string(output))
+	log.Debug("Helm output: %s", output)
 	return nil
 }
 
@@ -399,9 +394,7 @@ func (m *CNIManager) installExternalCRDs() error {
 func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
 	log.Info("Redeploying OVN-Kubernetes via Helm on cluster %s...", clusterName)
 
-	localExec := platform.NewLocalExecutor()
-
-	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
+	ovnKPath, err := EnsureOVNKubernetesSource(m.cmdExec)
 	if err != nil {
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
@@ -423,16 +416,14 @@ func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
 	}
 
 	log.Info("Running helm upgrade for OVN-Kubernetes...")
-	cmd := exec.Command("helm", args...)
-	cmd.Dir = chartPath
-
-	output, err := cmd.CombinedOutput()
+	stdout, stderr, err := platform.RunCommandInDir(m.cmdExec, chartPath, "helm", args, 45*time.Minute)
+	output := platform.CombinedCmdOutput(stdout, stderr)
 	if err != nil {
-		return fmt.Errorf("helm upgrade failed: %s\n%s", err, string(output))
+		return fmt.Errorf("helm upgrade failed: %w\n%s", err, output)
 	}
 
 	log.Info("✓ Helm upgrade completed successfully")
-	log.Debug("Helm upgrade output: %s", string(output))
+	log.Debug("Helm upgrade output: %s", output)
 
 	if err := m.k8sClient.WaitForPodsReady("ovn-kubernetes", "", 5*time.Minute); err != nil {
 		log.Warn("Warning: OVN-Kubernetes pods may not be ready after Helm upgrade: %v", err)
@@ -1125,14 +1116,12 @@ func (m *CNIManager) installOVNKubernetesDaemonset(clusterName string, k8sIP str
 		return fmt.Errorf("failed to patch CoreDNS: %w", err)
 	}
 
-	localExec := platform.NewLocalExecutor()
-
-	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
+	ovnKPath, err := EnsureOVNKubernetesSource(m.cmdExec)
 	if err != nil {
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}
 
-	if err := BuildOVNKubernetesImage(localExec, DefaultOVNKubeImage, ""); err != nil {
+	if err := BuildOVNKubernetesImage(m.cmdExec, DefaultOVNKubeImage, ""); err != nil {
 		return fmt.Errorf("failed to build OVN-Kubernetes image: %w", err)
 	}
 
@@ -1236,12 +1225,11 @@ func (m *CNIManager) runDaemonsetScript(ovnkRepoPath, apiServerURL, podCIDR, ser
 	}
 
 	log.Info("Running daemonset.sh to generate manifests...")
-	cmd := exec.Command(daemonsetScript, args...)
-	cmd.Dir = filepath.Dir(daemonsetScript)
-
-	output, err := cmd.CombinedOutput()
+	scriptDir := filepath.Dir(daemonsetScript)
+	stdout, stderr, err := platform.RunCommandInDir(m.cmdExec, scriptDir, daemonsetScript, args, 45*time.Minute)
+	output := platform.CombinedCmdOutput(stdout, stderr)
 	if err != nil {
-		return fmt.Errorf("daemonset.sh failed stdout: %s, stderr: %s", output, err)
+		return fmt.Errorf("daemonset.sh failed: %w\n%s", err, output)
 	}
 
 	log.Info("✓ daemonset.sh completed successfully")
@@ -1356,8 +1344,7 @@ func (m *CNIManager) applyOVNKubernetesManifests(ovnPath string, clusterName str
 func (m *CNIManager) redeployOVNKubernetesDaemonset(clusterName string) error { //nolint:unused
 	log.Info("Redeploying OVN-Kubernetes on cluster %s...", clusterName)
 
-	localExec := platform.NewLocalExecutor()
-	ovnKPath, err := EnsureOVNKubernetesSource(localExec)
+	ovnKPath, err := EnsureOVNKubernetesSource(m.cmdExec)
 	if err != nil {
 		return fmt.Errorf("failed to ensure OVN-Kubernetes source: %w", err)
 	}

@@ -45,6 +45,10 @@ type CommandExecutor interface {
 	// Behaves like RunCmd but sets the working directory before execution.
 	RunCmdInDir(level log.Level, dir string, name string, args ...string) error
 
+	// RunCmdWithExtraEnv runs a command with the executor's usual subprocess environment
+	// plus extraEnv (each element "KEY=value"). When extraEnv is empty, behavior matches RunCmd.
+	RunCmdWithExtraEnv(level log.Level, extraEnv []string, name string, args ...string) error
+
 	// FileExists checks if a file or directory exists on the target system
 	FileExists(path string) (bool, error)
 
@@ -70,6 +74,46 @@ type CommandExecutor interface {
 
 	// String returns a description of this executor (for logging)
 	String() string
+}
+
+// ShQuote returns s wrapped in single quotes for use in POSIX shell commands,
+// with any embedded single quotes escaped for sh -c.
+func ShQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// RunCommandInDir runs name with args in the executor's shell via ExecuteWithTimeout,
+// optionally prefixing with cd dir when dir is non-empty.
+func RunCommandInDir(
+	cmdExec CommandExecutor,
+	dir string,
+	name string,
+	args []string,
+	timeout time.Duration,
+) (stdout, stderr string, err error) {
+	var sb strings.Builder
+	if dir != "" {
+		sb.WriteString("cd ")
+		sb.WriteString(ShQuote(dir))
+		sb.WriteString(" && ")
+	}
+	sb.WriteString(ShQuote(name))
+	for _, a := range args {
+		sb.WriteString(" ")
+		sb.WriteString(ShQuote(a))
+	}
+	return cmdExec.ExecuteWithTimeout(sb.String(), timeout)
+}
+
+// CombinedCmdOutput joins stdout and stderr similarly to exec.Cmd.CombinedOutput for logs and errors.
+func CombinedCmdOutput(stdout, stderr string) string {
+	if stderr == "" {
+		return stdout
+	}
+	if stdout == "" {
+		return stderr
+	}
+	return stdout + "\n" + stderr
 }
 
 // stripSudoCmd removes "sudo" from RunCmd-style arguments when sudo is
@@ -214,6 +258,31 @@ func (e *LocalExecutor) RunCmdInDir(level log.Level, dir string, name string, ar
 	}
 
 	// Otherwise capture output silently
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdoutBuf.String(), stderrBuf.String())
+	}
+	return nil
+}
+
+// RunCmdWithExtraEnv runs a command locally with optional extra environment variables.
+func (e *LocalExecutor) RunCmdWithExtraEnv(level log.Level, extraEnv []string, name string, args ...string) error {
+	name, args = stripSudoCmd(e.HasSudo(), name, args)
+	cmd := exec.Command(name, args...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
+
+	if level <= log.GetLevel() {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
@@ -380,6 +449,41 @@ func (e *SSHExecutor) RunCmdInDir(level log.Level, dir string, name string, args
 	}
 
 	// Otherwise only include output in error
+	if err != nil {
+		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	return nil
+}
+
+// RunCmdWithExtraEnv runs a command on the remote host with extra environment variables.
+func (e *SSHExecutor) RunCmdWithExtraEnv(level log.Level, extraEnv []string, name string, args ...string) error {
+	if len(extraEnv) == 0 {
+		return e.RunCmd(level, name, args...)
+	}
+	name, args = stripSudoCmd(e.HasSudo(), name, args)
+	command := "env "
+	for _, kv := range extraEnv {
+		escaped := strings.ReplaceAll(kv, "'", "'\"'\"'")
+		command += "'" + escaped + "' "
+	}
+	command += "'" + strings.ReplaceAll(name, "'", "'\"'\"'") + "'"
+	for _, arg := range args {
+		escaped := strings.ReplaceAll(arg, "'", "'\"'\"'")
+		command += " '" + escaped + "'"
+	}
+
+	stdout, stderr, err := e.ExecuteWithTimeout(command, 5*time.Minute)
+
+	if level <= log.GetLevel() {
+		if stdout != "" {
+			fmt.Print(stdout)
+		}
+		if stderr != "" {
+			fmt.Fprint(os.Stderr, stderr)
+		}
+		return err
+	}
+
 	if err != nil {
 		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
@@ -556,6 +660,35 @@ func (e *DockerExecutor) RunCmdInDir(level log.Level, dir string, name string, a
 	}
 
 	// Otherwise capture output silently
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("command failed: %w\nstdout: %s\nstderr: %s", err, stdoutBuf.String(), stderrBuf.String())
+	}
+	return nil
+}
+
+// RunCmdWithExtraEnv runs a command inside the container with extra environment variables.
+func (e *DockerExecutor) RunCmdWithExtraEnv(level log.Level, extraEnv []string, name string, args ...string) error {
+	name, args = stripSudoCmd(e.HasSudo(), name, args)
+	dockerArgs := []string{"exec"}
+	for _, kv := range extraEnv {
+		dockerArgs = append(dockerArgs, "-e", kv)
+	}
+	dockerArgs = append(dockerArgs, e.containerID, name)
+	dockerArgs = append(dockerArgs, args...)
+
+	cmd := exec.Command(e.containerBin, dockerArgs...)
+
+	if level <= log.GetLevel() {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf

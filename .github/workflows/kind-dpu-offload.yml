@@ -21,6 +21,9 @@ jobs:
       - name: Checkout OVN-Kubernetes submodule
         run: git submodule update --init --recursive ovn-kubernetes
 
+      - name: Checkout kubernetes-traffic-flow-tests submodule
+        run: git submodule update --init --recursive kubernetes-traffic-flow-tests
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -32,6 +35,11 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@v4
+
+      - name: Set up Python for traffic flow tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install kind
         run: |
@@ -68,6 +76,12 @@ jobs:
             --kubeconfig kubeconfig/dpu-sim-host.kubeconfig --timeout=25m
           kubectl wait --for=condition=Ready nodes --all \
             --kubeconfig kubeconfig/dpu-sim-dpu.kubeconfig --timeout=25m
+
+      - name: TFT Python venv
+        run: ./bin/dpu-sim tft venv --config config-kind-ovnk-offload.yaml
+
+      - name: Run traffic flow tests
+        run: ./bin/dpu-sim tft run --config config-kind-ovnk-offload.yaml
 
       - name: Export kind logs on failure
         if: failure()
