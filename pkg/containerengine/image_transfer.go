@@ -11,9 +11,14 @@ import (
 // ImagePresentInRuntime returns an error if imageRef is not in the local image store
 // for the given container runtime CLI.
 func ImagePresentInRuntime(cmdExec platform.CommandExecutor, runtimeBin, imageRef string) error {
-	_, _, err := cmdExec.Execute(fmt.Sprintf("%s image inspect %q >/dev/null 2>&1", runtimeBin, imageRef))
+	shCmd := fmt.Sprintf(
+		"%s image inspect %s >/dev/null 2>&1",
+		platform.ShQuote(runtimeBin),
+		platform.ShQuote(imageRef),
+	)
+	_, _, err := cmdExec.Execute(shCmd)
 	if err != nil {
-		return fmt.Errorf("image %q is not present in container runtime %s", imageRef, runtimeBin)
+		return fmt.Errorf("image %s is not present in container runtime %s: %w", imageRef, runtimeBin, err)
 	}
 	return nil
 }
