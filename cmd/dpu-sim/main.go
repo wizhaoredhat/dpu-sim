@@ -179,7 +179,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	case config.VMDeploymentMode:
 		return runVMDeploymentWorkflow(cfg, regMgr, localExec)
 	case config.KindDeploymentMode:
-		return runKindDeploymentWorkflow(cfg, regMgr, localExec)
+		return runKindDeploymentWorkflow(cfg, regMgr, localExec, engine)
 	default:
 		return fmt.Errorf("unknown deployment mode: %s", deployMode)
 	}
@@ -238,7 +238,7 @@ func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManage
 	return nil
 }
 
-func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManager, hostExec platform.CommandExecutor) error {
+func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManager, hostExec platform.CommandExecutor, engine containerengine.Engine) error {
 	log.Info("")
 	log.Info("╔═══════════════════════════════════════════════╗")
 	log.Info("║      Kind-Based Deployment Workflow           ║")
@@ -281,7 +281,7 @@ func runKindDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryMana
 
 	if !skipK8s {
 		log.Info("\n=== Installing CNI ===")
-		if err := buildAndLoadKindRegistryImages(cfg, kindMgr, hostExec); err != nil {
+		if err := buildAndLoadKindRegistryImages(cfg, kindMgr, hostExec, engine); err != nil {
 			return fmt.Errorf("failed to build/load registry images into Kind: %w", err)
 		}
 		if err := doKindInstallCNI(kindMgr, hostExec); err != nil {
@@ -380,13 +380,9 @@ func doVMInstallK8s(vmMgr *vm.VMManager) error {
 	return nil
 }
 
-func buildAndLoadKindRegistryImages(cfg *config.Config, kindMgr *kind.KindManager, hostExec platform.CommandExecutor) error {
+func buildAndLoadKindRegistryImages(cfg *config.Config, kindMgr *kind.KindManager, hostExec platform.CommandExecutor, engine containerengine.Engine) error {
 	if !(cfg.IsRegistryImageBuildOnly() && cfg.IsKindMode()) {
 		return nil
-	}
-	engine, err := containerengine.NewProjectEngine(hostExec)
-	if err != nil {
-		return fmt.Errorf("failed to select container engine: %w", err)
 	}
 	if err := kindMgr.BuildAndLoadImagesFromRegistryConfig(hostExec, engine); err != nil {
 		return fmt.Errorf("failed to build/load registry images into Kind: %w", err)
