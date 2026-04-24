@@ -97,6 +97,14 @@ jobs:
           path: /tmp/kind-offload-logs
           if-no-files-found: ignore
 
+      - name: Upload TFT results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tft-results
+          path: kubernetes-traffic-flow-tests/ft-logs
+          if-no-files-found: ignore
+
       - name: Cleanup
         if: always()
         run: ./bin/dpu-sim --config config-kind-ovnk-offload.yaml --cleanup || true
