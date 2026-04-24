@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
 // TestEnsureCloudImageUsesOCIRef verifies EnsureCloudImage delegates to the
@@ -33,7 +34,7 @@ func TestEnsureCloudImageUsesOCIRef(t *testing.T) {
 		pullCloudImageFromOCI = origPull
 	})
 
-	err := EnsureCloudImage(config.OSConfig{
+	err := EnsureCloudImage(platform.NewLocalExecutor(), config.OSConfig{
 		ImageRef:  "ghcr.io/example/fedora:43",
 		ImageName: "Fedora-x86_64.qcow2",
 	}, dest)
@@ -64,7 +65,7 @@ func TestEnsureCloudImageSkipsExistingFile(t *testing.T) {
 		pullCloudImageFromOCI = origPull
 	})
 
-	err := EnsureCloudImage(config.OSConfig{
+	err := EnsureCloudImage(platform.NewLocalExecutor(), config.OSConfig{
 		ImageRef:  "ghcr.io/example/fedora:43",
 		ImageName: "Fedora-x86_64.qcow2",
 	}, dest)

@@ -15,6 +15,8 @@ type VMManager struct {
 	conn       *libvirt.Connect
 	config     *config.Config
 	hostDistro *platform.Distro
+	// hostExec runs tools on the libvirt host (qemu-img, ovs-vsctl, wget, etc.).
+	hostExec platform.CommandExecutor
 	// hostSpec is the resolved per-host virtualization profile (machine type,
 	// emulator path, firmware, and feature flags) reused across VM XML creation.
 	hostSpec archSpec
@@ -53,6 +55,7 @@ func NewVMManager(cfg *config.Config) (*VMManager, error) {
 		conn:       conn,
 		config:     cfg,
 		hostDistro: distro,
+		hostExec:   platform.NewLocalExecutor(),
 		hostSpec:   hostSpec,
 	}, nil
 }

@@ -5,13 +5,13 @@ package tft
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/k8s"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 
 	"gopkg.in/yaml.v3"
 )
@@ -162,7 +162,7 @@ func HasEmbeddedTFT(cfg *config.Config) bool {
 }
 
 // Run executes tft.py. Either opts.TFTConfig is set, or cfg must include a tft: block.
-func Run(cfg *config.Config, dpuSimConfigPath string, opts RunOptions) error {
+func Run(cmdExec platform.CommandExecutor, cfg *config.Config, dpuSimConfigPath string, opts RunOptions) error {
 	if _, err := cfg.GetDeploymentMode(); err != nil {
 		return fmt.Errorf("dpu-sim tft needs a valid deployment config (kind: or vms:/baremetal:): %w", err)
 	}
@@ -230,12 +230,7 @@ func Run(cfg *config.Config, dpuSimConfigPath string, opts RunOptions) error {
 	if opts.Check {
 		args = append(args, "--check")
 	}
-	cmd := exec.Command(py, args...)
-	cmd.Dir = repo
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := cmdExec.RunCmdInDir(log.LevelInfo, repo, py, args...); err != nil {
 		return fmt.Errorf("tft.py: %w", err)
 	}
 	return nil

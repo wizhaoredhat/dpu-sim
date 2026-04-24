@@ -394,13 +394,21 @@ func enableRHELOVSRepos(cmdExec platform.CommandExecutor, distro *platform.Distr
 	return nil
 }
 
-func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+// installOpenVSwitchPackages installs OVS packages for the distro.
+// On DNF, includeNetworkManagerOvs installs NetworkManager-ovs in the same transaction as
+// openvswitch so RPM scripts do not reconfigure OVS while ovsdb-server is already running
+// (which can leave ovsdb-server in a failed/restart-throttled state).
+func installOpenVSwitchPackages(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, _ *platform.Dependency, includeNetworkManagerOvs bool) error {
 	switch distro.PackageManager {
 	case platform.DNF:
 		if err := enableRHELOVSRepos(cmdExec, distro); err != nil {
 			return fmt.Errorf("failed to enable RHEL OVS repos: %w", err)
 		}
-		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", platform.DNF, "install", "-y", "openvswitch"); err != nil {
+		dnfArgs := []string{platform.DNF, "install", "-y", "openvswitch"}
+		if includeNetworkManagerOvs {
+			dnfArgs = append(dnfArgs, "NetworkManager-ovs")
+		}
+		if err := cmdExec.RunCmd(log.LevelDebug, "sudo", dnfArgs...); err != nil {
 			return fmt.Errorf("failed to install openvswitch: %w", err)
 		}
 	case platform.APT:
@@ -416,9 +424,28 @@ func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distr
 	return nil
 }
 
-// isSystemdAvailable returns true if systemd is the active init system.
+func InstallOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	return installOpenVSwitchPackages(cmdExec, distro, cfg, dep, false)
+}
+
+// reviveOpenVSwitchSystemd clears systemd failure counters from crash loops, then restarts
+// openvswitch so ovsdb-server and ovs-vswitchd come up cleanly after package or NM changes.
+func reviveOpenVSwitchSystemd(cmdExec platform.CommandExecutor) error {
+	_, _, _ = cmdExec.Execute(`sudo systemctl reset-failed ovsdb-server ovs-vswitchd openvswitch 2>/dev/null || true`)
+	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "restart", "openvswitch"); err != nil {
+		return fmt.Errorf("failed to restart openvswitch: %w", err)
+	}
+	return nil
+}
+
+// isSystemdAvailable returns true if systemd is present so unit files such as
+// openvswitch.service are the supported way to run OVS.
+//
+// Do not use `systemctl is-system-running`: it exits non-zero for normal states
+// including "degraded", which would incorrectly push Fedora/RHEL cloud images
+// down the ovs-ctl path while systemd still owns openvswitch.service.
 func isSystemdAvailable(cmdExec platform.CommandExecutor) bool {
-	_, _, err := cmdExec.Execute("systemctl is-system-running")
+	_, _, err := cmdExec.Execute("test -e /run/systemd/system && command -v systemctl >/dev/null 2>&1")
 	return err == nil
 }
 
@@ -431,7 +458,8 @@ func isSystemdAvailable(cmdExec platform.CommandExecutor) bool {
 //   - DNF (RHEL/Fedora) + systemd: rpm installs do not auto-start services;
 //     enable and start openvswitch manually and restart NetworkManager.
 func InstallSystemdOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
-	if err := InstallOpenVSwitch(cmdExec, distro, cfg, dep); err != nil {
+	includeNM := distro.PackageManager == platform.DNF
+	if err := installOpenVSwitchPackages(cmdExec, distro, cfg, dep, includeNM); err != nil {
 		return fmt.Errorf("failed to install openvswitch: %w", err)
 	}
 	if !isSystemdAvailable(cmdExec) {
@@ -445,14 +473,14 @@ func InstallSystemdOpenVSwitch(cmdExec platform.CommandExecutor, distro *platfor
 		// Debian/Ubuntu: apt already started and enabled the service.
 		return nil
 	}
-	// RHEL/Fedora: manually enable and start the service.
+	// RHEL/Fedora: manually enable the service, restart NetworkManager, then restart OVS.
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "enable", "openvswitch"); err != nil {
 		return fmt.Errorf("failed to enable openvswitch: %w", err)
 	}
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "restart", "NetworkManager"); err != nil {
 		return fmt.Errorf("failed to restart NetworkManager: %w", err)
 	}
-	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "start", "openvswitch"); err != nil {
+	if err := reviveOpenVSwitchSystemd(cmdExec); err != nil {
 		return fmt.Errorf("failed to start openvswitch: %w", err)
 	}
 	return nil
@@ -472,6 +500,13 @@ func InstallOpenVSwitchWithoutSystemd(cmdExec platform.CommandExecutor, distro *
 
 // Install NetworkManager Open vSwitch on the target machine
 func InstallNetworkManagerOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	// The openvswitch step may already have installed NetworkManager-ovs (same dnf
+	// transaction); skip redundant dnf/systemctl work that can fight
+	// ovs-ctl or restart a broken openvswitch.service unnecessarily.
+	if err := CheckGenericPackage(cmdExec, distro, cfg, dep); err == nil {
+		return nil
+	}
+
 	switch distro.PackageManager {
 	case platform.DNF:
 		if err := enableRHELOVSRepos(cmdExec, distro); err != nil {
@@ -492,7 +527,7 @@ func InstallNetworkManagerOpenVSwitch(cmdExec platform.CommandExecutor, distro *
 	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "restart", "NetworkManager"); err != nil {
 		return fmt.Errorf("failed to restart NetworkManager: %w", err)
 	}
-	if err := cmdExec.RunCmd(log.LevelDebug, "sudo", "systemctl", "start", "openvswitch"); err != nil {
+	if err := reviveOpenVSwitchSystemd(cmdExec); err != nil {
 		return fmt.Errorf("failed to start openvswitch: %w", err)
 	}
 	return nil

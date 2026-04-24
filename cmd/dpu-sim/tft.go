@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/wizhao/dpu-sim/pkg/config"
 	"github.com/wizhao/dpu-sim/pkg/log"
+	"github.com/wizhao/dpu-sim/pkg/platform"
 	"github.com/wizhao/dpu-sim/pkg/tft"
 )
 
@@ -74,7 +75,7 @@ func runTFT(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	return tft.Run(cfg, configPath, tft.RunOptions{
+	return tft.Run(platform.NewLocalExecutor(), cfg, configPath, tft.RunOptions{
 		TFTRepo:   tftRepoFlag,
 		Python:    tftPython,
 		TFTConfig: tftConfigFlag,
@@ -95,5 +96,5 @@ func runTFTVenv(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to resolve TFT repo: %w", err)
 	}
 
-	return tft.EnsureVenv(tftRepo, tftPython)
+	return tft.EnsureVenv(platform.NewLocalExecutor(), tftRepo, tftPython)
 }

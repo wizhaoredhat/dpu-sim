@@ -24,16 +24,16 @@ func (m *VMManager) CreateVM(vmCfg config.VMConfig) error {
 
 	imagePath := GetImagePath(m.config.OperatingSystem)
 
-	if err := EnsureCloudImage(m.config.OperatingSystem, imagePath); err != nil {
+	if err := EnsureCloudImage(m.hostExec, m.config.OperatingSystem, imagePath); err != nil {
 		return fmt.Errorf("failed to ensure cloud image: %w", err)
 	}
 
-	diskPath, err := CreateVMDisk(vmCfg.Name, vmCfg.DiskSize, imagePath)
+	diskPath, err := CreateVMDisk(m.hostExec, vmCfg.Name, vmCfg.DiskSize, imagePath)
 	if err != nil {
 		return fmt.Errorf("failed to create VM disk: %w", err)
 	}
 
-	cloudInitPath, err := CreateCloudInitISO(m.config.SSH, vmCfg, m.config)
+	cloudInitPath, err := CreateCloudInitISO(m.hostExec, m.config.SSH, vmCfg, m.config)
 	if err != nil {
 		return fmt.Errorf("failed to create cloud-init ISO: %w", err)
 	}

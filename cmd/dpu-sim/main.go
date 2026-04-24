@@ -177,7 +177,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	switch deployMode {
 	case config.VMDeploymentMode:
-		return runVMDeploymentWorkflow(cfg, regMgr)
+		return runVMDeploymentWorkflow(cfg, regMgr, localExec)
 	case config.KindDeploymentMode:
 		return runKindDeploymentWorkflow(cfg, regMgr, localExec)
 	default:
@@ -185,13 +185,13 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 }
 
-func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManager) error {
+func runVMDeploymentWorkflow(cfg *config.Config, regMgr *registry.RegistryManager, hostExec platform.CommandExecutor) error {
 	log.Info("")
 	log.Info("╔═══════════════════════════════════════════════╗")
 	log.Info("║       VM-Based Deployment Workflow            ║")
 	log.Info("╚═══════════════════════════════════════════════╝")
 
-	if err := vm.EnsureHostNetworkPrerequisites(); err != nil {
+	if err := vm.EnsureHostNetworkPrerequisites(hostExec); err != nil {
 		return fmt.Errorf("failed to prepare host network prerequisites: %w", err)
 	}
 
