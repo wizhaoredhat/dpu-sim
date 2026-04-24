@@ -432,10 +432,9 @@ func (e *SSHExecutor) RunCmd(level log.Level, name string, args ...string) error
 // RunCmdInDir executes a command with arguments in a specific working directory via SSH
 func (e *SSHExecutor) RunCmdInDir(level log.Level, dir string, name string, args ...string) error {
 	name, args = stripSudoCmd(e.HasSudo(), name, args)
-	command := fmt.Sprintf("cd '%s' && '%s'", dir, name)
+	command := "cd " + ShQuote(dir) + " && " + ShQuote(name)
 	for _, arg := range args {
-		escaped := strings.ReplaceAll(arg, "'", "'\"'\"'")
-		command += " '" + escaped + "'"
+		command += " " + ShQuote(arg)
 	}
 
 	stdout, stderr, err := e.ExecuteWithTimeout(command, 5*time.Minute)
@@ -466,13 +465,11 @@ func (e *SSHExecutor) RunCmdWithExtraEnv(level log.Level, extraEnv []string, nam
 	name, args = stripSudoCmd(e.HasSudo(), name, args)
 	command := "env "
 	for _, kv := range extraEnv {
-		escaped := strings.ReplaceAll(kv, "'", "'\"'\"'")
-		command += "'" + escaped + "' "
+		command += ShQuote(kv) + " "
 	}
-	command += "'" + strings.ReplaceAll(name, "'", "'\"'\"'") + "'"
+	command += ShQuote(name)
 	for _, arg := range args {
-		escaped := strings.ReplaceAll(arg, "'", "'\"'\"'")
-		command += " '" + escaped + "'"
+		command += " " + ShQuote(arg)
 	}
 
 	stdout, stderr, err := e.ExecuteWithTimeout(command, 5*time.Minute)
