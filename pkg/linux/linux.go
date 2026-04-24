@@ -438,9 +438,14 @@ func reviveOpenVSwitchSystemd(cmdExec platform.CommandExecutor) error {
 	return nil
 }
 
-// isSystemdAvailable returns true if systemd is the active init system.
+// isSystemdAvailable returns true if systemd is present so unit files such as
+// openvswitch.service are the supported way to run OVS.
+//
+// Do not use `systemctl is-system-running`: it exits non-zero for normal states
+// including "degraded", which would incorrectly push Fedora/RHEL cloud images
+// down the ovs-ctl path while systemd still owns openvswitch.service.
 func isSystemdAvailable(cmdExec platform.CommandExecutor) bool {
-	_, _, err := cmdExec.Execute("systemctl is-system-running")
+	_, _, err := cmdExec.Execute("test -e /run/systemd/system && command -v systemctl >/dev/null 2>&1")
 	return err == nil
 }
 
@@ -495,6 +500,13 @@ func InstallOpenVSwitchWithoutSystemd(cmdExec platform.CommandExecutor, distro *
 
 // Install NetworkManager Open vSwitch on the target machine
 func InstallNetworkManagerOpenVSwitch(cmdExec platform.CommandExecutor, distro *platform.Distro, cfg *config.Config, dep *platform.Dependency) error {
+	// The openvswitch step may already have installed NetworkManager-ovs (same dnf
+	// transaction); skip redundant dnf/systemctl work that can fight
+	// ovs-ctl or restart a broken openvswitch.service unnecessarily.
+	if err := CheckGenericPackage(cmdExec, distro, cfg, dep); err == nil {
+		return nil
+	}
+
 	switch distro.PackageManager {
 	case platform.DNF:
 		if err := enableRHELOVSRepos(cmdExec, distro); err != nil {
