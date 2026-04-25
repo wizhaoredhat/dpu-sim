@@ -274,9 +274,7 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 func (m *VMManager) ensureKubeletUsesK8sNodeIP(clusterRoleMapping config.ClusterRoleMapping, firstMasterExec platform.CommandExecutor) error {
 	masters := clusterRoleMapping[config.ClusterRoleMaster]
 	var patchOrder []config.VMConfig
-	for _, vm := range clusterRoleMapping[config.ClusterRoleWorker] {
-		patchOrder = append(patchOrder, vm)
-	}
+	patchOrder = append(patchOrder, clusterRoleMapping[config.ClusterRoleWorker]...)
 	if len(masters) > 1 {
 		patchOrder = append(patchOrder, masters[1:]...)
 	}
