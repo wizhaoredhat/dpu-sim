@@ -404,11 +404,22 @@ func (m *CNIManager) redeployOVNKubernetes(clusterName string) error {
 	ovnImage := m.config.OvnKubernetesImageForHelm(DefaultOVNImage)
 	imageRepo, imageTag := splitImageRef(ovnImage)
 
+	mode := m.detectOVNKMode(clusterName)
 	args := []string{
 		"upgrade", "ovn-kubernetes", ".",
 		"--reuse-values",
-		"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
-		"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
+	}
+	switch mode {
+	case ovnkModeDPU:
+		args = append(args,
+			"--set", fmt.Sprintf("global.dpuImage.repository=%s", imageRepo),
+			"--set", fmt.Sprintf("global.dpuImage.tag=%s", imageTag),
+		)
+	default:
+		args = append(args,
+			"--set", fmt.Sprintf("global.image.repository=%s", imageRepo),
+			"--set", fmt.Sprintf("global.image.tag=%s", imageTag),
+		)
 	}
 
 	if m.kubeconfigPath != "" {

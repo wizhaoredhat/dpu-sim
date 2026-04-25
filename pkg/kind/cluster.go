@@ -143,11 +143,10 @@ func (m *KindManager) setupOVNKubernetesOffloadToDPUOVS(cmdExec platform.Command
 // Docker network.
 func (m *KindManager) getContainerIP(cmdExec platform.CommandExecutor, containerName string) (string, error) {
 	// CommandExecutor.Execute runs via sh -c; keep the inspect format in single quotes
-	// and shell-quote the binary and container name.
-	shCmd := fmt.Sprintf(
-		`%q inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' %q`,
-		m.containerBin, containerName,
-	)
+	// and POSIX-quote the binary and container name (same style as RunCommandInDir).
+	shCmd := platform.ShQuote(m.containerBin) +
+		" inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' " +
+		platform.ShQuote(containerName)
 	stdout, stderr, err := cmdExec.ExecuteWithTimeout(shCmd, 30*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("failed to get IP for container %s: %w\nstderr: %s", containerName, err, strings.TrimSpace(stderr))

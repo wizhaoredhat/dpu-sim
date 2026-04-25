@@ -215,10 +215,10 @@ func Run(cmdExec platform.CommandExecutor, cfg *config.Config, dpuSimConfigPath 
 		}
 		if err := enc.Close(); err != nil {
 			_ = f.Close()
-			return err
+			return fmt.Errorf("finalize tft config: %w", err)
 		}
 		if err := f.Close(); err != nil {
-			return err
+			return fmt.Errorf("finalize tft config: %w", err)
 		}
 	}
 

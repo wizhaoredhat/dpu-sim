@@ -16,6 +16,10 @@ import (
 type runCmdCall struct {
 	name string
 	args []string
+	// FromRunCmdWithExtraEnv is true only for RunCmdWithExtraEnv; ExtraEnv is then
+	// a copy of the provided slice (may be nil/empty). Plain RunCmd leaves both unset.
+	fromRunCmdWithExtraEnv bool
+	extraEnv               []string
 }
 
 type execResult struct {
@@ -51,10 +55,7 @@ func (f *fakeExecutor) ExecuteRetryWithTimeout(command string, interval, timeout
 }
 
 func (f *fakeExecutor) RunCmd(level log.Level, name string, args ...string) error {
-	copied := make([]string, len(args))
-	copy(copied, args)
-	f.runCalls = append(f.runCalls, runCmdCall{name: name, args: copied})
-	return f.runErr
+	return f.recordRunCmd(false, nil, name, args...)
 }
 
 func (f *fakeExecutor) RunCmdInDir(level log.Level, dir string, name string, args ...string) error {
@@ -62,7 +63,20 @@ func (f *fakeExecutor) RunCmdInDir(level log.Level, dir string, name string, arg
 }
 
 func (f *fakeExecutor) RunCmdWithExtraEnv(level log.Level, extraEnv []string, name string, args ...string) error {
-	return f.RunCmd(level, name, args...)
+	envCopy := append([]string(nil), extraEnv...)
+	return f.recordRunCmd(true, envCopy, name, args...)
+}
+
+func (f *fakeExecutor) recordRunCmd(fromExtraEnv bool, extraEnv []string, name string, args ...string) error {
+	copied := make([]string, len(args))
+	copy(copied, args)
+	f.runCalls = append(f.runCalls, runCmdCall{
+		name:                   name,
+		args:                   copied,
+		fromRunCmdWithExtraEnv: fromExtraEnv,
+		extraEnv:               extraEnv,
+	})
+	return f.runErr
 }
 
 func (f *fakeExecutor) FileExists(path string) (bool, error)                          { return false, nil }
