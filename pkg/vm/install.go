@@ -241,6 +241,11 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		}
 	}
 
+	log.Info("\n=== Aligning kubelet node-ip with k8s_node_ip (OVN underlay) ===")
+	if err := m.ensureKubeletUsesK8sNodeIP(clusterRoleMapping, firstMasterExec); err != nil {
+		return fmt.Errorf("kubelet node-ip alignment: %w", err)
+	}
+
 	kubeconfigPath := k8s.GetKubeconfigPath(clusterName, m.config.Kubernetes.KubeconfigDir)
 	hostLocalExec := platform.NewLocalExecutor()
 	cniMgr, err := cni.NewCNIManagerWithKubeconfigFile(m.config, kubeconfigPath, hostLocalExec)
@@ -260,6 +265,44 @@ func (m *VMManager) setupK8sCluster(clusterName string, clusterRoleMapping confi
 		return fmt.Errorf("failed to patch cluster environment: %w", err)
 	}
 	log.Info("✓ Kubernetes cluster %s setup complete", clusterName)
+	return nil
+}
+
+// ensureKubeletUsesK8sNodeIP sets kubelet --node-ip to each VM's k8s_node_ip so Node.Status and
+// OVN use the k8s L3 subnet. The primary master is patched last to shorten API disruption from
+// kubelet restarting static control-plane pods.
+func (m *VMManager) ensureKubeletUsesK8sNodeIP(clusterRoleMapping config.ClusterRoleMapping, firstMasterExec platform.CommandExecutor) error {
+	masters := clusterRoleMapping[config.ClusterRoleMaster]
+	var patchOrder []config.VMConfig
+	for _, vm := range clusterRoleMapping[config.ClusterRoleWorker] {
+		patchOrder = append(patchOrder, vm)
+	}
+	if len(masters) > 1 {
+		patchOrder = append(patchOrder, masters[1:]...)
+	}
+	if len(masters) > 0 {
+		patchOrder = append(patchOrder, masters[0])
+	}
+	if len(patchOrder) == 0 {
+		return nil
+	}
+	for _, vmCfg := range patchOrder {
+		ip := strings.TrimSpace(vmCfg.K8sNodeIP)
+		if ip == "" {
+			continue
+		}
+		mgmtIP, err := m.GetVMMgmtIP(vmCfg.Name)
+		if err != nil {
+			return fmt.Errorf("mgmt IP for %s: %w", vmCfg.Name, err)
+		}
+		exec := platform.NewSSHExecutor(&m.config.SSH, mgmtIP)
+		if err := k8s.EnsureKubeletK8sNodeIP(exec, ip); err != nil {
+			return fmt.Errorf("%s: %w", vmCfg.Name, err)
+		}
+	}
+	if err := k8s.WaitAllNodesReady(firstMasterExec, 6*time.Minute); err != nil {
+		return err
+	}
 	return nil
 }
 
