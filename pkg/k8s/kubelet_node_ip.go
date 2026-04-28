@@ -36,28 +36,43 @@ func mergeNodeIPIntoKubeadmArgsLine(fileContent, nodeIP string) (string, bool, e
 		inner := rest[1 : len(rest)-1]
 		fields := strings.Fields(inner)
 		desired := "--node-ip=" + nodeIP
-		hasDesired, hasOtherNodeIP := false, false
+		desiredCount, otherCount := 0, 0
 		for _, f := range fields {
 			if !strings.HasPrefix(f, "--node-ip=") {
 				continue
 			}
 			if f == desired {
-				hasDesired = true
+				desiredCount++
 			} else {
-				hasOtherNodeIP = true
+				otherCount++
 			}
 		}
-		if hasDesired && !hasOtherNodeIP {
-			break
-		}
-		var kept []string
-		for _, f := range fields {
-			if strings.HasPrefix(f, "--node-ip=") {
-				continue
+		var merged string
+		if desiredCount > 0 && otherCount == 0 {
+			// Only the target IP appears (possibly duplicated); keep a single --node-ip in flag order.
+			var kept []string
+			seenDesired := false
+			for _, f := range fields {
+				if strings.HasPrefix(f, "--node-ip=") {
+					if f == desired && !seenDesired {
+						kept = append(kept, desired)
+						seenDesired = true
+					}
+					continue
+				}
+				kept = append(kept, f)
 			}
-			kept = append(kept, f)
+			merged = strings.TrimSpace(strings.Join(kept, " "))
+		} else {
+			var kept []string
+			for _, f := range fields {
+				if strings.HasPrefix(f, "--node-ip=") {
+					continue
+				}
+				kept = append(kept, f)
+			}
+			merged = strings.TrimSpace(strings.Join(append(kept, desired), " "))
 		}
-		merged := strings.TrimSpace(strings.Join(append(kept, "--node-ip="+nodeIP), " "))
 		newLine := prefix + `"` + merged + `"`
 		trimmedLine := strings.TrimSpace(line)
 		if newLine != trimmedLine {
