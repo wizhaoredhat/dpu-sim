@@ -14,26 +14,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wizhao/dpu-sim/pkg/dpusimlib"
 	"github.com/wizhao/dpu-sim/pkg/platform"
 )
 
-// OUI 52:54:00 is commonly used for QEMU/virtio; locally administered and deterministic.
-const MacOUI = "52:54:00"
+// Re-export dpusimlib constants so existing callers continue to compile.
+const (
+	MacOUI        = dpusimlib.MacOUI
+	HostDataIfFmt = dpusimlib.HostDataIfFmt
+	DPUDataIfFmt  = dpusimlib.DPUDataIfFmt
+)
 
 // GenerateMACForHostToDpu returns a deterministic MAC for a host-to-DPU data interface.
 // Works for both VM (libvirt) and Kind (veth pair) setups.
 // Hash is over nodeName+role ("host" or "dpu"); the index is the last octet so each pair has a unique MAC.
 func GenerateMACForHostToDpu(nodeName, role string, index int) string {
 	h := sha256.Sum256([]byte(nodeName + "\x00" + role))
-	return fmt.Sprintf("%s:%02x:%02x:%02x", MacOUI, h[0], h[1], index&0xff)
+	return fmt.Sprintf("%s:%02x:%02x:%02x", dpusimlib.MacOUI, h[0], h[1], index&0xff)
 }
-
-// Host-to-DPU data interface naming
-// Format strings for the guest/container interface names; use with fmt.Sprintf(..., index).
-const (
-	HostDataIfFmt = "eth0-%d" // data interface in host (e.g. eth0-0, eth0-1)
-	DPUDataIfFmt  = "rep0-%d" // data representor in DPU (e.g. rep0-0, rep0-1)
-)
 
 // GetRegexForHostDataIf returns a regex that matches the host-to-DPU interface names.
 func GetRegexForHostDataIf() *regexp.Regexp {

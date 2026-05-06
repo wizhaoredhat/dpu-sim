@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wizhao/dpu-sim/pkg/dpusimlib"
 	"github.com/wizhao/dpu-sim/pkg/log"
 
 	"gopkg.in/yaml.v3"
@@ -1148,16 +1149,16 @@ func (c *Config) GatewayInterfaces(clusterName string) string {
 
 // DPUHostGatewayInterface returns the gateway interface name for DPU-Host mode
 func (c *Config) DPUHostGatewayInterface() string {
-	return "eth0-0"
+	return dpusimlib.HostGatewayInterface
 }
 
-// DPUGatewayAcceleratedInterface returns the accelerated gateway interface name for
-// DPU mode
+// DPUHostGatewayRepresentorInterface returns the DPU-side representor for the
+// host gateway interface.
 func (c *Config) DPUHostGatewayRepresentorInterface() string {
-	return "rep0-0"
+	return dpusimlib.HostGatewayPeerInterface
 }
 
-// Get the management port netdev name for  DPU mode
+// DPUHostManagementPortNetDevName returns the management port netdev name for DPU mode
 func (c *Config) DPUHostManagementPortNetDevName() string {
-	return "eth0-1"
+	return dpusimlib.MgmtPortNetDevName
 }
