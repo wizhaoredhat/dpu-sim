@@ -55,7 +55,7 @@ func getRequiredDependencies(cfg *config.Config) ([]platform.Dependency, error) 
 		},
 		{
 			Name:        "git",
-			Reason:      "Required for OVN-Kubernetes git submodule",
+			Reason:      "Required for cloning OVN-Kubernetes and kubernetes-traffic-flow-tests repositories",
 			CheckCmd:    []string{"git", "--version"},
 			InstallFunc: linux.InstallGenericPackage,
 		},

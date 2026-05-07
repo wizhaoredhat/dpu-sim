@@ -16,6 +16,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	// DefaultTFTRepoURL is the default URL for the kubernetes-traffic-flow-tests repository.
+	DefaultTFTRepoURL = "https://github.com/ovn-kubernetes/kubernetes-traffic-flow-tests"
+	// DefaultTFTDirName is the directory name used when auto-cloning the TFT repo.
+	DefaultTFTDirName = "kubernetes-traffic-flow-tests"
+)
+
 // RunOptions controls how tft.py is invoked.
 type RunOptions struct {
 	TFTRepo   string
@@ -26,32 +33,66 @@ type RunOptions struct {
 }
 
 // ResolveTFTRepo returns an absolute path to the kubernetes-traffic-flow-tests checkout.
-func ResolveTFTRepo(repoFlag, dpuSimConfigPath string) (string, error) {
+// When repoFlag is set (via --tft-repo-path) the directory is used as-is.
+// Otherwise it checks <project-root>/kubernetes-traffic-flow-tests and clones
+// the repository if missing.
+func ResolveTFTRepo(cmdExec platform.CommandExecutor, repoFlag string) (string, error) {
 	if repoFlag != "" {
 		return verifyTFTRepo(repoFlag)
 	}
 
-	if tftRepoFromEnv := strings.TrimSpace(os.Getenv("DPU_SIM_TFT_REPO")); tftRepoFromEnv != "" {
-		return verifyTFTRepo(tftRepoFromEnv)
+	projectRoot, err := platform.GetProjectRoot()
+	if err != nil {
+		return "", fmt.Errorf("failed to get project root: %w", err)
 	}
 
-	cfgDir := filepath.Dir(dpuSimConfigPath)
-	candidates := []string{
-		"kubernetes-traffic-flow-tests",
-		filepath.Join(cfgDir, "kubernetes-traffic-flow-tests"),
-		filepath.Join(cfgDir, "..", "kubernetes-traffic-flow-tests"),
+	tftPath := filepath.Join(projectRoot, DefaultTFTDirName)
+
+	if abs, err := verifyTFTRepo(tftPath); err == nil {
+		log.Debug("kubernetes-traffic-flow-tests found at %s", abs)
+		return abs, nil
 	}
-	for _, c := range candidates {
-		abs, err := filepath.Abs(c)
+
+	// Remove only an empty (or .git-only) leftover directory so clone can succeed.
+	exists, err := cmdExec.FileExists(tftPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to check kubernetes-traffic-flow-tests path: %w", err)
+	}
+	if exists {
+		names, err := cmdExec.ReadDirNames(tftPath)
 		if err != nil {
-			continue
+			return "", fmt.Errorf("failed to read kubernetes-traffic-flow-tests directory %s: %w", tftPath, err)
 		}
-		if _, err := os.Stat(filepath.Join(abs, "tft.py")); err == nil {
-			return abs, nil
+		meaningful := platform.MeaningfulDirEntries(names)
+		if len(meaningful) == 0 {
+			log.Info("kubernetes-traffic-flow-tests directory exists but is empty (or only .git), removing before clone...")
+			if err := cmdExec.RemoveAll(tftPath); err != nil {
+				return "", fmt.Errorf("failed to remove empty kubernetes-traffic-flow-tests directory: %w", err)
+			}
+		} else {
+			tftPy := filepath.Join(tftPath, "tft.py")
+			return "", fmt.Errorf("kubernetes-traffic-flow-tests directory %q exists but %s is missing (invalid or partial checkout; directory is not empty — remove or fix the tree and retry)", tftPath, tftPy)
 		}
 	}
 
-	return "", fmt.Errorf("kubernetes-traffic-flow-tests not found (expected tft.py); set --tft-repo or DPU_SIM_TFT_REPO")
+	log.Info("kubernetes-traffic-flow-tests not found, cloning from %s...", DefaultTFTRepoURL)
+	if err := cmdExec.RunCmdInDir(log.LevelInfo, projectRoot, "git", "clone", DefaultTFTRepoURL, tftPath); err != nil {
+		return "", fmt.Errorf("failed to clone kubernetes-traffic-flow-tests repository: %w", err)
+	}
+
+	log.Info("✓ kubernetes-traffic-flow-tests cloned to %s", tftPath)
+	return tftPath, nil
+}
+
+// ValidateTFTRepoPath returns nil if path is empty (default checkout / clone applies).
+// If path is non-empty, it must be a directory containing tft.py.
+func ValidateTFTRepoPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	_, err := verifyTFTRepo(path)
+	return err
 }
 
 // verifyTFTRepo verifies that the directory contains a tft.py file. This assumes that we will never rename the
@@ -166,7 +207,7 @@ func Run(cmdExec platform.CommandExecutor, cfg *config.Config, dpuSimConfigPath 
 	if _, err := cfg.GetDeploymentMode(); err != nil {
 		return fmt.Errorf("dpu-sim tft needs a valid deployment config (kind: or vms:/baremetal:): %w", err)
 	}
-	repo, err := ResolveTFTRepo(opts.TFTRepo, dpuSimConfigPath)
+	repo, err := ResolveTFTRepo(cmdExec, opts.TFTRepo)
 	if err != nil {
 		return err
 	}

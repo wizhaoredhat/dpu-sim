@@ -131,6 +131,34 @@ func TestLocalExecutor_RunCmdWithExtraEnv(t *testing.T) {
 	}
 }
 
+func TestMeaningfulDirEntries(t *testing.T) {
+	if got := MeaningfulDirEntries([]string{".git"}); len(got) != 0 {
+		t.Fatalf("MeaningfulDirEntries(.git only) = %v, want empty", got)
+	}
+	if got := MeaningfulDirEntries([]string{".git", "tft.py"}); len(got) != 1 || got[0] != "tft.py" {
+		t.Fatalf("MeaningfulDirEntries = %v, want [tft.py]", got)
+	}
+}
+
+func TestLocalExecutor_ReadDirNames(t *testing.T) {
+	cmdExec := NewLocalExecutor()
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.txt"), []byte("x"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(tmpDir, "sub"), 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	names, err := cmdExec.ReadDirNames(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDirNames: %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("ReadDirNames len = %d, want 2: %v", len(names), names)
+	}
+}
+
 func TestLocalExecutor_WriteFile(t *testing.T) {
 	cmdExec := NewLocalExecutor()
 
@@ -242,8 +270,10 @@ func TestDockerExecutor_String(t *testing.T) {
 
 // MockExecutor implements CommandExecutor for testing dependency installation
 type MockExecutor struct {
-	Commands       []string // Records all commands executed
-	Files          map[string][]byte
+	Commands []string // Records all commands executed
+	Files    map[string][]byte
+	// DirContents maps directory paths to entry names for ReadDirNames; nil means empty listing.
+	DirContents    map[string][]string
 	distro         *Distro
 	architecture   Architecture
 	ShouldFail     bool
@@ -311,6 +341,18 @@ func (e *MockExecutor) WriteFile(path string, content []byte, mode os.FileMode) 
 	}
 	e.Files[path] = content
 	return nil
+}
+
+func (e *MockExecutor) ReadDirNames(path string) ([]string, error) {
+	if e.ShouldFail {
+		return nil, os.ErrPermission
+	}
+	if e.DirContents != nil {
+		if names, ok := e.DirContents[path]; ok {
+			return append([]string(nil), names...), nil
+		}
+	}
+	return nil, nil
 }
 
 func (e *MockExecutor) GetDistro() (*Distro, error) {

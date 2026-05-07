@@ -80,6 +80,7 @@ func (f *fakeExecutor) recordRunCmd(fromExtraEnv bool, extraEnv []string, name s
 }
 
 func (f *fakeExecutor) FileExists(path string) (bool, error)                          { return false, nil }
+func (f *fakeExecutor) ReadDirNames(path string) ([]string, error)                    { return nil, nil }
 func (f *fakeExecutor) ReadFile(path string) ([]byte, error)                          { return nil, nil }
 func (f *fakeExecutor) WriteFile(path string, content []byte, mode os.FileMode) error { return nil }
 func (f *fakeExecutor) RemoveAll(path string) error                                   { return nil }

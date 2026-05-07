@@ -109,13 +109,13 @@ help: ## Display this help message
 	@echo "DPU Simulator - Makefile commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-# Traffic flow tests (kubernetes-traffic-flow-tests submodule; Kind or VM config)
+# Traffic flow tests (kubernetes-traffic-flow-tests auto-cloned; Kind or VM config)
 CONFIG ?= config-kind-ovnk-offload.yaml
 
 tft-venv: build ## Create TFT Python venv (needs Python >= 3.11; pass PYTHON= if needed)
 	./bin/dpu-sim tft venv --config "$(CONFIG)"
 
-tft-run: build ## Run TFT via dpu-sim (set CONFIG=path/to.yaml; uses submodule .tft-venv if present)
+tft-run: build ## Run TFT via dpu-sim (set CONFIG=path/to.yaml; uses .tft-venv if present)
 	./bin/dpu-sim tft run --config "$(CONFIG)"
 
 # Default target

@@ -79,8 +79,9 @@ func (f *fakeExec) RunCmdInDir(level log.Level, dir string, name string, args ..
 func (f *fakeExec) RunCmdWithExtraEnv(level log.Level, extraEnv []string, name string, args ...string) error {
 	return nil
 }
-func (f *fakeExec) FileExists(path string) (bool, error) { return false, nil }
-func (f *fakeExec) ReadFile(path string) ([]byte, error) { return nil, nil }
+func (f *fakeExec) FileExists(path string) (bool, error)       { return false, nil }
+func (f *fakeExec) ReadDirNames(path string) ([]string, error) { return nil, nil }
+func (f *fakeExec) ReadFile(path string) ([]byte, error)       { return nil, nil }
 func (f *fakeExec) WriteFile(path string, content []byte, mode os.FileMode) error {
 	return nil
 }

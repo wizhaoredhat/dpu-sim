@@ -43,3 +43,7 @@ coverage.html
 
 # Go workspace file
 go.work
+
+# Auto-cloned repositories
+ovn-kubernetes/
+kubernetes-traffic-flow-tests/

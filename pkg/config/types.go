@@ -56,7 +56,7 @@ type Config struct {
 	Kubernetes      KubernetesConfig  `yaml:"kubernetes"`
 	Registry        *RegistryConfig   `yaml:"registry,omitempty"`
 	// OVNKubernetesPath overrides the default ovn-kubernetes source location
-	// (the git submodule). Set via --ovn-kubernetes-path so external CI can
+	// (auto-cloned). Set via --ovn-kubernetes-path so external CI can
 	// point dpu-sim at a separate checkout (e.g. an OVN-Kubernetes PR).
 	// This is not populated from YAML.
 	OVNKubernetesPath string `yaml:"-"`

@@ -52,6 +52,10 @@ type CommandExecutor interface {
 	// FileExists checks if a file or directory exists on the target system
 	FileExists(path string) (bool, error)
 
+	// ReadDirNames returns base names of entries in a directory (like os.ReadDir).
+	// The path must exist and refer to a directory.
+	ReadDirNames(path string) ([]string, error)
+
 	// ReadFile reads the contents of a file on the target system
 	ReadFile(path string) ([]byte, error)
 
@@ -80,6 +84,34 @@ type CommandExecutor interface {
 // with any embedded single quotes escaped for sh -c.
 func ShQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func parseReadDirLines(stdout string) []string {
+	stdout = strings.TrimSpace(stdout)
+	if stdout == "" {
+		return nil
+	}
+	lines := strings.Split(stdout, "\n")
+	names := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			names = append(names, line)
+		}
+	}
+	return names
+}
+
+// MeaningfulDirEntries returns directory entry names excluding ".git", so a tree
+// that only contains ".git" is treated as empty for re-clone / cleanup decisions.
+func MeaningfulDirEntries(names []string) []string {
+	var out []string
+	for _, n := range names {
+		if n != ".git" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // RunCommandInDir runs name with args in the executor's shell via ExecuteWithTimeout,
@@ -309,6 +341,19 @@ func (e *LocalExecutor) FileExists(path string) (bool, error) {
 	return false, err
 }
 
+// ReadDirNames returns directory entry names on the local system.
+func (e *LocalExecutor) ReadDirNames(path string) ([]string, error) {
+	ents, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(ents))
+	for _, ent := range ents {
+		names = append(names, ent.Name())
+	}
+	return names, nil
+}
+
 // ReadFile reads the contents of a file on the local system
 func (e *LocalExecutor) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
@@ -497,6 +542,16 @@ func (e *SSHExecutor) FileExists(path string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// ReadDirNames lists directory entries on the remote host via ls -1A.
+func (e *SSHExecutor) ReadDirNames(path string) ([]string, error) {
+	cmd := fmt.Sprintf("ls -1A %s", ShQuote(path))
+	stdout, stderr, err := e.ExecuteWithTimeout(cmd, 2*time.Minute)
+	if err != nil {
+		return nil, fmt.Errorf("list directory %s: %w\nstderr: %s", path, err, strings.TrimSpace(stderr))
+	}
+	return parseReadDirLines(stdout), nil
 }
 
 // ReadFile reads the contents of a file on the remote system
@@ -712,6 +767,16 @@ func (e *DockerExecutor) FileExists(path string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// ReadDirNames lists directory entries inside the container via ls -1A.
+func (e *DockerExecutor) ReadDirNames(path string) ([]string, error) {
+	cmd := fmt.Sprintf("ls -1A %s", ShQuote(path))
+	stdout, stderr, err := e.ExecuteWithTimeout(cmd, 2*time.Minute)
+	if err != nil {
+		return nil, fmt.Errorf("list directory %s in container: %w\nstderr: %s", path, err, strings.TrimSpace(stderr))
+	}
+	return parseReadDirLines(stdout), nil
 }
 
 // ReadFile reads the contents of a file inside the container

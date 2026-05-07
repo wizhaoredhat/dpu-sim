@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/wizhao/dpu-sim/pkg/config"
@@ -11,7 +12,7 @@ import (
 )
 
 var (
-	tftRepoFlag   string
+	tftRepoPath   string
 	tftConfigFlag string
 	tftPython     string
 	tftCluster    string
@@ -49,13 +50,14 @@ Override with --python.`,
 }
 
 func init() {
-	tftRunCmd.Flags().StringVar(&tftRepoFlag, "tft-repo", "", "Path to kubernetes-traffic-flow-tests checkout (default: env DPU_SIM_TFT_REPO or ./kubernetes-traffic-flow-tests)")
+	tftCmd.PersistentFlags().StringVar(&tftRepoPath, "tft-repo-path", "",
+		"Path to an external kubernetes-traffic-flow-tests source tree (overrides auto-clone)")
+
 	tftRunCmd.Flags().StringVar(&tftConfigFlag, "tft-config", "", "Standalone TFT YAML for tft.py; when set, the embedded `tft:` in the dpu-sim config is ignored")
 	tftRunCmd.Flags().StringVar(&tftPython, "python", "", "Python for tft.py, >= 3.11 (default: <tft-repo>/.tft-venv/bin/python3 if present, else PATH discovery)")
 	tftRunCmd.Flags().StringVar(&tftCluster, "cluster", "", "Kubernetes cluster name for kubeconfig when kubeconfig is omitted in YAML (default: first cluster without DPU-type nodes)")
 	tftRunCmd.Flags().BoolVar(&tftCheck, "check", false, "Pass --check to tft.py (exit non-zero if tests fail)")
 
-	tftVenvCmd.Flags().StringVar(&tftRepoFlag, "tft-repo", "", "Path to kubernetes-traffic-flow-tests checkout (same default as tft run)")
 	tftVenvCmd.Flags().StringVar(&tftPython, "python", "", "Host Python for venv, >= 3.11 (default: PYTHON / PATH discovery)")
 
 	tftCmd.AddCommand(tftRunCmd)
@@ -70,13 +72,18 @@ func runTFT(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("unexpected arguments: %v", args)
 	}
 
+	repoPath := strings.TrimSpace(tftRepoPath)
+	if err := tft.ValidateTFTRepoPath(repoPath); err != nil {
+		return fmt.Errorf("--tft-repo-path: %w", err)
+	}
+
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	return tft.Run(platform.NewLocalExecutor(), cfg, configPath, tft.RunOptions{
-		TFTRepo:   tftRepoFlag,
+		TFTRepo:   repoPath,
 		Python:    tftPython,
 		TFTConfig: tftConfigFlag,
 		Cluster:   tftCluster,
@@ -91,7 +98,12 @@ func runTFTVenv(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("unexpected arguments: %v", args)
 	}
 
-	tftRepo, err := tft.ResolveTFTRepo(tftRepoFlag, configPath)
+	repoPath := strings.TrimSpace(tftRepoPath)
+	if err := tft.ValidateTFTRepoPath(repoPath); err != nil {
+		return fmt.Errorf("--tft-repo-path: %w", err)
+	}
+
+	tftRepo, err := tft.ResolveTFTRepo(platform.NewLocalExecutor(), repoPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve TFT repo: %w", err)
 	}

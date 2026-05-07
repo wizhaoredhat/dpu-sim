@@ -15,14 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - name: Checkout
+      - name: Checkout dpu-simulator
         uses: actions/checkout@v4
 
-      - name: Checkout OVN-Kubernetes submodule
-        run: git submodule update --init --recursive ovn-kubernetes
-
-      - name: Checkout kubernetes-traffic-flow-tests submodule
-        run: git submodule update --init --recursive kubernetes-traffic-flow-tests
+      # CI depends on https://github.com/ovn-org/ovn-kubernetes/pull/6270 until it lands on master.
+      # After merge: replace ref with `master` (or drop this step and rely on dpu-sim auto-clone).
+      - name: Checkout OVN-Kubernetes (PR 6270)
+        uses: actions/checkout@v4
+        with:
+          repository: ovn-org/ovn-kubernetes
+          ref: refs/pull/6270/head
+          path: ovn-kubernetes
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -67,7 +70,7 @@ jobs:
           sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
           sudo systemctl restart docker
 
-      - name: Deploy Kind clusters (OVN-Kubernetes from submodule source)
+      - name: Deploy Kind clusters (OVN-Kubernetes from source)
         run: ./bin/dpu-sim --config config-kind-ovnk-offload.yaml
 
       - name: Verify clusters are ready

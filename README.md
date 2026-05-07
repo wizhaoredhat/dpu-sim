@@ -162,7 +162,7 @@ DPU Simulator - Makefile commands:
   deps                 Download dependencies
   help                 Display this help message
   tft-venv             Create TFT Python venv (needs Python >= 3.11; pass PYTHON= if needed)
-  tft-run              Run TFT via dpu-sim (set CONFIG=path/to.yaml; uses submodule .tft-venv if present)
+  tft-run              Run TFT via dpu-sim (set CONFIG=path/to.yaml; uses .tft-venv if present)
 ```
 
 ## Configuration
@@ -789,12 +789,21 @@ The `--rebuild-cni` flag requires `registry.enabled=true` and at least one `regi
 
 #### OVN-Kubernetes Source
 
-The OVN-Kubernetes source code is included as a git submodule under `ovn-kubernetes/`. If the submodule is not initialized, dpu-sim will automatically initialize it during the build. To work on OVN-Kubernetes changes:
+The OVN-Kubernetes source code is automatically cloned into `ovn-kubernetes/` when needed. To point dpu-sim at a separate checkout (e.g. an OVN-Kubernetes PR), use `--ovn-kubernetes-path`:
 
 ```bash
-# Initialize the submodule (if not already done)
-git submodule update --init ovn-kubernetes
+./bin/dpu-sim --ovn-kubernetes-path /path/to/ovn-kubernetes
+```
 
+Similarly, the kubernetes-traffic-flow-tests repository is automatically cloned into `kubernetes-traffic-flow-tests/` when needed. To use a separate checkout, pass `--tft-repo-path` on `dpu-sim tft` (it applies to `tft run` and `tft venv`):
+
+```bash
+./bin/dpu-sim tft run --tft-repo-path /path/to/kubernetes-traffic-flow-tests
+```
+
+To work on OVN-Kubernetes changes:
+
+```bash
 # Make changes in ovn-kubernetes/
 cd ovn-kubernetes
 # ... edit code ...

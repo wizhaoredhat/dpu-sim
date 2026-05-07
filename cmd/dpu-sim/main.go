@@ -57,7 +57,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info",
 		fmt.Sprintf("Log level (%s)", strings.Join(log.ValidLevels(), ", ")))
 	rootCmd.PersistentFlags().StringVar(&ovnKubernetesPath, "ovn-kubernetes-path", "",
-		"Path to an external ovn-kubernetes source tree (overrides the git submodule)")
+		"Path to an external ovn-kubernetes source tree (overrides auto-clone)")
 
 	// Root command flags
 	rootCmd.Flags().BoolVar(&cleanupOnly, "cleanup", false, "Only cleanup existing resources, do not deploy")
@@ -86,7 +86,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
-	cfg.OVNKubernetesPath = ovnKubernetesPath
+
+	ovnPath := strings.TrimSpace(ovnKubernetesPath)
+	if err := cni.ValidateOVNKubernetesPath(ovnPath); err != nil {
+		return fmt.Errorf("--ovn-kubernetes-path: %w", err)
+	}
+	cfg.OVNKubernetesPath = ovnPath
 
 	// Create registry manager once if configured; nil otherwise.
 	localExec := platform.NewLocalExecutor()

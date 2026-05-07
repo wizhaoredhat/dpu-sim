@@ -501,7 +501,6 @@ func getOVNKubernetesPath(overridePath string) (string, error) {
 }
 
 // isOVNKubernetesPopulated checks if the ovn-kubernetes directory contains actual content.
-// An uninitialized submodule directory exists but is empty.
 func isOVNKubernetesPopulated(cmdExec platform.CommandExecutor, ovnPath string) bool {
 	helmChart := filepath.Join(ovnPath, "helm", "ovn-kubernetes", "Chart.yaml")
 	exists, err := cmdExec.FileExists(helmChart)
@@ -512,95 +511,91 @@ func isOVNKubernetesPopulated(cmdExec platform.CommandExecutor, ovnPath string) 
 	return exists
 }
 
-// initOVNKubernetesSubmodule initializes and updates the ovn-kubernetes git submodule
-func initOVNKubernetesSubmodule(cmdExec platform.CommandExecutor, projectRoot string) error {
-	log.Debug("Initializing ovn-kubernetes git submodule...")
-
-	if err := cmdExec.RunCmdInDir(log.LevelInfo, projectRoot, "git", "submodule", "init", "ovn-kubernetes"); err != nil {
-		return fmt.Errorf("failed to initialize submodule: %w", err)
+// requireOVNKubernetesPath resolves a non-empty override path and
+// returns an error if helm/ovn-kubernetes/Chart.yaml is missing.
+func requireOVNKubernetesPath(cmdExec platform.CommandExecutor, overridePath string) (string, error) {
+	ovnPath, err := getOVNKubernetesPath(overridePath)
+	if err != nil {
+		return "", err
 	}
-
-	if err := cmdExec.RunCmdInDir(log.LevelInfo, projectRoot, "git", "submodule", "update", "--init", "ovn-kubernetes"); err != nil {
-		return fmt.Errorf("failed to update submodule: %w", err)
+	if !isOVNKubernetesPopulated(cmdExec, ovnPath) {
+		return "", fmt.Errorf("%q does not contain OVN-Kubernetes source (missing helm/ovn-kubernetes/Chart.yaml)", ovnPath)
 	}
+	return ovnPath, nil
+}
 
-	log.Info("✓ ovn-kubernetes submodule is initialized")
-	return nil
+// ValidateOVNKubernetesPath returns nil if overridePath is empty (default checkout / clone applies at deploy time).
+// If overridePath is non-empty after trimming whitespace, it must contain helm/ovn-kubernetes/Chart.yaml.
+func ValidateOVNKubernetesPath(overridePath string) error {
+	overridePath = strings.TrimSpace(overridePath)
+	if overridePath == "" {
+		return nil
+	}
+	_, err := requireOVNKubernetesPath(platform.NewLocalExecutor(), overridePath)
+	return err
 }
 
 // EnsureOVNKubernetesSource ensures the ovn-kubernetes source code is available.
 // When overridePath is non-empty (set via --ovn-kubernetes-path) the directory
-// is used as-is without submodule init or clone. Otherwise it tries to
-// initialize the git submodule; if that fails it clones the repository.
+// is used as-is. Otherwise it checks the default <project-root>/ovn-kubernetes
+// location and clones the repository if missing.
 func EnsureOVNKubernetesSource(cmdExec platform.CommandExecutor, overridePath string) (string, error) {
-	ovnPath, err := getOVNKubernetesPath(overridePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to get OVN-Kubernetes path: %w", err)
-	}
+	overridePath = strings.TrimSpace(overridePath)
 
 	if overridePath != "" {
-		if !isOVNKubernetesPopulated(cmdExec, ovnPath) {
-			return "", fmt.Errorf("--ovn-kubernetes-path %q does not contain OVN-Kubernetes source (missing helm/ovn-kubernetes/Chart.yaml)", ovnPath)
+		ovnPath, err := requireOVNKubernetesPath(cmdExec, overridePath)
+		if err != nil {
+			return "", fmt.Errorf("--ovn-kubernetes-path: %w", err)
 		}
 		log.Info("Using OVN-Kubernetes source from --ovn-kubernetes-path=%s", ovnPath)
 		return ovnPath, nil
 	}
 
-	projectRoot, err := platform.GetProjectRoot()
+	ovnPath, err := getOVNKubernetesPath("")
 	if err != nil {
-		return "", fmt.Errorf("failed to get project root: %w", err)
+		return "", fmt.Errorf("failed to get OVN-Kubernetes path: %w", err)
 	}
 
-	// Check if directory exists and is populated
+	if isOVNKubernetesPopulated(cmdExec, ovnPath) {
+		log.Debug("OVN-Kubernetes source found at %s", ovnPath)
+		return ovnPath, nil
+	}
+
+	// Remove only an empty (or .git-only) leftover directory so clone can succeed.
 	exists, err := cmdExec.FileExists(ovnPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to check OVN-Kubernetes path: %w", err)
 	}
 
 	if exists {
-		if isOVNKubernetesPopulated(cmdExec, ovnPath) {
-			log.Debug("OVN-Kubernetes source found at %s", ovnPath)
-			return ovnPath, nil
+		names, err := cmdExec.ReadDirNames(ovnPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read OVN-Kubernetes directory %s: %w", ovnPath, err)
 		}
-
-		// Directory exists but is empty (uninitialized submodule)
-		log.Info("OVN-Kubernetes directory exists but appears empty (uninitialized submodule)")
-		if err := initOVNKubernetesSubmodule(cmdExec, projectRoot); err != nil {
-			log.Warn("Warning: Failed to initialize submodule: %v", err)
-			log.Info("Attempting to clone repository directly...")
-
-			// Remove the empty directory and clone fresh
+		meaningful := platform.MeaningfulDirEntries(names)
+		if len(meaningful) == 0 {
+			log.Info("OVN-Kubernetes directory exists but is empty (or only .git), removing before clone...")
 			if err := cmdExec.RemoveAll(ovnPath); err != nil {
 				return "", fmt.Errorf("failed to remove empty ovn-kubernetes directory: %w", err)
 			}
 		} else {
-			// Submodule initialized successfully
-			if isOVNKubernetesPopulated(cmdExec, ovnPath) {
-				return ovnPath, nil
-			}
-			return "", fmt.Errorf("submodule initialized but content still missing")
+			helmChart := filepath.Join(ovnPath, "helm", "ovn-kubernetes", "Chart.yaml")
+			return "", fmt.Errorf("OVN-Kubernetes directory %q exists but %s is missing (invalid or partial checkout; directory is not empty — remove or fix the tree and retry)", ovnPath, helmChart)
 		}
-	}
-
-	// Directory doesn't exist or was removed - try submodule init first, then clone as fallback
-	gitDir := filepath.Join(projectRoot, ".git")
-	gitDirExists, _ := cmdExec.FileExists(gitDir)
-	if gitDirExists {
-		// We're in a git repository, try submodule init
-		if err := initOVNKubernetesSubmodule(cmdExec, projectRoot); err == nil {
-			if isOVNKubernetesPopulated(cmdExec, ovnPath) {
-				return ovnPath, nil
-			}
-		}
-		log.Info("Submodule initialization failed, falling back to clone...")
 	}
 
 	log.Info("OVN-Kubernetes not found, cloning from %s:master...", DefaultOVNRepoURL)
+
+	projectRoot, err := platform.GetProjectRoot()
+	if err != nil {
+		return "", fmt.Errorf("failed to get project root: %w", err)
+	}
+
 	if err := cmdExec.RunCmdInDir(log.LevelInfo, projectRoot, "git", "clone", "--branch", "master", DefaultOVNRepoURL, ovnPath); err != nil {
 		return "", fmt.Errorf("failed to clone OVN-Kubernetes repository: %w", err)
 	}
 
-	log.Info("✓ OVN-Kubernetes is cloned to %s", ovnPath)
+	log.Info("✓ OVN-Kubernetes cloned to %s", ovnPath)
 	return ovnPath, nil
 }
 
@@ -609,7 +604,7 @@ func EnsureOVNKubernetesSource(cmdExec platform.CommandExecutor, overridePath st
 // imageName specifies the tag for the built image (e.g., "ovn-kube-fedora:latest").
 // By default, OVN/OVS RPMs are downloaded from Koji. To build OVN from source instead,
 // set ovnGitRef to a branch/tag/commit (e.g., "main"); pass an empty string for Koji.
-// cfg.OVNKubernetesPath overrides the source location (empty = default submodule).
+// cfg.OVNKubernetesPath overrides the source location (empty = auto-clone).
 func BuildOVNKubernetesImage(cfg *config.Config, cmdExec platform.CommandExecutor, imageName string, ovnGitRef string) error {
 	engine, err := containerengine.NewProjectEngine(cmdExec)
 	if err != nil {
@@ -620,7 +615,7 @@ func BuildOVNKubernetesImage(cfg *config.Config, cmdExec platform.CommandExecuto
 
 // BuildOVNKubernetesImageWithEngine builds the image using a preselected
 // container engine so callers can detect once and reuse it.
-// cfg.OVNKubernetesPath overrides the source location (empty = default submodule).
+// cfg.OVNKubernetesPath overrides the source location (empty = auto-clone).
 func BuildOVNKubernetesImageWithEngine(
 	cfg *config.Config,
 	cmdExec platform.CommandExecutor,
